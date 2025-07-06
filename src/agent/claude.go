@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -21,6 +20,38 @@ type ClaudeAgent struct {
 	retries   int
 	rateLimit time.Duration
 	cliArgs   []string
+}
+
+// logWriter is a custom writer that logs output line by line
+type logWriter struct {
+	prefix string
+	level  string
+	buffer []byte
+}
+
+func (w *logWriter) Write(p []byte) (n int, err error) {
+	n = len(p)
+	w.buffer = append(w.buffer, p...)
+	
+	// Process complete lines
+	for {
+		idx := bytes.IndexByte(w.buffer, '\n')
+		if idx < 0 {
+			break
+		}
+		
+		line := string(w.buffer[:idx])
+		if w.level == "warn" {
+			logger.Warn("%s%s", w.prefix, line)
+		} else {
+			logger.Info("%s%s", w.prefix, line)
+		}
+		
+		// Remove processed line from buffer
+		w.buffer = w.buffer[idx+1:]
+	}
+	
+	return n, nil
 }
 
 type ClaudeAgentConfig struct {
@@ -175,7 +206,6 @@ func (c *ClaudeAgent) executeClaudeCLI(ctx context.Context, prompt, workDir stri
 	args := append([]string{}, c.cliArgs...)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
-	cmd.Stdin = strings.NewReader(prompt)
 
 	// Capture output
 	var stdout, stderr bytes.Buffer
@@ -183,9 +213,14 @@ func (c *ClaudeAgent) executeClaudeCLI(ctx context.Context, prompt, workDir stri
 	// Stream output when info level is enabled
 	logger.Info("=== Executing Claude CLI in directory: %s ===", workDir)
 	logger.Info("Command: claude %s", strings.Join(args, " "))
+	logger.Debug("Prompt length: %d characters", len(prompt))
 	logger.Info("=== Claude CLI Output ===")
 	
-	// Create pipes for streaming output
+	// Create pipes for stdin and output
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
@@ -200,6 +235,17 @@ func (c *ClaudeAgent) executeClaudeCLI(ctx context.Context, prompt, workDir stri
 		return "", fmt.Errorf("failed to start claude CLI: %w", err)
 	}
 	
+	// Write prompt to stdin and close it
+	go func() {
+		defer stdinPipe.Close()
+		logger.Debug("Writing prompt to stdin...")
+		if _, err := io.WriteString(stdinPipe, prompt); err != nil {
+			logger.Error("Failed to write prompt to stdin: %v", err)
+		} else {
+			logger.Debug("Successfully wrote prompt to stdin")
+		}
+	}()
+	
 	// Create TeeReaders to both capture and stream output
 	stdoutTee := io.TeeReader(stdoutPipe, &stdout)
 	stderrTee := io.TeeReader(stderrPipe, &stderr)
@@ -208,27 +254,34 @@ func (c *ClaudeAgent) executeClaudeCLI(ctx context.Context, prompt, workDir stri
 	errChan := make(chan error, 2)
 	
 	go func() {
-		scanner := bufio.NewScanner(stdoutTee)
-		for scanner.Scan() {
-			logger.Info("%s", scanner.Text())
+		logger.Debug("Starting stdout reader goroutine")
+		_, err := io.Copy(&logWriter{prefix: "", level: "info"}, stdoutTee)
+		if err != nil {
+			logger.Debug("stdout copy error: %v", err)
 		}
-		errChan <- scanner.Err()
+		logger.Debug("stdout reader finished")
+		errChan <- err
 	}()
 	
 	go func() {
-		scanner := bufio.NewScanner(stderrTee)
-		for scanner.Scan() {
-			logger.Warn("[stderr] %s", scanner.Text())
+		logger.Debug("Starting stderr reader goroutine")
+		_, err := io.Copy(&logWriter{prefix: "[stderr] ", level: "warn"}, stderrTee)
+		if err != nil {
+			logger.Debug("stderr copy error: %v", err)
 		}
-		errChan <- scanner.Err()
+		logger.Debug("stderr reader finished")
+		errChan <- err
 	}()
 	
 	// Wait for command to complete
+	logger.Debug("Waiting for command to complete...")
 	cmdErr := cmd.Wait()
+	logger.Debug("Command completed with error: %v", cmdErr)
 	
 	// Wait for output goroutines to finish
+	logger.Debug("Waiting for output goroutines to finish...")
 	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil && err != io.EOF {
+		if err := <-errChan; err != nil {
 			logger.Warn("Error copying output: %v", err)
 		}
 	}
