@@ -44,6 +44,27 @@ intentc config              # Configure agents and models
 4. Refine iteratively in REPL mode
 5. Commit both intent and generated code
 
+## Testing Requirements
+
+IMPORTANT: Every phase of implementation MUST include comprehensive tests. Follow these guidelines:
+
+1. **Test Coverage**: Each new component must have corresponding test files
+2. **Test Organization**: Tests should be in the same package as the code they test
+3. **Test Execution**: Run `go test ./...` after implementing each phase
+4. **Mock Dependencies**: Use mock implementations for external dependencies (git, agents, etc.)
+5. **Test Isolation**: Tests must not modify the actual project's git repository
+6. **Test Types**:
+   - Unit tests for individual functions and methods
+   - Integration tests for command execution
+   - Mock tests for agent interfaces
+
+Example test structure for each phase:
+- Parser tests: Test parsing of .ic and .icv files
+- Git tests: Test git operations in isolated temporary repositories
+- Command tests: Test CLI commands with proper setup/teardown
+- Agent tests: Use mock agents to simulate AI interactions
+- Validation tests: Test validation logic with mock data
+
 ## Important Implementation Notes
 
 - Git is a prerequisite (tool won't work without it)

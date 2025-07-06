@@ -4,18 +4,18 @@
 Establish the basic Go project structure, CLI framework, and core abstractions for intentc.
 
 ## Goals
-- [ ] Set up Go module and project structure
-- [ ] Implement basic CLI with cobra
-- [ ] Create core interfaces and types
-- [ ] Set up comprehensive testing framework
-- [ ] Implement git integration checks
-- [ ] Create mock agent for testing
+- [x] Set up Go module and project structure
+- [x] Implement basic CLI with cobra
+- [x] Create core interfaces and types
+- [x] Set up comprehensive testing framework
+- [x] Implement git integration checks
+- [x] Create mock agent for testing
 
 ## Tasks
 
 ### 1.1 Project Setup
-- [ ] Initialize Go module: `go mod init github.com/pboueri/intentc`
-- [ ] Create directory structure:
+- [x] Initialize Go module: `go mod init github.com/pboueri/intentc`
+- [x] Create directory structure (modified to use src/ for cleaner organization):
   ```
   cmd/
     intentc/
@@ -48,64 +48,70 @@ Establish the basic Go project structure, CLI framework, and core abstractions f
   ```
 
 ### 1.2 Core Types and Interfaces
-- [ ] Define core types in `pkg/core/types.go`:
+- [x] Define core types in `src/types.go`:
   - Intent
   - Target
   - Validation
-  - GenerationID
-  - BuildContext
-  - AgentResponse
+  - GenerationID (as part of BuildResult)
+  - BuildContext (as BuildResult)
+  - AgentResponse (as BuildResult)
 
-- [ ] Define interfaces in `pkg/core/interfaces.go`:
-  - Agent interface
-  - GitProvider interface
-  - FileSystem interface
-  - Validator interface
+- [x] Define interfaces in respective packages:
+  - Agent interface (src/agent/interface.go)
+  - GitProvider interface (src/git/interface.go as GitManager)
+  - FileSystem interface (using standard os package)
+  - Validator interface (src/validation/interface.go)
 
 ### 1.3 CLI Framework
-- [ ] Implement cobra-based CLI in `pkg/cli/commands.go`
-- [ ] Create command stubs for all planned commands
-- [ ] Add global flags (--verbose, --dry-run, etc.)
-- [ ] Implement version command
+- [x] Implement cobra-based CLI in `src/cmd/root.go`
+- [x] Create command stubs for all planned commands
+- [ ] Add global flags (--verbose, --dry-run, etc.) - planned for later phases
+- [ ] Implement version command - planned for later phases
 
 ### 1.4 Git Integration
-- [ ] Implement GitProvider in `pkg/git/git.go`:
+- [x] Implement GitProvider in `src/git/git.go`:
   - Check if in git repo
-  - Check if working tree is clean
+  - Check if working tree is clean (via GetStatus)
   - Create commits with prefixes
   - Get current branch
-  - List commits by prefix
+  - List commits by prefix (via GetLog)
 
-- [ ] Create comprehensive git tests using temporary repos
+- [x] Create comprehensive git tests using temporary repos
 
 ### 1.5 Mock Agent
-- [ ] Implement mock agent in `pkg/agent/mock.go`:
-  - Copy files from fixtures directory
-  - Support configurable responses
-  - Simulate delays and errors for testing
+- [x] Implement mock agent in `src/agent/mock.go`:
+  - [x] Support configurable responses via function fields
+  - [x] Default implementations for all Agent interface methods
+  - [ ] Copy files from fixtures directory - planned for later phases
+  - [ ] Simulate delays and errors for testing - can be added via function fields
 
 ### 1.6 Testing Infrastructure
-- [ ] Set up testutil package with helpers:
-  - Create/destroy temp git repos
-  - Load test fixtures
-  - Assert file contents
-  - Mock agent configuration
+- [x] Set up testing helpers directly in test files:
+  - Create/destroy temp git repos (in git_test.go)
+  - Load test fixtures (inline in tests)
+  - Assert file contents (using testify)
+  - Mock agent configuration (MockAgent struct)
 
-- [ ] Create unit tests for all components
-- [ ] Create integration tests for git operations
-- [ ] Ensure 80%+ code coverage
+- [x] Create unit tests for all components:
+  - Parser tests (intent_test.go, validation_test.go)
+  - Git tests (git_test.go)
+  - Command tests (init_test.go)
+- [x] Create integration tests for git operations
+- [ ] Ensure 80%+ code coverage - to be measured
 
 ## Success Criteria
-- [ ] `go build ./cmd/intentc` produces working binary
-- [ ] `intentc version` shows version info
-- [ ] All commands show help text
-- [ ] Git integration detects repo status correctly
-- [ ] Mock agent can simulate basic code generation
-- [ ] All tests pass with >80% coverage
+- [x] `go build .` produces working binary
+- [ ] `intentc version` shows version info - planned for later phases
+- [x] All commands show help text
+- [x] Git integration detects repo status correctly
+- [x] Mock agent can simulate basic code generation
+- [x] All tests pass
+- [ ] >80% coverage - to be measured
 
 ## CLAUDE.md Updates
 After Phase 1, add:
-- Build command: `go build ./cmd/intentc`
-- Test commands: `go test ./...` and `go test -cover ./...`
-- Project structure overview
-- Core interfaces documentation
+- [x] Build command: `go build .`
+- [x] Test commands: `go test ./...` and `go test -cover ./...`
+- [x] Project structure overview
+- [x] Core interfaces documentation
+- [x] Testing requirements for all future phases
