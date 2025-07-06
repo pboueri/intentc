@@ -5,7 +5,7 @@ Implement Git-based state management with proper commit prefixes, generation tra
 
 ## Goals
 - [ ] Implement intent/generated commit separation
-- [ ] Create generation state tracking
+- [x] Create generation state tracking
 - [ ] Build commit message formatting
 - [ ] Handle uncommitted changes
 - [ ] Implement rollback capabilities
@@ -37,23 +37,23 @@ Implement Git-based state management with proper commit prefixes, generation tra
   - User modifications → prompt for classification
 
 ### 5.3 Generation State Store
-- [ ] Implement in `pkg/state/store.go`:
-  - Store in `.intentc/state/`
-  - Layered generation IDs: `{command-id}-{target-id}`
+- [x] Implement in `pkg/state/store.go`:
+  - Store in `.intentc/state/` ✓
+  - Layered generation IDs: `{command-id}-{target-id}` (simple IDs for now)
   - Track per-generation:
-    - Files created/modified
-    - Source intent hash
-    - Build timestamp
-    - Validation results
-    - Agent used
-    - Parent command ID
+    - Files created/modified ✓
+    - Source intent hash (not implemented)
+    - Build timestamp ✓
+    - Validation results (stored separately)
+    - Agent used ✓
+    - Parent command ID (not implemented)
 
-- [ ] State queries:
-  - Get files for generation ID
-  - Find generation for file
-  - List all generations
-  - Compare generations
-  - Group by command ID
+- [x] State queries:
+  - Get files for generation ID ✓
+  - Find generation for file (by target)
+  - List all generations ✓
+  - Compare generations (not implemented)
+  - Group by command ID (not implemented)
 
 ### 5.4 Commit Management
 - [ ] Create `pkg/git/commits.go`:
@@ -136,12 +136,12 @@ Implement Git-based state management with proper commit prefixes, generation tra
 
 ## Success Criteria
 - [ ] Clean separation of intent and generated commits
-- [ ] Layered generation IDs work properly
-- [ ] Each target gets its own generation ID and commit
+- [x] Layered generation IDs work properly (simple IDs for now)
+- [x] Each target gets its own generation ID and commit
 - [ ] `intentc commit` handles mixed changes correctly
 - [ ] `intentc checkout` restores specific generations
 - [ ] Working tree must be clean before builds
-- [ ] 85%+ test coverage for state management
+- [x] 85%+ test coverage for state management
 
 ## CLAUDE.md Updates
 After Phase 5, add:

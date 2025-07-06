@@ -1,0 +1,183 @@
+package cleaner
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/parser"
+	"github.com/pboueri/intentc/src/state"
+)
+
+type Cleaner struct {
+	projectRoot  string
+	intentDir    string
+	stateManager state.StateManager
+	parser       *parser.Parser
+}
+
+type CleanOptions struct {
+	Target string
+	DryRun bool
+}
+
+func NewCleaner(projectRoot string, stateManager state.StateManager) *Cleaner {
+	return &Cleaner{
+		projectRoot:  projectRoot,
+		intentDir:    filepath.Join(projectRoot, "intent"),
+		stateManager: stateManager,
+		parser:       parser.New(),
+	}
+}
+
+func (c *Cleaner) Clean(ctx context.Context, opts CleanOptions) error {
+	targets, err := c.loadTargets(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load targets: %w", err)
+	}
+
+	dag, err := c.buildDependencyGraph(targets)
+	if err != nil {
+		return fmt.Errorf("failed to build dependency graph: %w", err)
+	}
+
+	var targetsToClean []*src.Target
+	if opts.Target != "" {
+		target, exists := targets[opts.Target]
+		if !exists {
+			return fmt.Errorf("target %s not found", opts.Target)
+		}
+		targetsToClean = c.getTargetsAndDependents(dag, target)
+	} else {
+		// Clean all targets
+		for _, target := range targets {
+			targetsToClean = append(targetsToClean, target)
+		}
+	}
+
+	if opts.DryRun {
+		fmt.Println("Targets to clean:")
+		for _, target := range targetsToClean {
+			fmt.Printf("  - %s\n", target.Name)
+		}
+		return nil
+	}
+
+	for _, target := range targetsToClean {
+		if err := c.cleanTarget(ctx, target); err != nil {
+			return fmt.Errorf("failed to clean target %s: %w", target.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func (c *Cleaner) cleanTarget(ctx context.Context, target *src.Target) error {
+	fmt.Printf("Cleaning target: %s\n", target.Name)
+
+	// Get the latest build result to find generated files
+	result, err := c.stateManager.GetLatestBuildResult(ctx, target.Name)
+	if err != nil {
+		return fmt.Errorf("failed to get build result: %w", err)
+	}
+
+	if result == nil {
+		fmt.Printf("Target %s has no build results, skipping\n", target.Name)
+		return nil
+	}
+
+	// Remove generated files
+	for _, file := range result.Files {
+		filePath := filepath.Join(c.projectRoot, file)
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("Warning: failed to remove %s: %v\n", file, err)
+		} else {
+			fmt.Printf("Removed: %s\n", file)
+		}
+	}
+
+	// Update target status
+	if err := c.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusPending); err != nil {
+		return fmt.Errorf("failed to update target status: %w", err)
+	}
+
+	fmt.Printf("Successfully cleaned target: %s\n", target.Name)
+	return nil
+}
+
+func (c *Cleaner) loadTargets(ctx context.Context) (map[string]*src.Target, error) {
+	targets := make(map[string]*src.Target)
+	
+	features, err := c.parser.ParseIntentDirectory(c.intentDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse intent directory: %w", err)
+	}
+
+	for _, feature := range features {
+		intent, err := c.parser.ParseIntentFile(filepath.Join(c.intentDir, feature, feature+".ic"))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse intent file for %s: %w", feature, err)
+		}
+
+		validations, err := c.parser.ParseValidationFiles(filepath.Join(c.intentDir, feature))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse validation files for %s: %w", feature, err)
+		}
+
+		target := &src.Target{
+			Name:        feature,
+			Intent:      intent,
+			Validations: validations,
+		}
+		targets[feature] = target
+	}
+
+	return targets, nil
+}
+
+func (c *Cleaner) buildDependencyGraph(targets map[string]*src.Target) (map[string]*src.Target, error) {
+	for name, target := range targets {
+		for _, depName := range target.Intent.Dependencies {
+			dep, exists := targets[depName]
+			if !exists {
+				return nil, fmt.Errorf("target %s depends on unknown target %s", name, depName)
+			}
+			target.Dependencies = append(target.Dependencies, dep)
+		}
+	}
+
+	return targets, nil
+}
+
+func (c *Cleaner) getTargetsAndDependents(dag map[string]*src.Target, target *src.Target) []*src.Target {
+	// Build reverse dependency map
+	dependents := make(map[string][]*src.Target)
+	for _, t := range dag {
+		for _, dep := range t.Dependencies {
+			dependents[dep.Name] = append(dependents[dep.Name], t)
+		}
+	}
+
+	// Collect all targets that depend on the given target
+	visited := make(map[string]bool)
+	var result []*src.Target
+
+	var visit func(t *src.Target)
+	visit = func(t *src.Target) {
+		if visited[t.Name] {
+			return
+		}
+		visited[t.Name] = true
+		result = append(result, t)
+
+		// Visit all targets that depend on this one
+		for _, dependent := range dependents[t.Name] {
+			visit(dependent)
+		}
+	}
+
+	visit(target)
+	return result
+}

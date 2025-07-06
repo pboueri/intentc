@@ -2,15 +2,13 @@ package agent
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/pboueri/intentc/src"
 )
 
 type MockAgent struct {
 	Name          string
-	BuildFunc     func(ctx context.Context, target *src.Target, previousGeneration *src.BuildResult) (*src.BuildResult, error)
+	BuildFunc     func(ctx context.Context, buildCtx BuildContext) ([]string, error)
 	RefineFunc    func(ctx context.Context, target *src.Target, prompt string) error
 	ValidateFunc  func(ctx context.Context, validation *src.Validation, generatedFiles []string) (bool, string, error)
 }
@@ -21,19 +19,13 @@ func NewMockAgent(name string) *MockAgent {
 	}
 }
 
-func (m *MockAgent) Build(ctx context.Context, target *src.Target, previousGeneration *src.BuildResult) (*src.BuildResult, error) {
+func (m *MockAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, error) {
 	if m.BuildFunc != nil {
-		return m.BuildFunc(ctx, target, previousGeneration)
+		return m.BuildFunc(ctx, buildCtx)
 	}
 	
 	// Default implementation
-	return &src.BuildResult{
-		Target:       target.Name,
-		GenerationID: fmt.Sprintf("mock-gen-%d", time.Now().Unix()),
-		Success:      true,
-		GeneratedAt:  time.Now(),
-		Files:        []string{"mock-file.go"},
-	}, nil
+	return []string{"mock-file.go"}, nil
 }
 
 func (m *MockAgent) Refine(ctx context.Context, target *src.Target, prompt string) error {

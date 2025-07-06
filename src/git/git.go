@@ -15,6 +15,10 @@ type gitManager struct {
 	repoPath string
 }
 
+func New() GitManager {
+	return &gitManager{}
+}
+
 func NewGitManager(repoPath string) GitManager {
 	return &gitManager{
 		repoPath: repoPath,

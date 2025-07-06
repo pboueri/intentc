@@ -7,8 +7,15 @@ import (
 	"github.com/pboueri/intentc/src"
 )
 
+type BuildContext struct {
+	Intent       *src.Intent
+	Validations  []*src.ValidationFile
+	ProjectRoot  string
+	GenerationID string
+}
+
 type Agent interface {
-	Build(ctx context.Context, target *src.Target, previousGeneration *src.BuildResult) (*src.BuildResult, error)
+	Build(ctx context.Context, buildCtx BuildContext) ([]string, error)
 	Refine(ctx context.Context, target *src.Target, prompt string) error
 	Validate(ctx context.Context, validation *src.Validation, generatedFiles []string) (bool, string, error)
 	GetName() string

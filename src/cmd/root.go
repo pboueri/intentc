@@ -19,6 +19,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(cleanCmd)
+	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(refineCmd)
