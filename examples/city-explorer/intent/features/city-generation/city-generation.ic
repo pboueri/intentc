@@ -1,0 +1,47 @@
+# Feature: City Generation
+
+## Dependencies
+- project/setup
+
+## Target: city-generation
+
+## Description
+Users should be able to instantly generate unique cities that feel authentic and diverse. Each city should have its own character while maintaining realistic urban planning principles.
+
+## User Experience
+- Choose from different city personalities (dense urban, sprawling suburban, historic European, modern planned)
+- Every visit creates a unique but consistent city using a shareable seed
+- Cities extend infinitely as users explore
+- Smooth performance even with thousands of buildings visible
+
+## City Characteristics
+
+### Dense Urban (Manhattan-style)
+- Towering skyscrapers creating dramatic skylines
+- Grid-based streets that are easy to navigate
+- Central parks providing breathing room
+- Gradual height transitions from center to edges
+
+### Historic European
+- Winding streets that invite exploration
+- Mixed building heights creating visual interest
+- Public squares and fountains as focal points
+- Narrow alleyways hiding surprises
+
+### Modern Planned
+- Organized districts with clear purposes
+- Green spaces integrated throughout
+- Wide boulevards and modern architecture
+- Efficient layout with aesthetic appeal
+
+### Suburban Sprawl
+- Residential neighborhoods with character
+- Shopping districts and community centers
+- Winding roads following natural contours
+- Parks and recreational areas
+
+## Performance Goals
+- Generate visible city sections in under 100ms
+- Support cities with millions of buildings
+- Maintain 60fps during exploration
+- Use memory efficiently with dynamic loading

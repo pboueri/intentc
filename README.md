@@ -1,2 +1,3 @@
 # intentc
-A compiler of intent
+
+[A Compiler of Intent](https://pboueri.github.io/blog/compilers-of-intent/)

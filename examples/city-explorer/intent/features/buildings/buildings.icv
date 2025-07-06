@@ -1,0 +1,31 @@
+# Validation: Buildings
+
+## Target: buildings
+
+### FileCheck
+- path: src/buildings/generator.js
+  check: Building generation system exists with variety in architecture styles and building types
+
+- path: src/buildings/lod.js
+  check: Level of detail system implemented for performance optimization at different viewing distances
+
+### FolderCheck
+- path: src/buildings/styles
+  check: Directory contains multiple building style definitions for residential, commercial, and special buildings
+
+- path: src/buildings
+  check: Buildings module exists with comprehensive building generation and rendering system
+
+### CommandLineCheck
+- command: npm test -- --testNamePattern="building variety"
+  check: Tests confirm buildings have visual variety with minimal repetition
+
+- command: npm run benchmark:buildings
+  check: Building rendering performance meets targets with smooth LOD transitions
+
+### WebCheck
+- url: http://localhost:5173/showcase/buildings
+  check: Building showcase displays diverse architecture with proper detail at all distances
+
+### ProjectCheck
+- check: Project includes 3D geometry generation and instancing capabilities for efficient building rendering

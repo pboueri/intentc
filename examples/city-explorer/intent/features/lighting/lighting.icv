@@ -1,0 +1,28 @@
+# Validation: Lighting
+
+## Target: lighting
+
+### FileCheck
+- path: src/lighting/time-of-day.js
+  check: Time of day system exists with dawn, daylight, dusk, and night lighting configurations
+
+- path: src/lighting/weather.js
+  check: Weather system implemented with clear, overcast, rainy, and foggy conditions
+
+### CommandLineCheck
+- command: npm test -- --testNamePattern="lighting"
+  check: Lighting tests pass including smooth time transitions and weather effects
+
+- command: npm run test:performance -- lighting
+  check: Lighting system maintains target frame rate across all time and weather conditions
+
+### WebCheck
+- url: http://localhost:5173/demo/lighting
+  check: Lighting demo shows beautiful atmospheric effects and smooth day/night transitions
+
+### FolderCheck
+- path: src/lighting
+  check: Lighting module contains comprehensive system for dynamic time of day and weather
+
+### ProjectCheck
+- check: Project includes proper lighting and shadow rendering capabilities with post-processing effects
