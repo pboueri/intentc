@@ -50,6 +50,11 @@ func (c *Cleaner) Clean(ctx context.Context, opts CleanOptions) error {
 			return fmt.Errorf("target %s not found", opts.Target)
 		}
 		targetsToClean = c.getTargetsAndDependents(dag, target)
+		// Debug output
+		// fmt.Printf("Debug: getTargetsAndDependents returned %d targets\n", len(targetsToClean))
+		// for _, t := range targetsToClean {
+		// 	fmt.Printf("  - %s\n", t.Name)
+		// }
 	} else {
 		// Clean all targets
 		for _, target := range targets {
@@ -116,7 +121,15 @@ func (c *Cleaner) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 	}
 
 	for _, feature := range features {
-		intent, err := c.parser.ParseIntentFile(filepath.Join(c.intentDir, feature, feature+".ic"))
+		featureDir := filepath.Join(c.intentDir, feature)
+		
+		// Find the .ic file in the directory
+		intentFile, err := c.parser.FindIntentFile(featureDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find intent file for %s: %w", feature, err)
+		}
+		
+		intent, err := c.parser.ParseIntentFile(intentFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse intent file for %s: %w", feature, err)
 		}
@@ -159,6 +172,16 @@ func (c *Cleaner) getTargetsAndDependents(dag map[string]*src.Target, target *sr
 			dependents[dep.Name] = append(dependents[dep.Name], t)
 		}
 	}
+	
+	// Debug: print dependency map
+	// fmt.Printf("Debug: Dependents map for target %s:\n", target.Name)
+	// for k, v := range dependents {
+	// 	fmt.Printf("  %s has dependents: ", k)
+	// 	for _, d := range v {
+	// 		fmt.Printf("%s ", d.Name)
+	// 	}
+	// 	fmt.Println()
+	// }
 
 	// Collect all targets that depend on the given target
 	visited := make(map[string]bool)

@@ -120,8 +120,8 @@ func TestBuilder_Build_SingleTarget(t *testing.T) {
 	buildCalled := false
 	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
 		buildCalled = true
-		if buildCtx.Intent.Name != "Feature 1" {
-			t.Errorf("Expected intent name Feature 1, got %s", buildCtx.Intent.Name)
+		if buildCtx.Intent.Name != "feature1" {
+			t.Errorf("Expected intent name feature1, got %s", buildCtx.Intent.Name)
 		}
 		return []string{"src/feature1.go"}, nil
 	}
@@ -171,12 +171,12 @@ func TestBuilder_Build_WithDependencies(t *testing.T) {
 		t.Errorf("Expected 2 builds, got %d", len(buildOrder))
 	}
 	
-	if buildOrder[0] != "Feature 1" {
-		t.Errorf("Expected Feature 1 to be built first, got %s", buildOrder[0])
+	if buildOrder[0] != "feature1" {
+		t.Errorf("Expected feature1 to be built first, got %s", buildOrder[0])
 	}
 	
-	if buildOrder[1] != "Feature 2" {
-		t.Errorf("Expected Feature 2 to be built second, got %s", buildOrder[1])
+	if buildOrder[1] != "feature2" {
+		t.Errorf("Expected feature2 to be built second, got %s", buildOrder[1])
 	}
 }
 
@@ -199,12 +199,12 @@ func TestBuilder_Build_AllTargets(t *testing.T) {
 		t.Fatalf("Build failed: %v", err)
 	}
 	
-	if !builtTargets["Feature 1"] {
-		t.Error("Expected Feature 1 to be built")
+	if !builtTargets["feature1"] {
+		t.Error("Expected feature1 to be built")
 	}
 	
-	if !builtTargets["Feature 2"] {
-		t.Error("Expected Feature 2 to be built")
+	if !builtTargets["feature2"] {
+		t.Error("Expected feature2 to be built")
 	}
 }
 
@@ -218,7 +218,7 @@ func TestBuilder_Build_SkipAlreadyBuilt(t *testing.T) {
 	
 	buildCalled := false
 	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
-		if buildCtx.Intent.Name == "Feature 1" {
+		if buildCtx.Intent.Name == "feature1" {
 			buildCalled = true
 		}
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
@@ -249,7 +249,7 @@ func TestBuilder_Build_ForceRebuild(t *testing.T) {
 	
 	buildCalled := false
 	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
-		if buildCtx.Intent.Name == "Feature 1" {
+		if buildCtx.Intent.Name == "feature1" {
 			buildCalled = true
 		}
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil

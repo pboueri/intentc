@@ -70,7 +70,7 @@ func (v *FileCheckValidator) Validate(ctx context.Context, validation *src.Valid
 
 	// Check content contains
 	containsParam, hasContains := validation.Parameters["contains"]
-	if hasContains && result.Passed {
+	if hasContains && (result.Passed || !hasExists) {
 		containsStr, ok := containsParam.(string)
 		if !ok {
 			return nil, fmt.Errorf("parameter 'contains' must be a string")
@@ -83,11 +83,14 @@ func (v *FileCheckValidator) Validate(ctx context.Context, validation *src.Valid
 			return result, nil
 		}
 
-		if contains(string(content), containsStr) {
+		fileContent := string(content)
+		if contains(fileContent, containsStr) {
+			result.Passed = true
+			result.Message = fmt.Sprintf("File %s contains expected text: %s", fileName, containsStr)
 			result.Details = append(result.Details, fmt.Sprintf("File contains expected text: %s", containsStr))
 		} else {
 			result.Passed = false
-			result.Message = fmt.Sprintf("File %s does not contain expected text: %s", fileName, containsStr)
+			result.Message = fmt.Sprintf("File %s does not contain expected text: %s (actual content: %q)", fileName, containsStr, fileContent)
 		}
 	}
 

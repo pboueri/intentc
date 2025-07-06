@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src/agent"
 	"github.com/pboueri/intentc/src/builder"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/state"
 )
@@ -43,6 +44,17 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in an intentc project (no .intentc found). Run 'intentc init' first")
 	}
 
+	// Load configuration
+	cfg, err := config.LoadConfig(projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Initialize logger with project config
+	if err := config.InitializeLogger(cfg, projectRoot); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
 	// Initialize git interface
 	gitInterface := git.New()
 	if err := gitInterface.Initialize(context.Background(), projectRoot); err != nil {
@@ -55,11 +67,25 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}
 
-	// Create agent (for now, use mock agent)
-	mockAgent := agent.NewMockAgent("default-agent")
+	// Create agent based on configuration
+	var buildAgent agent.Agent
+	switch cfg.Agent.Provider {
+	case "claude":
+		claudeConfig := agent.ClaudeAgentConfig{
+			Timeout:   cfg.Agent.Timeout,
+			Retries:   cfg.Agent.Retries,
+			RateLimit: cfg.Agent.RateLimit,
+			CLIArgs:   cfg.Agent.CLIArgs,
+		}
+		buildAgent = agent.NewClaudeAgent("default-agent", claudeConfig)
+	case "mock":
+		buildAgent = agent.NewMockAgent("default-agent")
+	default:
+		return fmt.Errorf("unknown agent provider: %s", cfg.Agent.Provider)
+	}
 
 	// Create builder
-	bldr := builder.NewBuilder(projectRoot, mockAgent, stateManager)
+	bldr := builder.NewBuilder(projectRoot, buildAgent, stateManager)
 
 	// Build options
 	opts := builder.BuildOptions{

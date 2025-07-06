@@ -44,9 +44,9 @@ User management system`
 	}
 	
 	// Check specific target
-	authTarget, exists := registry.GetTarget("Authentication")
+	authTarget, exists := registry.GetTarget("auth")
 	if !exists {
-		t.Error("Authentication target not found")
+		t.Error("auth target not found")
 	} else {
 		if len(authTarget.Intent.Dependencies) == 0 {
 			t.Error("Expected at least 1 dependency")
@@ -106,14 +106,18 @@ func TestTargetRegistry_RefreshTarget(t *testing.T) {
 	tmpDir := t.TempDir()
 	registry := NewTargetRegistry(tmpDir)
 	
+	// Create a proper directory structure
+	testDir := filepath.Join(tmpDir, "test")
+	os.MkdirAll(testDir, 0755)
+	
 	// Create and register a target
-	intentPath := filepath.Join(tmpDir, "test.ic")
+	intentPath := filepath.Join(testDir, "test.ic")
 	initialContent := `# Feature: Test
 Initial content`
 	os.WriteFile(intentPath, []byte(initialContent), 0644)
 	
 	intent := &IntentFile{
-		Name: "Test",
+		Name: "test",
 		Path: intentPath,
 		Description: "Initial",
 	}
@@ -127,19 +131,20 @@ Updated content`
 	os.WriteFile(intentPath, []byte(updatedContent), 0644)
 	
 	// Refresh the target
-	err := registry.RefreshTarget("Test")
+	err := registry.RefreshTarget("test")
 	if err != nil {
 		t.Fatalf("RefreshTarget failed: %v", err)
 	}
 	
 	// Check that target was updated
-	target, exists := registry.GetTarget("Test")
+	target, exists := registry.GetTarget("test")
 	if !exists {
 		t.Fatal("Target not found after refresh")
 	}
 	
-	if target.Intent.Name != "Test Updated" {
-		t.Errorf("Target name not updated, got %s", target.Intent.Name)
+	// The name should remain "test" (directory name) even after file update
+	if target.Intent.Name != "test" {
+		t.Errorf("Target name should not change from directory name, got %s", target.Intent.Name)
 	}
 }
 

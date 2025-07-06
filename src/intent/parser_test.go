@@ -177,7 +177,7 @@ func TestParser_DiscoverIntentFiles(t *testing.T) {
 		foundNames[intent.Name] = true
 	}
 	
-	expectedNames := []string{"Auth", "User", "Main", "Payment"}
+	expectedNames := []string{"auth", "user", "project", "payment"}
 	for _, name := range expectedNames {
 		if !foundNames[name] {
 			t.Errorf("Expected to find intent %s", name)

@@ -2,6 +2,10 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 
 	"github.com/pboueri/intentc/src"
 )
@@ -24,8 +28,44 @@ func (m *MockAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string,
 		return m.BuildFunc(ctx, buildCtx)
 	}
 	
-	// Default implementation
-	return []string{"mock-file.go"}, nil
+	// Default implementation for testing
+	// Parse the intent to extract file creation instructions
+	intentContent := buildCtx.Intent.Content
+	
+	// Look for patterns like "Create a file named X.txt" and "containing the keyword Y"
+	fileNameRegex := regexp.MustCompile(`(?i)create\s+a\s+file\s+named\s+(\S+\.txt)`)
+	keywordRegex := regexp.MustCompile(`(?i)containing\s+the\s+keyword\s+"([^"]+)"`)
+	
+	fileNameMatch := fileNameRegex.FindStringSubmatch(intentContent)
+	keywordMatch := keywordRegex.FindStringSubmatch(intentContent)
+	
+	if len(fileNameMatch) > 1 && len(keywordMatch) > 1 {
+		fileName := fileNameMatch[1]
+		keyword := keywordMatch[1]
+		
+		// Create the file
+		filePath := filepath.Join(buildCtx.ProjectRoot, fileName)
+		err := os.WriteFile(filePath, []byte(keyword), 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file: %w", err)
+		}
+		
+		// Return relative path
+		return []string{fileName}, nil
+	}
+	
+	// Fallback: create a default file
+	fileName := fmt.Sprintf("%s.txt", buildCtx.Intent.Name)
+	filePath := filepath.Join(buildCtx.ProjectRoot, fileName)
+	content := fmt.Sprintf("Generated content for %s", buildCtx.Intent.Name)
+	
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file: %w", err)
+	}
+	
+	// Return relative path
+	return []string{fileName}, nil
 }
 
 func (m *MockAgent) Refine(ctx context.Context, target *src.Target, prompt string) error {
@@ -39,7 +79,10 @@ func (m *MockAgent) Validate(ctx context.Context, validation *src.Validation, ge
 	if m.ValidateFunc != nil {
 		return m.ValidateFunc(ctx, validation, generatedFiles)
 	}
-	return true, "Mock validation passed", nil
+	
+	// For testing purposes, simply return success
+	// The actual validation is done by the validation system itself
+	return true, fmt.Sprintf("Mock validation passed for %s", validation.Name), nil
 }
 
 func (m *MockAgent) GetName() string {

@@ -139,11 +139,19 @@ func (r *Runner) GenerateReport(result *RunResult) string {
 	if len(result.Results) > 0 {
 		report += "Results:\n"
 		for name, valResult := range result.Results {
+			if valResult == nil {
+				report += fmt.Sprintf("  [ERROR] %s: validation result is nil\n", name)
+				continue
+			}
 			status := "PASS"
 			if !valResult.Passed {
 				status = "FAIL"
 			}
-			report += fmt.Sprintf("  [%s] %s: %s\n", status, name, valResult.Message)
+			msg := valResult.Message
+			if msg == "" {
+				msg = "(no message)"
+			}
+			report += fmt.Sprintf("  [%s] %s: %s\n", status, name, msg)
 			
 			if len(valResult.Details) > 0 {
 				for _, detail := range valResult.Details {

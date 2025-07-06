@@ -24,21 +24,16 @@ func (p *IntentParser) ParseIntent(filePath string) (*src.Intent, error) {
 
 	intent := &src.Intent{
 		FilePath:     filePath,
-		Name:         strings.TrimSuffix(filepath.Base(filepath.Dir(filePath)), "_feature"),
+		Name:         filepath.Base(filepath.Dir(filePath)),
 		Dependencies: []string{},
 		Content:      string(content),
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	nameFound := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		
-		if strings.HasPrefix(line, "# ") && !nameFound {
-			intent.Name = strings.TrimPrefix(line, "# ")
-			nameFound = true
-		}
-		
+		// Only parse dependencies, don't override the name
 		if strings.HasPrefix(line, "Depends On:") {
 			depLine := strings.TrimPrefix(line, "Depends On:")
 			deps := strings.Split(depLine, ",")

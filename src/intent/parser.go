@@ -244,16 +244,34 @@ func (p *Parser) discoverInDirectory(dir string) ([]*IntentFile, error) {
 		return nil, err
 	}
 	
+	// Count .ic files to ensure only one per directory
+	var icFiles []string
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".ic") {
-			filePath := filepath.Join(dir, entry.Name())
-			intent, err := p.ParseIntentFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse %s: %w", filePath, err)
-			}
-			intents = append(intents, intent)
+			icFiles = append(icFiles, entry.Name())
 		}
 	}
+	
+	if len(icFiles) == 0 {
+		// No .ic file in directory, skip silently
+		return intents, nil
+	}
+	
+	if len(icFiles) > 1 {
+		return nil, fmt.Errorf("multiple .ic files found in %s: %v", dir, icFiles)
+	}
+	
+	// Parse the single .ic file
+	filePath := filepath.Join(dir, icFiles[0])
+	intent, err := p.ParseIntentFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", filePath, err)
+	}
+	
+	// Override the name with the directory name
+	intent.Name = filepath.Base(dir)
+	
+	intents = append(intents, intent)
 	
 	return intents, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
 )
@@ -59,9 +60,9 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
 	}
 
 	if opts.DryRun {
-		fmt.Println("Targets to build:")
+		logger.Info("Targets to build:")
 		for _, target := range targetsToBuild {
-			fmt.Printf("  - %s\n", target.Name)
+			logger.Info("  - %s", target.Name)
 		}
 		return nil
 	}
@@ -82,11 +83,11 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 	}
 
 	if status == src.TargetStatusBuilt && !force {
-		fmt.Printf("Target %s is already built, skipping\n", target.Name)
+		logger.Info("Target %s is already built, skipping", target.Name)
 		return nil
 	}
 
-	fmt.Printf("Building target: %s\n", target.Name)
+	logger.Info("Building target: %s", target.Name)
 	
 	if err := b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusBuilding); err != nil {
 		return fmt.Errorf("failed to update target status: %w", err)
@@ -123,7 +124,7 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 		return fmt.Errorf("failed to update target status: %w", err)
 	}
 
-	fmt.Printf("Successfully built target: %s (generation ID: %s)\n", target.Name, generationID)
+	logger.Info("Successfully built target: %s (generation ID: %s)", target.Name, generationID)
 	return nil
 }
 
@@ -136,12 +137,20 @@ func (b *Builder) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 	}
 
 	for _, feature := range features {
-		intent, err := b.parser.ParseIntentFile(filepath.Join(b.intentDir, feature, feature+".ic"))
+		featureDir := filepath.Join(b.intentDir, feature)
+		
+		// Find the .ic file in the directory
+		intentFile, err := b.parser.FindIntentFile(featureDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find intent file for %s: %w", feature, err)
+		}
+		
+		intent, err := b.parser.ParseIntentFile(intentFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse intent file for %s: %w", feature, err)
 		}
 
-		validations, err := b.parser.ParseValidationFiles(filepath.Join(b.intentDir, feature))
+		validations, err := b.parser.ParseValidationFiles(featureDir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse validation files for %s: %w", feature, err)
 		}

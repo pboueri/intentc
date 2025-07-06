@@ -5,9 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -57,18 +58,23 @@ func TestInitCommand(t *testing.T) {
 	_, err = os.Stat(validationICV)
 	assert.NoError(t, err)
 
-	configFile := filepath.Join(tmpDir, ".intentc")
+	// Check .intentc directory exists
+	configDir := filepath.Join(tmpDir, ".intentc")
+	_, err = os.Stat(configDir)
+	assert.NoError(t, err)
+
+	// Check config.yaml file exists
+	configFile := filepath.Join(configDir, "config.yaml")
 	configData, err := os.ReadFile(configFile)
 	require.NoError(t, err)
 
-	var config src.ProjectConfig
+	var config config.Config
 	err = yaml.Unmarshal(configData, &config)
 	require.NoError(t, err)
 
-	assert.Equal(t, "1.0", config.Version)
-	assert.Equal(t, "claude-code", config.DefaultAgent)
-	assert.Contains(t, config.Agents, "claude-code")
-	assert.Equal(t, "claude-code", config.Agents["claude-code"].Type)
+	assert.Equal(t, 1, config.Version)
+	assert.Equal(t, "claude", config.Agent.Provider)
+	assert.Equal(t, 5*time.Minute, config.Agent.Timeout)
 }
 
 func TestInitCommand_RequiresGit(t *testing.T) {

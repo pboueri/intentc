@@ -8,15 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src/logger"
 )
 
 var (
-	checkVerbose bool
-	checkFix     bool
+	checkFix bool
 )
 
 func init() {
-	checkCmd.Flags().BoolVarP(&checkVerbose, "verbose", "v", false, "Show detailed validation information")
 	checkCmd.Flags().BoolVar(&checkFix, "fix", false, "Attempt to fix common issues")
 }
 
@@ -94,7 +93,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print results
-	printCheckResults(results, checkVerbose)
+	printCheckResults(results)
 
 	// Return error if any validation failed
 	hasErrors := false
@@ -183,7 +182,7 @@ func checkTarget(target *intent.TargetInfo, registry *intent.TargetRegistry, par
 	return result
 }
 
-func printCheckResults(results []CheckResult, verbose bool) {
+func printCheckResults(results []CheckResult) {
 	fmt.Println("\nIntent File Validation Report")
 	fmt.Println("=============================")
 
@@ -216,34 +215,30 @@ func printCheckResults(results []CheckResult, verbose bool) {
 
 		fmt.Printf("%s[%s] %s%s\033[0m\n", statusColor, status, result.Target, "")
 
-		if verbose || !result.Valid {
-			// Print errors
-			for _, err := range result.Errors {
-				fmt.Printf("  \033[31mERROR:\033[0m %s\n", err)
-			}
+		// Always print errors
+		for _, err := range result.Errors {
+			fmt.Printf("  \033[31mERROR:\033[0m %s\n", err)
+		}
 
-			// Print warnings
-			if verbose {
-				for _, warn := range result.Warnings {
-					fmt.Printf("  \033[33mWARN:\033[0m %s\n", warn)
-				}
-			}
+		// Print warnings at info level
+		for _, warn := range result.Warnings {
+			logger.Info("  \033[33mWARN:\033[0m %s", warn)
+		}
 
-			// Print suggestions
-			if len(result.Suggestions) > 0 {
-				fmt.Println("  Suggestions:")
-				for _, suggestion := range result.Suggestions {
-					fmt.Printf("    • %s\n", suggestion)
-				}
+		// Print suggestions
+		if len(result.Suggestions) > 0 {
+			logger.Info("  Suggestions:")
+			for _, suggestion := range result.Suggestions {
+				logger.Info("    • %s", suggestion)
 			}
+		}
 
-			if !result.Valid || (verbose && len(result.Warnings) > 0) {
-				fmt.Println()
-			}
+		if !result.Valid || len(result.Warnings) > 0 {
+			fmt.Println()
 		}
 	}
 
-	if !verbose && totalWarnings > 0 {
-		fmt.Printf("\nRun with --verbose to see %d warnings\n", totalWarnings)
+	if totalWarnings > 0 {
+		logger.Info("\nUse -v flag to see %d warnings", totalWarnings)
 	}
 }

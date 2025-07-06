@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src"
-	"gopkg.in/yaml.v3"
+	"github.com/pboueri/intentc/src/logger"
 )
 
 var initCmd = &cobra.Command{
@@ -114,42 +115,51 @@ Ensures the project builds successfully.
 		return fmt.Errorf("failed to create example validation: %w", err)
 	}
 
-	defaultConfig := src.ProjectConfig{
-		Version:      "1.0",
-		DefaultAgent: "claude-code",
-		Agents: map[string]src.Agent{
-			"claude-code": {
-				Type:    "claude-code",
-				Command: "claude-code",
-				Parameters: map[string]string{
-					"model": "claude-3-5-sonnet-20241022",
-				},
-			},
+	// Handle existing .intentc file (from old version)
+	intentcPath := filepath.Join(cwd, ".intentc")
+	if info, err := os.Stat(intentcPath); err == nil && !info.IsDir() {
+		// Backup old .intentc file
+		backupPath := filepath.Join(cwd, ".intentc.old")
+		if err := os.Rename(intentcPath, backupPath); err != nil {
+			return fmt.Errorf("failed to backup old .intentc file: %w", err)
+		}
+		logger.Info("✓ Backed up old .intentc file to .intentc.old")
+	}
+
+	// Create .intentc directory
+	intentcDir := filepath.Join(cwd, ".intentc")
+	if err := os.MkdirAll(intentcDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .intentc directory: %w", err)
+	}
+
+	// Create default configuration
+	defaultConfig := &config.Config{
+		Version: 1,
+		Agent: config.AgentConfig{
+			Provider:  "claude",
+			Timeout:   5 * time.Minute,
+			Retries:   3,
+			RateLimit: 1 * time.Second,
 		},
-		Settings: map[string]string{
-			"auto_validate": "true",
-			"verbose":       "false",
+		Build: config.BuildConfig{
+			Parallel:     false, // Sequential by default for git state tracking
+			CacheEnabled: false,
 		},
 	}
 
-	configData, err := yaml.Marshal(&defaultConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+	if err := config.SaveConfig(cwd, defaultConfig); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	configFile := filepath.Join(cwd, ".intentc")
-	if err := os.WriteFile(configFile, configData, 0644); err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
-	}
-
-	fmt.Println("✓ Initialized intentc project structure")
-	fmt.Println("✓ Created intent directory")
-	fmt.Println("✓ Created example feature")
-	fmt.Println("✓ Created .intentc configuration file")
-	fmt.Println("\nNext steps:")
-	fmt.Println("1. Edit intent/project.ic to define your project's overall intent")
-	fmt.Println("2. Create feature folders in intent/ for each feature")
-	fmt.Println("3. Run 'intentc build' to generate code from your intents")
+	logger.Info("✓ Initialized intentc project structure")
+	logger.Info("✓ Created intent directory")
+	logger.Info("✓ Created example feature")
+	logger.Info("✓ Created .intentc/config.yaml configuration file")
+	logger.Info("\nNext steps:")
+	logger.Info("1. Edit intent/project.ic to define your project's overall intent")
+	logger.Info("2. Create feature folders in intent/ for each feature")
+	logger.Info("3. Ensure you have Claude Code CLI installed and authenticated")
+	logger.Info("4. Run 'intentc build' to generate code from your intents")
 
 	return nil
 }

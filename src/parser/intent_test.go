@@ -33,7 +33,7 @@ This is a test feature.`,
 				name         string
 				dependencies []string
 			}{
-				name:         "Test Feature",
+				name:         "test_feature",
 				dependencies: []string{"feature1", "feature2"},
 			},
 		},
@@ -48,7 +48,7 @@ This is a simple feature.`,
 				name         string
 				dependencies []string
 			}{
-				name:         "Simple Feature",
+				name:         "test_feature",
 				dependencies: []string{},
 			},
 		},

@@ -260,6 +260,9 @@ func (r *TargetRegistry) RefreshTarget(name string) error {
 		return fmt.Errorf("failed to parse intent file: %w", err)
 	}
 	
+	// Override the name with the directory name (consistent with discoverInDirectory)
+	intent.Name = filepath.Base(filepath.Dir(target.Intent.Path))
+	
 	// Update the target
 	target.Intent = intent
 	

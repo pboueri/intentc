@@ -71,7 +71,7 @@ type ProjectConfig struct {
 }
 
 type Agent struct {
-	Type       string            `yaml:"type"`
-	Command    string            `yaml:"command"`
-	Parameters map[string]string `yaml:"parameters"`
+	Name   string                 `yaml:"name"`
+	Type   string                 `yaml:"type"`
+	Config map[string]interface{} `yaml:"config,omitempty"`
 }

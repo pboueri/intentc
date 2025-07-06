@@ -26,6 +26,14 @@ func NewGitStateManager(gitInterface git.GitManager, projectRoot string) *GitSta
 }
 
 func (m *GitStateManager) Initialize(ctx context.Context) error {
+	// Ensure .intentc exists as a directory
+	intentcPath := filepath.Join(m.projectRoot, ".intentc")
+	if info, err := os.Stat(intentcPath); err == nil && !info.IsDir() {
+		// If .intentc exists but is not a directory, we have a problem
+		return fmt.Errorf(".intentc exists but is not a directory - please run 'intentc init' to fix this")
+	}
+	
+	// Create state directory
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}

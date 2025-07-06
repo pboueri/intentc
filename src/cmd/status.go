@@ -11,16 +11,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/state"
 )
 
 var (
-	statusVerbose bool
-	statusTree    bool
+	statusTree bool
 )
 
 func init() {
-	statusCmd.Flags().BoolVarP(&statusVerbose, "verbose", "v", false, "Show detailed status information")
 	statusCmd.Flags().BoolVarP(&statusTree, "tree", "t", true, "Show dependency tree visualization")
 }
 
@@ -71,7 +70,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := dag.BuildFromIntents(intents); err != nil {
-		fmt.Printf("Warning: %v\n\n", err)
+		logger.Warn("Warning: %v", err)
 	}
 
 	// Print git status
@@ -80,13 +79,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Git Branch: %s\n", gitStatus.Branch)
 		if !gitStatus.Clean {
 			fmt.Printf("Working tree: \033[33mUncommitted changes\033[0m\n")
-			if statusVerbose {
-				if len(gitStatus.ModifiedFiles) > 0 {
-					fmt.Printf("  Modified: %s\n", strings.Join(gitStatus.ModifiedFiles, ", "))
-				}
-				if len(gitStatus.UntrackedFiles) > 0 {
-					fmt.Printf("  Untracked: %s\n", strings.Join(gitStatus.UntrackedFiles, ", "))
-				}
+			if len(gitStatus.ModifiedFiles) > 0 {
+				logger.Info("  Modified: %s", strings.Join(gitStatus.ModifiedFiles, ", "))
+			}
+			if len(gitStatus.UntrackedFiles) > 0 {
+				logger.Info("  Untracked: %s", strings.Join(gitStatus.UntrackedFiles, ", "))
 			}
 		} else {
 			fmt.Printf("Working tree: \033[32mClean\033[0m\n")
@@ -115,7 +112,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	
 	targets := registry.GetAllTargets()
 	for _, target := range targets {
-		printTargetStatus(context.Background(), target, stateManager, statusVerbose)
+		printTargetStatus(context.Background(), target, stateManager)
 	}
 
 	// Print summary
@@ -140,7 +137,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printTargetStatus(ctx context.Context, target *intent.TargetInfo, stateManager state.StateManager, verbose bool) {
+func printTargetStatus(ctx context.Context, target *intent.TargetInfo, stateManager state.StateManager) {
 	status, err := stateManager.GetTargetStatus(ctx, target.Name)
 	if err != nil {
 		status = "pending"
@@ -166,29 +163,25 @@ func printTargetStatus(ctx context.Context, target *intent.TargetInfo, stateMana
 
 	fmt.Printf("\n%s: %s\n", target.Name, statusStr)
 
-	if verbose {
-		if target.Intent != nil {
-			fmt.Printf("  Intent: %s\n", target.Intent.Path)
-			if len(target.Intent.Dependencies) > 0 {
-				fmt.Printf("  Dependencies: %s\n", strings.Join(target.Intent.Dependencies, ", "))
+	if target.Intent != nil {
+		logger.Info("  Intent: %s", target.Intent.Path)
+		if len(target.Intent.Dependencies) > 0 {
+			logger.Info("  Dependencies: %s", strings.Join(target.Intent.Dependencies, ", "))
+		}
+	}
+
+	if result != nil {
+		logger.Info("  Generation ID: %s", result.GenerationID)
+		logger.Info("  Generated at: %s", result.GeneratedAt.Format(time.RFC3339))
+		if len(result.Files) > 0 {
+			logger.Info("  Generated files: %d", len(result.Files))
+			for _, file := range result.Files {
+				logger.Debug("    - %s", file)
 			}
 		}
+	}
 
-		if result != nil {
-			fmt.Printf("  Generation ID: %s\n", result.GenerationID)
-			fmt.Printf("  Generated at: %s\n", result.GeneratedAt.Format(time.RFC3339))
-			if len(result.Files) > 0 {
-				fmt.Printf("  Generated files: %d\n", len(result.Files))
-				if verbose {
-					for _, file := range result.Files {
-						fmt.Printf("    - %s\n", file)
-					}
-				}
-			}
-		}
-
-		if len(target.ValidationFiles) > 0 {
-			fmt.Printf("  Validation files: %d\n", len(target.ValidationFiles))
-		}
+	if len(target.ValidationFiles) > 0 {
+		logger.Info("  Validation files: %d", len(target.ValidationFiles))
 	}
 }
