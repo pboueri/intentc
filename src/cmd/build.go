@@ -71,6 +71,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	var buildAgent agent.Agent
 	switch cfg.Agent.Provider {
 	case "claude":
+		// For backwards compatibility, claude provider uses the ClaudeAgent
 		claudeConfig := agent.ClaudeAgentConfig{
 			Timeout:   cfg.Agent.Timeout,
 			Retries:   cfg.Agent.Retries,
@@ -78,10 +79,37 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			CLIArgs:   cfg.Agent.CLIArgs,
 		}
 		buildAgent = agent.NewClaudeAgent("default-agent", claudeConfig)
+	case "cli":
+		// Generic CLI agent
+		if cfg.Agent.Command == "" {
+			return fmt.Errorf("CLI agent requires 'command' to be specified in config")
+		}
+		cliConfig := agent.CLIAgentConfig{
+			Name:      "default-agent",
+			Command:   cfg.Agent.Command,
+			Args:      cfg.Agent.CLIArgs,
+			Timeout:   cfg.Agent.Timeout,
+			Retries:   cfg.Agent.Retries,
+			RateLimit: cfg.Agent.RateLimit,
+		}
+		buildAgent = agent.NewCLIAgent(cliConfig)
 	case "mock":
 		buildAgent = agent.NewMockAgent("default-agent")
 	default:
-		return fmt.Errorf("unknown agent provider: %s", cfg.Agent.Provider)
+		// Check if command is specified for custom CLI agent
+		if cfg.Agent.Command != "" {
+			cliConfig := agent.CLIAgentConfig{
+				Name:      "default-agent",
+				Command:   cfg.Agent.Command,
+				Args:      cfg.Agent.CLIArgs,
+				Timeout:   cfg.Agent.Timeout,
+				Retries:   cfg.Agent.Retries,
+				RateLimit: cfg.Agent.RateLimit,
+			}
+			buildAgent = agent.NewCLIAgent(cliConfig)
+		} else {
+			return fmt.Errorf("unknown agent provider: %s", cfg.Agent.Provider)
+		}
 	}
 
 	// Create builder

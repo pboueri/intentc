@@ -16,6 +16,10 @@ Implementation in progress:
   - Implemented retry logic and error handling
   - Added configuration support for timeout and rate limiting
   - Comprehensive test coverage
+  - **NEW**: Generic CLI Agent support - any CLI tool can now be used as a coding agent
+    - Claude agent refactored to inherit from generic CLI agent
+    - Maintains backwards compatibility
+    - See `docs/cli-agent-examples.md` for usage examples
 
 ## Architecture Overview
 
@@ -53,6 +57,36 @@ intentc config              # Configure agents and models
 - **`.ic` files**: Intent definitions in markdown format
 - **`.icv` files**: Validation constraints in structured markdown
 - **Generation IDs**: Track different build iterations
+
+## Agent System
+
+intentc supports multiple types of coding agents:
+
+1. **Claude Agent** (default): Uses Claude Code CLI (`claude` command)
+2. **Generic CLI Agent**: Can use any CLI tool that accepts prompts via stdin
+3. **Mock Agent**: For testing purposes
+
+### Configuration Examples
+
+```yaml
+# Claude (default)
+agent:
+  provider: claude
+  timeout: 5m
+  cli_args: []
+
+# Generic CLI tool
+agent:
+  provider: cli
+  command: your-cli-tool
+  cli_args: ["--flag", "value"]
+
+# Custom tool with provider name
+agent:
+  provider: amp
+  command: amp
+  cli_args: ["--mode", "code"]
+```
 
 ## Development Workflow
 

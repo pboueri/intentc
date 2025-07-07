@@ -19,6 +19,7 @@ type Config struct {
 
 type AgentConfig struct {
 	Provider  string               `yaml:"provider"`
+	Command   string               `yaml:"command,omitempty"`   // For custom CLI agents
 	Timeout   time.Duration        `yaml:"timeout"`
 	Retries   int                  `yaml:"retries,omitempty"`
 	RateLimit time.Duration        `yaml:"rate_limit,omitempty"`

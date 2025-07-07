@@ -8,6 +8,7 @@ import (
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/intent"
 	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
@@ -131,36 +132,42 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 func (b *Builder) loadTargets(ctx context.Context) (map[string]*src.Target, error) {
 	targets := make(map[string]*src.Target)
 	
-	features, err := b.parser.ParseIntentDirectory(b.intentDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse intent directory: %w", err)
+	// Create target registry and load all targets
+	targetRegistry := intent.NewTargetRegistry(b.projectRoot)
+	if err := targetRegistry.LoadTargets(); err != nil {
+		return nil, fmt.Errorf("failed to load targets: %w", err)
 	}
 
-	for _, feature := range features {
-		featureDir := filepath.Join(b.intentDir, feature)
-		
-		// Find the .ic file in the directory
-		intentFile, err := b.parser.FindIntentFile(featureDir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find intent file for %s: %w", feature, err)
-		}
-		
-		intent, err := b.parser.ParseIntentFile(intentFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse intent file for %s: %w", feature, err)
+	// Convert from registry format to builder format
+	for _, targetInfo := range targetRegistry.GetAllTargets() {
+		if targetInfo.Intent == nil {
+			continue
 		}
 
-		validations, err := b.parser.ParseValidationFiles(featureDir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse validation files for %s: %w", feature, err)
+		// Convert IntentFile to Intent
+		intentData := &src.Intent{
+			Name:         targetInfo.Intent.Name,
+			Dependencies: targetInfo.Intent.Dependencies,
+			Content:      targetInfo.Intent.RawContent,
+			FilePath:     targetInfo.Intent.Path,
+		}
+
+		// Parse validation files
+		var validations []*src.ValidationFile
+		for _, valFilePath := range targetInfo.ValidationFiles {
+			valFile, err := b.parser.ParseValidationFile(valFilePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse validation file %s: %w", valFilePath, err)
+			}
+			validations = append(validations, valFile)
 		}
 
 		target := &src.Target{
-			Name:        feature,
-			Intent:      intent,
+			Name:        targetInfo.Name,
+			Intent:      intentData,
 			Validations: validations,
 		}
-		targets[feature] = target
+		targets[targetInfo.Name] = target
 	}
 
 	return targets, nil

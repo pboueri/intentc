@@ -11,6 +11,7 @@ import (
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
 	"github.com/pboueri/intentc/src/git"
+	"github.com/pboueri/intentc/src/intent"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
 	"github.com/pboueri/intentc/src/validation"
@@ -68,30 +69,42 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	// Create validation runner
 	runner := validation.NewRunner(projectRoot, registry)
 
-	// Parse targets
-	p := parser.New()
-	intentDir := filepath.Join(projectRoot, "intent")
-	
+	// Create target registry and load targets
+	targetRegistry := intent.NewTargetRegistry(projectRoot)
+	if err := targetRegistry.LoadTargets(); err != nil {
+		return fmt.Errorf("failed to load targets: %w", err)
+	}
+
 	if len(args) == 0 {
 		return fmt.Errorf("target name required")
 	}
 
 	targetName := args[0]
 	
-	// Load target
-	intent, err := p.ParseIntentFile(filepath.Join(intentDir, targetName, targetName+".ic"))
-	if err != nil {
-		return fmt.Errorf("failed to parse intent file: %w", err)
+	// Get target from registry
+	targetInfo, exists := targetRegistry.GetTarget(targetName)
+	if !exists {
+		return fmt.Errorf("target %s not found", targetName)
 	}
 
-	validations, err := p.ParseValidationFiles(filepath.Join(intentDir, targetName))
-	if err != nil {
-		return fmt.Errorf("failed to parse validation files: %w", err)
+	if targetInfo.Intent == nil {
+		return fmt.Errorf("target %s has no intent file", targetName)
+	}
+
+	// Parse validation files
+	p := parser.New()
+	var validations []*src.ValidationFile
+	for _, valFilePath := range targetInfo.ValidationFiles {
+		valFile, err := p.ParseValidationFile(valFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to parse validation file %s: %w", valFilePath, err)
+		}
+		validations = append(validations, valFile)
 	}
 
 	target := &src.Target{
 		Name:        targetName,
-		Intent:      intent,
+		Intent:      convertIntentFileToIntent(targetInfo.Intent),
 		Validations: validations,
 	}
 
@@ -126,4 +139,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// convertIntentFileToIntent converts from intent.IntentFile to src.Intent
+func convertIntentFileToIntent(intentFile *intent.IntentFile) *src.Intent {
+	return &src.Intent{
+		Name:         intentFile.Name,
+		Dependencies: intentFile.Dependencies,
+		Content:      intentFile.RawContent,
+		FilePath:     intentFile.Path,
+	}
 }

@@ -104,3 +104,8 @@ func (p *Parser) ParseValidationFiles(featureDir string) ([]*src.ValidationFile,
 
 	return validationFiles, nil
 }
+
+// ParseValidationFile parses a single validation file
+func (p *Parser) ParseValidationFile(filePath string) (*src.ValidationFile, error) {
+	return p.validationParser.ParseValidationFile(filePath)
+}
