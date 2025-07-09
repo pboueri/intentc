@@ -79,6 +79,7 @@ func init() {
 	rootCmd.AddCommand(checkoutCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(helpCmd)
+	rootCmd.AddCommand(decompileCmd)
 }
 
 // LoadConfigWithOverrides loads config and applies command-line overrides
