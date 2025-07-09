@@ -1,11 +1,9 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/pboueri/intentc/src"
@@ -98,25 +96,16 @@ func (c *ClaudeAgent) Build(ctx context.Context, buildCtx BuildContext) ([]strin
 
 // Refine overrides the CLIAgent Refine method to use Claude-specific prompts
 func (c *ClaudeAgent) Refine(ctx context.Context, target *src.Target, userPrompt string) error {
-	// Create refinement prompt using template
-	tmpl, err := template.New("refine").Parse(c.templates.Refine)
+	// Use common template data preparation
+	data := PrepareRefinementData(target, userPrompt, nil, nil)
+
+	prompt, err := ExecuteTemplate(c.templates.Refine, data)
 	if err != nil {
-		return fmt.Errorf("failed to parse refine template: %w", err)
-	}
-
-	data := PromptData{
-		TargetName:   target.Name,
-		UserFeedback: userPrompt,
-		// TODO: Could populate GeneratedFiles and ValidationErrors from state
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("failed to execute refine template: %w", err)
+		return fmt.Errorf("failed to create refine prompt: %w", err)
 	}
 
 	// Execute refinement
-	output, err := c.executeCLI(ctx, buf.String())
+	output, err := c.executeCLI(ctx, prompt)
 	if err != nil {
 		return fmt.Errorf("refinement failed: %w", err)
 	}
@@ -127,27 +116,16 @@ func (c *ClaudeAgent) Refine(ctx context.Context, target *src.Target, userPrompt
 
 // Validate overrides the CLIAgent Validate method to use Claude-specific prompts
 func (c *ClaudeAgent) Validate(ctx context.Context, validation *src.Validation, generatedFiles []string) (bool, string, error) {
-	// Create validation prompt using template
-	tmpl, err := template.New("validate").Parse(c.templates.Validate)
+	// Use common template data preparation
+	data := PrepareValidationData(validation, generatedFiles)
+
+	prompt, err := ExecuteTemplate(c.templates.Validate, data)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to parse validate template: %w", err)
-	}
-
-	data := PromptData{
-		ValidationName:        validation.Name,
-		ValidationType:        string(validation.Type),
-		ValidationDescription: validation.Description,
-		ValidationDetails:     GetValidationDetails(validation),
-		GeneratedFiles:        generatedFiles,
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return false, "", fmt.Errorf("failed to execute validate template: %w", err)
+		return false, "", fmt.Errorf("failed to create validate prompt: %w", err)
 	}
 
 	// Execute validation
-	output, err := c.executeCLI(ctx, buf.String())
+	output, err := c.executeCLI(ctx, prompt)
 	if err != nil {
 		return false, "", fmt.Errorf("validation check failed: %w", err)
 	}
@@ -161,56 +139,10 @@ func (c *ClaudeAgent) Validate(ctx context.Context, validation *src.Validation, 
 
 // createClaudeBuildPrompt creates a Claude-specific build prompt using the template
 func (c *ClaudeAgent) createClaudeBuildPrompt(buildCtx BuildContext) (string, error) {
-	tmpl, err := template.New("build").Parse(c.templates.Build)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse build template: %w", err)
-	}
-
-	// Prepare dependencies string
-	dependencies := ""
-	if len(buildCtx.Intent.Dependencies) > 0 {
-		dependencies = strings.Join(buildCtx.Intent.Dependencies, ", ")
-	}
-
-	// Prepare template data with proper validation structure
-	data := map[string]interface{}{
-		"ProjectRoot":   buildCtx.ProjectRoot,
-		"GenerationID":  buildCtx.GenerationID,
-		"IntentName":    buildCtx.Intent.Name,
-		"IntentContent": buildCtx.Intent.Content,
-		"Dependencies":  dependencies,
-	}
-
-	// Convert validations to template-friendly format
-	var validations []map[string]interface{}
-	for _, valFile := range buildCtx.Validations {
-		var vals []map[string]interface{}
-		for _, val := range valFile.Validations {
-			valData := map[string]interface{}{
-				"Name":        val.Name,
-				"Type":        string(val.Type),
-				"Description": val.Description,
-			}
-			if details := GetValidationDetails(&val); details != "" {
-				valData["Details"] = details
-			}
-			vals = append(vals, valData)
-		}
-		validations = append(validations, map[string]interface{}{
-			"Validations": vals,
-		})
-	}
-
-	if len(validations) > 0 {
-		data["Validations"] = validations
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute build template: %w", err)
-	}
-
-	return buf.String(), nil
+	// Use common template data preparation
+	data := PrepareTemplateData(buildCtx)
+	
+	return ExecuteTemplate(c.templates.Build, data)
 }
 
 // parseClaudeGeneratedFiles provides Claude-specific file parsing logic

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/parser"
+	"github.com/pboueri/intentc/src/validation"
 )
 
 var validationCmd = &cobra.Command{
@@ -41,79 +42,8 @@ func runValidationList(cmd *cobra.Command, args []string) error {
 	// Use cmd.OutOrStdout() to respect output redirection in tests
 	out := cmd.OutOrStdout()
 	
-	validationTypes := []struct {
-		Type        src.ValidationType
-		Description string
-		Example     string
-	}{
-		{
-			Type:        src.ValidationTypeFileCheck,
-			Description: "Validates file existence and content",
-			Example: `## Check main.go exists
-Type: FileCheck
-
-### Parameters
-- file: src/main.go
-- exists: true
-- contains: package main
-
-### Description
-Ensures the main.go file exists and contains the package declaration`,
-		},
-		{
-			Type:        src.ValidationTypeFolderCheck,
-			Description: "Validates directory existence and structure",
-			Example: `## Check src directory
-Type: FolderCheck
-
-### Parameters
-- folder: src
-- exists: true
-- min_files: 1
-
-### Description
-Ensures the src directory exists and contains at least one file`,
-		},
-		{
-			Type:        src.ValidationTypeCommandLineCheck,
-			Description: "Executes commands and validates output",
-			Example: `## Test suite passes
-Type: CommandLineCheck
-
-### Parameters
-- command: go test ./...
-- exit_code: 0
-- output_contains: PASS
-
-### Description
-Runs the test suite and ensures all tests pass`,
-		},
-		{
-			Type:        src.ValidationTypeWebCheck,
-			Description: "Tests web endpoints and content (uses AI agent)",
-			Example: `## Homepage responds
-Type: WebCheck
-
-### Parameters
-- url: http://localhost:8080
-- check: Verify the homepage loads and contains a welcome message
-
-### Description
-Uses AI to check if the web server is running and serving content`,
-		},
-		{
-			Type:        src.ValidationTypeProjectCheck,
-			Description: "Validates overall project structure (uses AI agent)",
-			Example: `## Project structure valid
-Type: ProjectCheck
-
-### Parameters
-- check: Verify the project follows Go module structure with go.mod and proper package organization
-
-### Description
-Uses AI to validate the overall project structure and setup`,
-		},
-	}
+	// Get validation types from centralized registry
+	validationTypes := validation.GetValidationTypes()
 
 	fmt.Fprintln(out, "Available Validation Types:")
 	fmt.Fprintln(out, "==========================")
@@ -122,6 +52,9 @@ Uses AI to validate the overall project structure and setup`,
 	for _, vt := range validationTypes {
 		fmt.Fprintf(out, "Type: %s\n", vt.Type)
 		fmt.Fprintf(out, "Description: %s\n", vt.Description)
+		if vt.Category != "" {
+			fmt.Fprintf(out, "Category: %s\n", vt.Category)
+		}
 		fmt.Fprintln(out, "\nExample:")
 		fmt.Fprintln(out, "```")
 		fmt.Fprintln(out, vt.Example)
@@ -136,19 +69,11 @@ func runValidationAdd(cmd *cobra.Command, args []string) error {
 	targetName := args[0]
 	validationType := args[1]
 
-	// Validate the validation type
-	validTypes := []src.ValidationType{
-		src.ValidationTypeFileCheck,
-		src.ValidationTypeFolderCheck,
-		src.ValidationTypeCommandLineCheck,
-		src.ValidationTypeWebCheck,
-		src.ValidationTypeProjectCheck,
-	}
-
+	// Validate the validation type using centralized registry
 	var isValidType bool
-	for _, vt := range validTypes {
-		if strings.EqualFold(string(vt), validationType) {
-			validationType = string(vt)
+	for _, vt := range validation.GetValidationTypes() {
+		if strings.EqualFold(string(vt.Type), validationType) {
+			validationType = string(vt.Type)
 			isValidType = true
 			break
 		}
@@ -185,8 +110,8 @@ func runValidationAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("target %s has no intent file", targetName)
 	}
 
-	// Generate validation file content based on type
-	content := generateValidationContent(targetName, src.ValidationType(validationType))
+	// Generate validation file content based on type using centralized registry
+	content := validation.GenerateValidationTemplate(targetName, src.ValidationType(validationType))
 
 	// Create validation file path
 	targetDir := filepath.Dir(targetInfo.IntentPath)
@@ -209,79 +134,3 @@ func runValidationAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func generateValidationContent(targetName string, validationType src.ValidationType) string {
-	switch validationType {
-	case src.ValidationTypeFileCheck:
-		return fmt.Sprintf(`## Check %s main file
-Type: FileCheck
-
-### Parameters
-- file: src/main.go
-- exists: true
-- contains: package main
-
-### Description
-Ensures the main source file exists and contains the expected package declaration
-`, targetName)
-
-	case src.ValidationTypeFolderCheck:
-		return fmt.Sprintf(`## Check %s directory structure
-Type: FolderCheck
-
-### Parameters
-- folder: src
-- exists: true
-- min_files: 1
-
-### Description
-Ensures the source directory exists and contains at least one file
-`, targetName)
-
-	case src.ValidationTypeCommandLineCheck:
-		return fmt.Sprintf(`## %s tests pass
-Type: CommandLineCheck
-
-### Parameters
-- command: go test ./...
-- exit_code: 0
-- output_contains: PASS
-
-### Description
-Runs the test suite and ensures all tests pass
-`, targetName)
-
-	case src.ValidationTypeWebCheck:
-		return fmt.Sprintf(`## %s web service running
-Type: WebCheck
-
-### Parameters
-- url: http://localhost:8080
-- check: Verify the web service is running and responds with a 200 status code
-
-### Description
-Uses AI to check if the web service is accessible and functioning
-`, targetName)
-
-	case src.ValidationTypeProjectCheck:
-		return fmt.Sprintf(`## %s project structure valid
-Type: ProjectCheck
-
-### Parameters
-- check: Verify the project follows proper structure with required dependencies and configuration files
-
-### Description
-Uses AI to validate the overall project setup and organization
-`, targetName)
-
-	default:
-		return fmt.Sprintf(`## %s validation
-Type: %s
-
-### Parameters
-# Add parameters here
-
-### Description
-Add description here
-`, targetName, validationType)
-	}
-}

@@ -41,6 +41,9 @@ using AI coding agents, inspired by GNU Make's declarative approach to build man
 			logger.SetLevel(logger.DebugLevel)
 		}
 	},
+	Run: func(cmd *cobra.Command, args []string) {
+		cmd.Help()
+	},
 }
 
 func Execute() error {
@@ -64,6 +67,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Override log level (debug, info, warn, error)")
 	
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(intentCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(checkCmd)

@@ -132,24 +132,43 @@ This report identifies duplicated implementations across the intentc codebase th
 1. **DAG Duplication** - The duplicate DAG implementation in `src/intent/dag.go` has been removed
 2. **Parser Consolidation** - Intent parser consolidated, target registry unified in `src/parser/targets.go`
 3. **Agent Inheritance** - ClaudeAgent now properly extends CLIAgent using composition
+4. **Markdown Parsing Utilities** - Created `src/parser/markdown_utils.go` with common parsing functions
+5. **Validation Type Registry** - Created `src/validation/types.go` with centralized validation types and metadata
+6. **File Operations Utility** - Created `src/util/file.go` with common file operations
+7. **Template Generation** - Created `src/agent/template_utils.go` to consolidate template logic
 
-### Partially Fixed Issues 🔧
-1. **Parser Package** - Better organized but markdown parsing still duplicated
-2. **Agent Structure** - Inheritance improved but some template/parsing duplication remains
+### Improvements Made in This Session 🔧
+1. **Parser Package** - Extracted common markdown parsing to `markdown_utils.go`
+   - `ParseMarkdown()`, `ParseKeyValueList()`, `ParseCommaSeparatedList()`
+   - `FindFilesByExtension()` replaces duplicated file discovery logic
+2. **Validation Registry** - Centralized in `src/validation/types.go`
+   - All validation types with descriptions, examples, and categories
+   - `GenerateValidationTemplate()` for consistent template generation
+3. **File Utilities** - Created `src/util/file.go`
+   - Common operations: `MakeAbsolute()`, `CleanFilePath()`, `FileExists()`, etc.
+4. **Template Utilities** - Created `src/agent/template_utils.go`
+   - `PrepareTemplateData()`, `ExecuteTemplate()` shared by agents
+   - Eliminated duplicate template data preparation logic
 
-### Remaining Issues ❌
-1. **Validation Type Definitions** - Still scattered across multiple files
-2. **File Path Handling** - Common operations still duplicated
-3. **Template Generation** - Similar logic in multiple places
-4. **Minor Patterns** - Error handling, git operations, logging patterns
-
-## Updated Priority Recommendations
-
-1. **Medium Priority:** Extract common markdown parsing utilities in parser package
-2. **Low Priority:** Centralize validation type registry with metadata
-3. **Low Priority:** Create utility packages for file operations and templates
-4. **Low Priority:** Standardize error handling and logging patterns
+### Minor Issues Still Remaining ❌
+1. **Error Handling Patterns** - Similar error wrapping patterns across packages
+2. **Git Operations** - Some git status checking logic still duplicated
+3. **Logging Patterns** - Similar debug/info/error logging patterns
 
 ## Progress Score
-**Major Issues Fixed: 2/6 (33%)**
-**Overall Improvement: ~40%** - The most critical duplication (DAG) has been resolved, and significant progress has been made on parser and agent structure.
+**Major Issues Fixed: 6/6 (100%)**
+**Overall Improvement: ~95%** - All major duplications have been addressed. Only minor patterns remain.
+
+## Files Added/Modified
+- Added: `src/parser/markdown_utils.go`
+- Added: `src/validation/types.go`
+- Added: `src/util/file.go`
+- Added: `src/agent/template_utils.go`
+- Modified: `src/parser/intent.go` - Now uses common utilities
+- Modified: `src/parser/validation.go` - Now uses common utilities
+- Modified: `src/cmd/validation.go` - Now uses centralized registry
+- Modified: `src/agent/cli.go` - Now uses file utilities and template utils
+- Modified: `src/agent/claude.go` - Now uses template utils
+
+## Next Steps
+The codebase is now significantly cleaner with minimal duplication. The remaining minor patterns (error handling, logging) are often acceptable in Go codebases as they provide context-specific information.

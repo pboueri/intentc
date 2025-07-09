@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,26 +28,30 @@ func (p *IntentParser) ParseIntent(filePath string) (*src.Intent, error) {
 		Content:      string(content),
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	// Parse dependencies using simple line-by-line approach for compatibility
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
 		
-		// Only parse dependencies, don't override the name
+		// Handle "Depends On:" format
 		if strings.HasPrefix(line, "Depends On:") {
 			depLine := strings.TrimSpace(strings.TrimPrefix(line, "Depends On:"))
 			if depLine != "" {
-				deps := strings.Split(depLine, ",")
-				for _, dep := range deps {
-					dep = strings.TrimSpace(dep)
-					if dep != "" {
-						intent.Dependencies = append(intent.Dependencies, dep)
-					}
-				}
+				intent.Dependencies = ParseCommaSeparatedList(depLine)
 			}
 		}
 	}
 
 	return intent, nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *IntentParser) ParseProjectIntent(filePath string) (*src.Intent, error) {
@@ -65,21 +68,9 @@ func (p *IntentParser) ParseProjectIntent(filePath string) (*src.Intent, error) 
 }
 
 func (p *IntentParser) FindIntentFiles(intentDir string) ([]string, error) {
-	var intentFiles []string
-
-	err := filepath.Walk(intentDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && strings.HasSuffix(path, ".ic") {
-			intentFiles = append(intentFiles, path)
-		}
-		return nil
-	})
-
+	intentFiles, err := FindFilesByExtension(intentDir, ".ic")
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk intent directory: %w", err)
+		return nil, fmt.Errorf("failed to find intent files: %w", err)
 	}
-
 	return intentFiles, nil
 }

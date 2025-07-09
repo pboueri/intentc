@@ -1,10 +1,7 @@
 package parser
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/pboueri/intentc/src"
@@ -17,7 +14,7 @@ func NewValidationParser() *ValidationParser {
 }
 
 func (p *ValidationParser) ParseValidationFile(filePath string) (*src.ValidationFile, error) {
-	content, err := os.ReadFile(filePath)
+	doc, err := ParseMarkdownFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read validation file: %w", err)
 	}
@@ -27,7 +24,7 @@ func (p *ValidationParser) ParseValidationFile(filePath string) (*src.Validation
 		Validations: []src.Validation{},
 	}
 
-	validations, err := p.parseMarkdownValidations(string(content))
+	validations, err := p.parseMarkdownValidations(doc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse validations: %w", err)
 	}
@@ -36,122 +33,65 @@ func (p *ValidationParser) ParseValidationFile(filePath string) (*src.Validation
 	return validationFile, nil
 }
 
-func (p *ValidationParser) parseMarkdownValidations(content string) ([]src.Validation, error) {
+func (p *ValidationParser) parseMarkdownValidations(doc *MarkdownDocument) ([]src.Validation, error) {
 	var validations []src.Validation
-	scanner := bufio.NewScanner(strings.NewReader(content))
 	
-	var currentValidation *src.Validation
-	var currentSection string
-	var sectionContent strings.Builder
+	// Get all level 2 sections (##) which represent individual validations
+	level2Sections := doc.GetSectionsByLevel(2)
 	
-	for scanner.Scan() {
-		line := scanner.Text()
-		trimmedLine := strings.TrimSpace(line)
+	for _, section := range level2Sections {
+		validation := src.Validation{
+			Name:       section.Title,
+			Parameters: make(map[string]interface{}),
+		}
 		
-		if strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "### ") {
-			if currentValidation != nil {
-				if currentSection == "parameters" {
-					params, err := p.parseParameters(sectionContent.String())
-					if err != nil {
-						return nil, err
-					}
-					currentValidation.Parameters = params
-				} else if currentSection == "description" {
-					currentValidation.Description = strings.TrimSpace(sectionContent.String())
-				}
-				validations = append(validations, *currentValidation)
-			}
+		// Parse the content of this validation section
+		lines := strings.Split(section.Content, "\n")
+		var currentSubsection string
+		var subsectionContent strings.Builder
+		
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
 			
-			currentValidation = &src.Validation{
-				Name:       strings.TrimPrefix(line, "## "),
-				Parameters: make(map[string]interface{}),
-			}
-			currentSection = ""
-			sectionContent.Reset()
-		} else if strings.HasPrefix(line, "### ") {
-			if currentSection == "parameters" {
-				params, err := p.parseParameters(sectionContent.String())
-				if err != nil {
-					return nil, err
+			// Check for Type and Hidden metadata
+			if strings.HasPrefix(trimmed, "Type:") {
+				validation.Type = src.ValidationType(strings.TrimSpace(strings.TrimPrefix(trimmed, "Type:")))
+			} else if strings.HasPrefix(trimmed, "Hidden:") {
+				hiddenStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "Hidden:"))
+				validation.Hidden = hiddenStr == "true"
+			} else if strings.HasPrefix(line, "### ") {
+				// Process previous subsection
+				if currentSubsection == "parameters" {
+					validation.Parameters = ParseKeyValueList(subsectionContent.String())
+				} else if currentSubsection == "description" {
+					validation.Description = strings.TrimSpace(subsectionContent.String())
 				}
-				currentValidation.Parameters = params
-			} else if currentSection == "description" {
-				currentValidation.Description = strings.TrimSpace(sectionContent.String())
+				
+				// Start new subsection
+				currentSubsection = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "### ")))
+				subsectionContent.Reset()
+			} else if currentSubsection != "" {
+				subsectionContent.WriteString(line + "\n")
 			}
-			
-			section := strings.ToLower(strings.TrimPrefix(line, "### "))
-			currentSection = section
-			sectionContent.Reset()
-		} else if strings.HasPrefix(trimmedLine, "Type:") {
-			typeStr := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "Type:"))
-			currentValidation.Type = src.ValidationType(typeStr)
-		} else if strings.HasPrefix(trimmedLine, "Hidden:") {
-			hiddenStr := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "Hidden:"))
-			currentValidation.Hidden = hiddenStr == "true"
-		} else if currentSection != "" {
-			sectionContent.WriteString(line + "\n")
 		}
-	}
-	
-	if currentValidation != nil {
-		if currentSection == "parameters" {
-			params, err := p.parseParameters(sectionContent.String())
-			if err != nil {
-				return nil, err
-			}
-			currentValidation.Parameters = params
-		} else if currentSection == "description" {
-			currentValidation.Description = strings.TrimSpace(sectionContent.String())
+		
+		// Process last subsection
+		if currentSubsection == "parameters" {
+			validation.Parameters = ParseKeyValueList(subsectionContent.String())
+		} else if currentSubsection == "description" {
+			validation.Description = strings.TrimSpace(subsectionContent.String())
 		}
-		validations = append(validations, *currentValidation)
+		
+		validations = append(validations, validation)
 	}
 	
 	return validations, nil
 }
 
-func (p *ValidationParser) parseParameters(content string) (map[string]interface{}, error) {
-	params := make(map[string]interface{})
-	
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "- ") {
-			continue
-		}
-		
-		line = strings.TrimPrefix(line, "- ")
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			
-			if value == "true" || value == "false" {
-				params[key] = value == "true"
-			} else {
-				params[key] = value
-			}
-		}
-	}
-	
-	return params, nil
-}
-
 func (p *ValidationParser) FindValidationFiles(intentDir string) ([]string, error) {
-	var validationFiles []string
-
-	err := filepath.Walk(intentDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && strings.HasSuffix(path, ".icv") {
-			validationFiles = append(validationFiles, path)
-		}
-		return nil
-	})
-
+	validationFiles, err := FindFilesByExtension(intentDir, ".icv")
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk intent directory: %w", err)
+		return nil, fmt.Errorf("failed to find validation files: %w", err)
 	}
-
 	return validationFiles, nil
 }

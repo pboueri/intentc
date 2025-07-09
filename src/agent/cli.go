@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,12 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
+	"github.com/pboueri/intentc/src/util"
 )
 
 // CLIAgent is a generic agent that can execute any CLI command as a coding agent
@@ -245,60 +244,18 @@ func (a *CLIAgent) executeCLI(ctx context.Context, prompt string) (string, error
 
 // createBuildPrompt creates the prompt for building
 func (a *CLIAgent) createBuildPrompt(buildCtx BuildContext) string {
-	tmpl, err := template.New("build").Parse(a.templates.Build)
+	// Use common template data preparation
+	data := PrepareTemplateData(buildCtx)
+	data["WorkingDir"] = a.workingDir
+
+	prompt, err := ExecuteTemplate(a.templates.Build, data)
 	if err != nil {
-		logger.Error("Failed to parse build template: %v", err)
+		logger.Error("Failed to create build prompt: %v", err)
 		// Fallback to simple prompt
 		return fmt.Sprintf("Target: %s\n\n%s", buildCtx.Intent.Name, buildCtx.Intent.Content)
 	}
 
-	// Prepare dependencies string
-	dependencies := ""
-	if len(buildCtx.Intent.Dependencies) > 0 {
-		dependencies = strings.Join(buildCtx.Intent.Dependencies, ", ")
-	}
-
-	// Prepare template data
-	data := map[string]interface{}{
-		"ProjectRoot":   buildCtx.ProjectRoot,
-		"GenerationID":  buildCtx.GenerationID,
-		"IntentName":    buildCtx.Intent.Name,
-		"IntentContent": buildCtx.Intent.Content,
-		"Dependencies":  dependencies,
-		"WorkingDir":    a.workingDir,
-	}
-
-	// Convert validations to template-friendly format
-	if len(buildCtx.Validations) > 0 {
-		var validations []map[string]interface{}
-		for _, valFile := range buildCtx.Validations {
-			var vals []map[string]interface{}
-			for _, val := range valFile.Validations {
-				valData := map[string]interface{}{
-					"Name":        val.Name,
-					"Type":        string(val.Type),
-					"Description": val.Description,
-				}
-				if details := GetValidationDetails(&val); details != "" {
-					valData["Details"] = details
-				}
-				vals = append(vals, valData)
-			}
-			validations = append(validations, map[string]interface{}{
-				"Validations": vals,
-			})
-		}
-		data["Validations"] = validations
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		logger.Error("Failed to execute build template: %v", err)
-		// Fallback to simple prompt
-		return fmt.Sprintf("Target: %s\n\n%s", buildCtx.Intent.Name, buildCtx.Intent.Content)
-	}
-
-	return buf.String()
+	return prompt
 }
 
 // detectGeneratedFiles uses git status to detect newly created or modified files
@@ -350,15 +307,11 @@ func (a *CLIAgent) parseGeneratedFiles(output string, projectRoot string) []stri
 			for _, part := range parts {
 				// Check if it looks like a file path
 				if strings.Contains(part, "/") || strings.Contains(part, ".") {
-					// Clean up the path
-					path := strings.Trim(part, "\"'`")
-					path = strings.TrimSuffix(path, ":")
-					path = strings.TrimSuffix(path, ",")
+					// Use utility to clean up the path
+					path := util.CleanFilePath(part)
 					
 					// Make it absolute if relative
-					if !filepath.IsAbs(path) {
-						path = filepath.Join(projectRoot, path)
-					}
+					path = util.MakeAbsolute(path, projectRoot)
 					
 					// Add the file path (in production, files would exist)
 					files = append(files, path)
