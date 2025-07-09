@@ -160,6 +160,26 @@ func (p *Parser) processSection(intent *IntentFile, section, content string) {
 
 func (p *Parser) parseDependencies(content string) []string {
 	var deps []string
+	content = strings.TrimSpace(content)
+	
+	// If content is empty, return empty dependencies
+	if content == "" {
+		return deps
+	}
+	
+	// If content is just "Depends On:", return empty dependencies
+	if content == "Depends On:" {
+		return deps
+	}
+	
+	// If content starts with "Depends On:", parse what comes after
+	if strings.HasPrefix(content, "Depends On:") {
+		content = strings.TrimSpace(strings.TrimPrefix(content, "Depends On:"))
+		if content == "" {
+			return deps
+		}
+	}
+	
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	
 	for scanner.Scan() {
@@ -169,12 +189,12 @@ func (p *Parser) parseDependencies(content string) []string {
 			if dep != "" {
 				deps = append(deps, dep)
 			}
-		} else if line != "" && !strings.HasPrefix(line, "#") {
+		} else if line != "" && !strings.HasPrefix(line, "#") && line != "Depends On:" {
 			// Handle comma-separated dependencies (from "Depends On:" format)
 			parts := strings.Split(line, ",")
 			for _, part := range parts {
 				dep := strings.TrimSpace(part)
-				if dep != "" {
+				if dep != "" && dep != "Depends On:" {
 					deps = append(deps, dep)
 				}
 			}

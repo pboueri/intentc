@@ -44,10 +44,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in an intentc project (no .intentc found). Run 'intentc init' first")
 	}
 
-	// Load configuration
-	cfg, err := config.LoadConfig(projectRoot)
+	// Load configuration with overrides
+	cfg, err := LoadConfigWithOverrides(projectRoot)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
 
 	// Initialize logger with project config

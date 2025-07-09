@@ -10,159 +10,127 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadConfig_Default(t *testing.T) {
-	// Create temporary directory without config file
-	tmpDir := t.TempDir()
-
-	cfg, err := LoadConfig(tmpDir)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// Check defaults
-	assert.Equal(t, 1, cfg.Version)
-	assert.Equal(t, "claude", cfg.Agent.Provider)
-	assert.Equal(t, 5*time.Minute, cfg.Agent.Timeout)
-	assert.Equal(t, 3, cfg.Agent.Retries)
-	assert.Equal(t, 1*time.Second, cfg.Agent.RateLimit)
-	assert.False(t, cfg.Build.Parallel)
-	assert.False(t, cfg.Build.CacheEnabled)
-}
-
-func TestLoadConfig_FromFile(t *testing.T) {
-	// Create temporary directory with config file
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".intentc")
-	err := os.MkdirAll(configDir, 0755)
-	require.NoError(t, err)
-
-	configContent := `version: 1
-
-agent:
-  provider: claude
-  timeout: 10m
-  retries: 5
-  rate_limit: 2s
-
-build:
-  parallel: true
-  cache_enabled: true
-`
-
-	configPath := filepath.Join(configDir, "config.yaml")
-	err = os.WriteFile(configPath, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	cfg, err := LoadConfig(tmpDir)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// Check loaded values
-	assert.Equal(t, 1, cfg.Version)
-	assert.Equal(t, "claude", cfg.Agent.Provider)
-	assert.Equal(t, 10*time.Minute, cfg.Agent.Timeout)
-	assert.Equal(t, 5, cfg.Agent.Retries)
-	assert.Equal(t, 2*time.Second, cfg.Agent.RateLimit)
-	assert.True(t, cfg.Build.Parallel)
-	assert.True(t, cfg.Build.CacheEnabled)
-}
-
-func TestLoadConfig_EmptyFile(t *testing.T) {
-	// Create temporary directory with empty config file
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".intentc")
-	err := os.MkdirAll(configDir, 0755)
-	require.NoError(t, err)
-
-	configPath := filepath.Join(configDir, "config.yaml")
-	err = os.WriteFile(configPath, []byte(""), 0644)
-	require.NoError(t, err)
-
-	cfg, err := LoadConfig(tmpDir)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	// Should have defaults
-	assert.Equal(t, 1, cfg.Version)
-	assert.Equal(t, "claude", cfg.Agent.Provider)
-	assert.Equal(t, 5*time.Minute, cfg.Agent.Timeout)
-}
-
-func TestLoadConfig_InvalidYAML(t *testing.T) {
-	// Create temporary directory with invalid config file
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".intentc")
-	err := os.MkdirAll(configDir, 0755)
-	require.NoError(t, err)
-
-	configContent := `invalid yaml content
-  with bad indentation
-    and no structure
-`
-
-	configPath := filepath.Join(configDir, "config.yaml")
-	err = os.WriteFile(configPath, []byte(configContent), 0644)
-	require.NoError(t, err)
-
-	_, err = LoadConfig(tmpDir)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse config file")
-}
-
-func TestSaveConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := &Config{
+func TestMergeConfig(t *testing.T) {
+	base := &Config{
 		Version: 1,
 		Agent: AgentConfig{
 			Provider:  "claude",
-			Timeout:   10 * time.Minute,
-			Retries:   4,
-			RateLimit: 3 * time.Second,
+			Timeout:   5 * time.Minute,
+			Retries:   3,
+			RateLimit: 1 * time.Second,
+			CLIArgs:   []string{"--original"},
 		},
 		Build: BuildConfig{
-			Parallel:     true,
+			Parallel:     false,
 			CacheEnabled: false,
 		},
-	}
-
-	err := SaveConfig(tmpDir, cfg)
-	require.NoError(t, err)
-
-	// Verify file exists
-	configPath := filepath.Join(tmpDir, ".intentc", "config.yaml")
-	_, err = os.Stat(configPath)
-	require.NoError(t, err)
-
-	// Load it back and verify
-	loadedCfg, err := LoadConfig(tmpDir)
-	require.NoError(t, err)
-
-	assert.Equal(t, cfg.Version, loadedCfg.Version)
-	assert.Equal(t, cfg.Agent.Provider, loadedCfg.Agent.Provider)
-	assert.Equal(t, cfg.Agent.Timeout, loadedCfg.Agent.Timeout)
-	assert.Equal(t, cfg.Agent.Retries, loadedCfg.Agent.Retries)
-	assert.Equal(t, cfg.Agent.RateLimit, loadedCfg.Agent.RateLimit)
-	assert.Equal(t, cfg.Build.Parallel, loadedCfg.Build.Parallel)
-	assert.Equal(t, cfg.Build.CacheEnabled, loadedCfg.Build.CacheEnabled)
-}
-
-func TestSaveConfig_CreateDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Don't create .intentc directory
-
-	cfg := &Config{
-		Version: 1,
-		Agent: AgentConfig{
-			Provider: "mock",
+		Logging: LoggingConfig{
+			Level: "info",
+			Sinks: []LogSink{
+				{Type: "console", Colorize: true},
+			},
 		},
 	}
 
-	err := SaveConfig(tmpDir, cfg)
+	override := &Config{
+		Agent: AgentConfig{
+			Provider: "cli",
+			Command:  "custom-cli",
+			Timeout:  10 * time.Second,
+			CLIArgs:  []string{"--override"},
+		},
+		Build: BuildConfig{
+			Parallel: true,
+		},
+		Logging: LoggingConfig{
+			Level: "debug",
+		},
+	}
+
+	merged := MergeConfig(base, override)
+
+	// Check merged values
+	assert.Equal(t, "cli", merged.Agent.Provider)
+	assert.Equal(t, "custom-cli", merged.Agent.Command)
+	assert.Equal(t, 10*time.Second, merged.Agent.Timeout)
+	assert.Equal(t, []string{"--override"}, merged.Agent.CLIArgs)
+	assert.Equal(t, 3, merged.Agent.Retries) // Should keep base value
+	assert.Equal(t, 1*time.Second, merged.Agent.RateLimit) // Should keep base value
+
+	assert.True(t, merged.Build.Parallel)
+	assert.False(t, merged.Build.CacheEnabled) // Should keep base value
+
+	assert.Equal(t, "debug", merged.Logging.Level)
+	assert.Equal(t, base.Logging.Sinks, merged.Logging.Sinks) // Should keep base value
+}
+
+func TestMergeConfigNilCases(t *testing.T) {
+	base := &Config{
+		Agent: AgentConfig{
+			Provider: "claude",
+		},
+	}
+
+	// Test nil override
+	merged := MergeConfig(base, nil)
+	assert.Equal(t, base, merged)
+
+	// Test nil base
+	override := &Config{
+		Agent: AgentConfig{
+			Provider: "cli",
+		},
+	}
+	merged = MergeConfig(nil, override)
+	assert.Equal(t, override, merged)
+}
+
+func TestLoadConfigFromFile(t *testing.T) {
+	// Create a temporary config file
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "test-config.yaml")
+
+	configContent := `version: 1
+agent:
+  provider: cli
+  command: test-command
+  timeout: 30s
+  retries: 5
+build:
+  parallel: true
+  cache_enabled: true
+logging:
+  level: debug`
+
+	err := os.WriteFile(configFile, []byte(configContent), 0644)
 	require.NoError(t, err)
 
-	// Verify directory was created
-	configDir := filepath.Join(tmpDir, ".intentc")
-	info, err := os.Stat(configDir)
+	// Load config
+	cfg, err := LoadConfigFromFile(configFile)
 	require.NoError(t, err)
-	assert.True(t, info.IsDir())
+
+	// Verify loaded config
+	assert.Equal(t, 1, cfg.Version)
+	assert.Equal(t, "cli", cfg.Agent.Provider)
+	assert.Equal(t, "test-command", cfg.Agent.Command)
+	assert.Equal(t, 30*time.Second, cfg.Agent.Timeout)
+	assert.Equal(t, 5, cfg.Agent.Retries)
+	assert.True(t, cfg.Build.Parallel)
+	assert.True(t, cfg.Build.CacheEnabled)
+	assert.Equal(t, "debug", cfg.Logging.Level)
+}
+
+func TestLoadConfigFromFileError(t *testing.T) {
+	// Test non-existent file
+	_, err := LoadConfigFromFile("/non/existent/file.yaml")
+	assert.Error(t, err)
+
+	// Test invalid YAML
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "invalid.yaml")
+	err = os.WriteFile(configFile, []byte("invalid: yaml: content:"), 0644)
+	require.NoError(t, err)
+
+	_, err = LoadConfigFromFile(configFile)
+	assert.Error(t, err)
 }

@@ -35,12 +35,14 @@ func (p *IntentParser) ParseIntent(filePath string) (*src.Intent, error) {
 		
 		// Only parse dependencies, don't override the name
 		if strings.HasPrefix(line, "Depends On:") {
-			depLine := strings.TrimPrefix(line, "Depends On:")
-			deps := strings.Split(depLine, ",")
-			for _, dep := range deps {
-				dep = strings.TrimSpace(dep)
-				if dep != "" {
-					intent.Dependencies = append(intent.Dependencies, dep)
+			depLine := strings.TrimSpace(strings.TrimPrefix(line, "Depends On:"))
+			if depLine != "" {
+				deps := strings.Split(depLine, ",")
+				for _, dep := range deps {
+					dep = strings.TrimSpace(dep)
+					if dep != "" {
+						intent.Dependencies = append(intent.Dependencies, dep)
+					}
 				}
 			}
 		}

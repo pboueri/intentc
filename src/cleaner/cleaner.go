@@ -159,9 +159,14 @@ func (c *Cleaner) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 
 func (c *Cleaner) buildDependencyGraph(targets map[string]*src.Target) (map[string]*src.Target, error) {
 	for name, target := range targets {
+		// Debug output
+		fmt.Printf("DEBUG: Target %s has dependencies: %v\n", name, target.Intent.Dependencies)
+		
 		for _, depName := range target.Intent.Dependencies {
 			dep, exists := targets[depName]
 			if !exists {
+				// More detailed error message
+				fmt.Printf("DEBUG: Available targets: %v\n", getTargetNames(targets))
 				return nil, fmt.Errorf("target %s depends on unknown target %s", name, depName)
 			}
 			target.Dependencies = append(target.Dependencies, dep)
@@ -169,6 +174,14 @@ func (c *Cleaner) buildDependencyGraph(targets map[string]*src.Target) (map[stri
 	}
 
 	return targets, nil
+}
+
+func getTargetNames(targets map[string]*src.Target) []string {
+	names := make([]string, 0, len(targets))
+	for name := range targets {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (c *Cleaner) getTargetsAndDependents(dag map[string]*src.Target, target *src.Target) []*src.Target {

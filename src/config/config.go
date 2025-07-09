@@ -111,6 +111,80 @@ func SaveConfig(projectRoot string, config *Config) error {
 	return nil
 }
 
+// MergeConfig merges override config into base config. Override values take precedence.
+func MergeConfig(base, override *Config) *Config {
+	if override == nil {
+		return base
+	}
+	if base == nil {
+		return override
+	}
+
+	// Create a copy of base
+	result := *base
+
+	// Merge Agent config
+	if override.Agent.Provider != "" {
+		result.Agent.Provider = override.Agent.Provider
+	}
+	if override.Agent.Command != "" {
+		result.Agent.Command = override.Agent.Command
+	}
+	if override.Agent.Timeout != 0 {
+		result.Agent.Timeout = override.Agent.Timeout
+	}
+	if override.Agent.Retries != 0 {
+		result.Agent.Retries = override.Agent.Retries
+	}
+	if override.Agent.RateLimit != 0 {
+		result.Agent.RateLimit = override.Agent.RateLimit
+	}
+	if len(override.Agent.CLIArgs) > 0 {
+		result.Agent.CLIArgs = override.Agent.CLIArgs
+	}
+	if len(override.Agent.Config) > 0 {
+		if result.Agent.Config == nil {
+			result.Agent.Config = make(map[string]interface{})
+		}
+		for k, v := range override.Agent.Config {
+			result.Agent.Config[k] = v
+		}
+	}
+
+	// Merge Build config
+	if override.Build.Parallel {
+		result.Build.Parallel = override.Build.Parallel
+	}
+	if override.Build.CacheEnabled {
+		result.Build.CacheEnabled = override.Build.CacheEnabled
+	}
+
+	// Merge Logging config
+	if override.Logging.Level != "" {
+		result.Logging.Level = override.Logging.Level
+	}
+	if len(override.Logging.Sinks) > 0 {
+		result.Logging.Sinks = override.Logging.Sinks
+	}
+
+	return &result
+}
+
+// LoadConfigFromFile loads configuration from a specific file
+func LoadConfigFromFile(configFile string) (*Config, error) {
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return &config, nil
+}
+
 // InitializeLogger sets up the logger based on config
 func InitializeLogger(config *Config, projectRoot string) error {
 	// Parse log level
