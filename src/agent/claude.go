@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -219,20 +218,13 @@ func (c *ClaudeAgent) parseClaudeGeneratedFiles(output string, buildCtx BuildCon
 	logger.Debug("=== Parsing generated files from output ===")
 
 	// Use the parent CLIAgent's parser
-	files := c.CLIAgent.parseGeneratedFiles(output)
+	files := c.CLIAgent.parseGeneratedFiles(output, buildCtx.ProjectRoot)
 
 	if len(files) > 0 {
 		for _, file := range files {
 			logger.Debug("  Found file: %s", file)
 		}
-		return files
 	}
-
-	// If we couldn't parse specific files, generate expected file paths
-	// based on the intent name as a Claude-specific fallback
-	targetDir := filepath.Join(buildCtx.ProjectRoot, buildCtx.Intent.Name)
-	files = append(files, targetDir)
-	logger.Debug("  No specific files found, using default: %s", targetDir)
 
 	return files
 }

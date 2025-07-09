@@ -8,7 +8,7 @@ import (
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
-	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
@@ -20,6 +20,7 @@ type Builder struct {
 	agent        agent.Agent
 	stateManager state.StateManager
 	parser       *parser.Parser
+	gitManager   git.GitManager
 }
 
 type BuildOptions struct {
@@ -28,13 +29,14 @@ type BuildOptions struct {
 	DryRun    bool
 }
 
-func NewBuilder(projectRoot string, agent agent.Agent, stateManager state.StateManager) *Builder {
+func NewBuilder(projectRoot string, agent agent.Agent, stateManager state.StateManager, gitManager git.GitManager) *Builder {
 	return &Builder{
 		projectRoot:  projectRoot,
 		intentDir:    filepath.Join(projectRoot, "intent"),
 		agent:        agent,
 		stateManager: stateManager,
 		parser:       parser.New(),
+		gitManager:   gitManager,
 	}
 }
 
@@ -101,6 +103,7 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 		Validations:  target.Validations,
 		ProjectRoot:  b.projectRoot,
 		GenerationID: generationID,
+		GitManager:   b.gitManager,
 	}
 
 	files, err := b.agent.Build(ctx, buildCtx)
@@ -133,7 +136,7 @@ func (b *Builder) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 	targets := make(map[string]*src.Target)
 	
 	// Create target registry and load all targets
-	targetRegistry := intent.NewTargetRegistry(b.projectRoot)
+	targetRegistry := parser.NewTargetRegistry(b.projectRoot)
 	if err := targetRegistry.LoadTargets(); err != nil {
 		return nil, fmt.Errorf("failed to load targets: %w", err)
 	}
@@ -144,28 +147,10 @@ func (b *Builder) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 			continue
 		}
 
-		// Convert IntentFile to Intent
-		intentData := &src.Intent{
-			Name:         targetInfo.Intent.Name,
-			Dependencies: targetInfo.Intent.Dependencies,
-			Content:      targetInfo.Intent.RawContent,
-			FilePath:     targetInfo.Intent.Path,
-		}
-
-		// Parse validation files
-		var validations []*src.ValidationFile
-		for _, valFilePath := range targetInfo.ValidationFiles {
-			valFile, err := b.parser.ParseValidationFile(valFilePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse validation file %s: %w", valFilePath, err)
-			}
-			validations = append(validations, valFile)
-		}
-
 		target := &src.Target{
 			Name:        targetInfo.Name,
-			Intent:      intentData,
-			Validations: validations,
+			Intent:      targetInfo.Intent,
+			Validations: targetInfo.ValidationFiles,
 		}
 		targets[targetInfo.Name] = target
 	}

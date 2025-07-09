@@ -5,6 +5,7 @@ import (
 	"fmt"
 	
 	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/git"
 )
 
 type BuildContext struct {
@@ -12,6 +13,7 @@ type BuildContext struct {
 	Validations  []*src.ValidationFile
 	ProjectRoot  string
 	GenerationID string
+	GitManager   git.GitManager
 }
 
 type Agent interface {

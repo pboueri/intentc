@@ -113,7 +113,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create builder
-	bldr := builder.NewBuilder(projectRoot, buildAgent, stateManager)
+	bldr := builder.NewBuilder(projectRoot, buildAgent, stateManager, gitInterface)
 
 	// Build options
 	opts := builder.BuildOptions{

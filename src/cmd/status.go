@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src/graph"
 	"github.com/pboueri/intentc/src/logger"
+	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
 )
 
@@ -55,14 +57,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create registry and load targets
-	registry := intent.NewTargetRegistry(projectRoot)
+	registry := parser.NewTargetRegistry(projectRoot)
 	if err := registry.LoadTargets(); err != nil {
 		return fmt.Errorf("failed to load targets: %w", err)
 	}
 
 	// Build dependency graph
-	dag := intent.NewDAG()
-	var intents []*intent.IntentFile
+	dag := graph.NewDAG()
+	var intents []*src.Intent
 	for _, target := range registry.GetAllTargets() {
 		if target.Intent != nil {
 			intents = append(intents, target.Intent)
@@ -137,7 +139,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printTargetStatus(ctx context.Context, target *intent.TargetInfo, stateManager state.StateManager) {
+func printTargetStatus(ctx context.Context, target *parser.TargetInfo, stateManager state.StateManager) {
 	status, err := stateManager.GetTargetStatus(ctx, target.Name)
 	if err != nil {
 		status = "pending"
@@ -164,7 +166,7 @@ func printTargetStatus(ctx context.Context, target *intent.TargetInfo, stateMana
 	fmt.Printf("\n%s: %s\n", target.Name, statusStr)
 
 	if target.Intent != nil {
-		logger.Info("  Intent: %s", target.Intent.Path)
+		logger.Info("  Intent: %s", target.IntentPath)
 		if len(target.Intent.Dependencies) > 0 {
 			logger.Info("  Dependencies: %s", strings.Join(target.Intent.Dependencies, ", "))
 		}

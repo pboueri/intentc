@@ -9,6 +9,7 @@ import (
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/git"
 )
 
 type mockStateManager struct {
@@ -77,6 +78,54 @@ func (m *mockStateManager) UpdateTargetStatus(ctx context.Context, target string
 	return nil
 }
 
+// mockGitManager for tests
+type mockGitManager struct{}
+
+func (m *mockGitManager) Initialize(ctx context.Context, path string) error {
+	return nil
+}
+
+func (m *mockGitManager) IsGitRepo(ctx context.Context, path string) (bool, error) {
+	return true, nil
+}
+
+func (m *mockGitManager) Add(ctx context.Context, files []string) error {
+	return nil
+}
+
+func (m *mockGitManager) Commit(ctx context.Context, message string) error {
+	return nil
+}
+
+func (m *mockGitManager) GetCurrentBranch(ctx context.Context) (string, error) {
+	return "main", nil
+}
+
+func (m *mockGitManager) GetCommitHash(ctx context.Context) (string, error) {
+	return "abc123", nil
+}
+
+func (m *mockGitManager) CheckoutCommit(ctx context.Context, commitHash string) error {
+	return nil
+}
+
+func (m *mockGitManager) CreateBranch(ctx context.Context, branchName string) error {
+	return nil
+}
+
+func (m *mockGitManager) GetStatus(ctx context.Context) (*git.GitStatus, error) {
+	return &git.GitStatus{
+		Branch:         "main",
+		Clean:          true,
+		ModifiedFiles:  []string{},
+		UntrackedFiles: []string{},
+	}, nil
+}
+
+func (m *mockGitManager) GetLog(ctx context.Context, limit int) ([]*git.GitCommit, error) {
+	return []*git.GitCommit{}, nil
+}
+
 func setupTestProject(t *testing.T) string {
 	tmpDir := t.TempDir()
 	intentDir := filepath.Join(tmpDir, "intent")
@@ -126,7 +175,7 @@ func TestBuilder_Build_SingleTarget(t *testing.T) {
 		return []string{"src/feature1.go"}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -157,7 +206,7 @@ func TestBuilder_Build_WithDependencies(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature2",
@@ -191,7 +240,7 @@ func TestBuilder_Build_AllTargets(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{})
 	
@@ -224,7 +273,7 @@ func TestBuilder_Build_SkipAlreadyBuilt(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -255,7 +304,7 @@ func TestBuilder_Build_ForceRebuild(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -282,7 +331,7 @@ func TestBuilder_Build_DryRun(t *testing.T) {
 		return []string{}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState)
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -317,7 +366,7 @@ Depends On: feature1`), 0644)
 	mockAgent := agent.NewMockAgent("test-agent")
 	mockState := newMockStateManager()
 	
-	builder := NewBuilder(tmpDir, mockAgent, mockState)
+	builder := NewBuilder(tmpDir, mockAgent, mockState, &mockGitManager{})
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",

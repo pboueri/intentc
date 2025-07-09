@@ -1,14 +1,16 @@
-package intent
+package graph
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/pboueri/intentc/src"
 )
 
 type Node struct {
 	Name         string
-	Intent       *IntentFile
+	Intent       *src.Intent
 	Dependencies []*Node
 	Dependents   []*Node
 	Visited      bool
@@ -27,7 +29,7 @@ func NewDAG() *DAG {
 	}
 }
 
-func (d *DAG) AddNode(name string, intent *IntentFile) *Node {
+func (d *DAG) AddNode(name string, intent *src.Intent) *Node {
 	if node, exists := d.nodes[name]; exists {
 		// Update intent if provided
 		if intent != nil {
@@ -229,7 +231,7 @@ func (d *DAG) GetRoots() []*Node {
 	return d.roots
 }
 
-func (d *DAG) BuildFromIntents(intents []*IntentFile) error {
+func (d *DAG) BuildFromIntents(intents []*src.Intent) error {
 	// First pass: add all nodes
 	for _, intent := range intents {
 		d.AddNode(intent.Name, intent)

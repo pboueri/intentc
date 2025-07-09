@@ -195,11 +195,9 @@ Done.`,
 			},
 		},
 		{
-			name: "No files parsed - fallback",
+			name: "No files parsed",
 			output: `Just some output without file indicators`,
-			expected: []string{
-				"/test/project/test-feature",
-			},
+			expected: []string{},
 		},
 	}
 

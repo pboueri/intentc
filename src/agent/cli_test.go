@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/git"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,25 +109,33 @@ func TestCLIAgentRetries(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-agent-retry-test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
-
+	
+	// Create attempt counter file
+	attemptFile := filepath.Join(tmpDir, "attempt")
+	err = os.WriteFile(attemptFile, []byte("0"), 0644)
+	require.NoError(t, err)
+	
 	// Create a script that fails first time, succeeds second time
 	scriptPath := filepath.Join(tmpDir, "retry-test.sh")
-	counterFile := filepath.Join(tmpDir, "counter")
 	scriptContent := `#!/bin/bash
-counter=0
-if [ -f "` + counterFile + `" ]; then
-    counter=$(cat "` + counterFile + `")
-fi
-counter=$((counter + 1))
-echo $counter > "` + counterFile + `"
+# Read and increment attempt counter
+attempt=$(cat attempt)
+attempt=$((attempt + 1))
+echo $attempt > attempt
 
-if [ $counter -eq 1 ]; then
+echo "Attempt $attempt at $(date)" >&2
+
+if [ $attempt -eq 1 ]; then
     echo "First attempt - failing" >&2
     exit 1
-else
-    echo "Second attempt - success"
-    echo "Generated file: success.txt"
+elif [ $attempt -eq 2 ]; then
+    echo "Second attempt - success" >&2
+    echo "Created success.txt"
     echo "Success!" > success.txt
+    exit 0
+else
+    echo "Unexpected attempt number: $attempt" >&2
+    exit 1
 fi
 `
 	err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -156,6 +166,7 @@ fi
 	// Execute build - should succeed on second attempt
 	ctx := context.Background()
 	files, err := agent.Build(ctx, buildCtx)
+	
 	require.NoError(t, err)
 
 	// Verify results
@@ -256,10 +267,175 @@ Generated: docs/api.md`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			files := agent.parseGeneratedFiles(tt.output)
+			files := agent.parseGeneratedFiles(tt.output, "/tmp/test")
 			assert.Equal(t, tt.expected, files)
 		})
 	}
+}
+
+// mockGitManager for testing
+type mockGitManager struct {
+	mock.Mock
+}
+
+func (m *mockGitManager) Initialize(ctx context.Context, path string) error {
+	args := m.Called(ctx, path)
+	return args.Error(0)
+}
+
+func (m *mockGitManager) IsGitRepo(ctx context.Context, path string) (bool, error) {
+	args := m.Called(ctx, path)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockGitManager) Add(ctx context.Context, files []string) error {
+	args := m.Called(ctx, files)
+	return args.Error(0)
+}
+
+func (m *mockGitManager) Commit(ctx context.Context, message string) error {
+	args := m.Called(ctx, message)
+	return args.Error(0)
+}
+
+func (m *mockGitManager) GetCurrentBranch(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockGitManager) GetCommitHash(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockGitManager) CheckoutCommit(ctx context.Context, commitHash string) error {
+	args := m.Called(ctx, commitHash)
+	return args.Error(0)
+}
+
+func (m *mockGitManager) CreateBranch(ctx context.Context, branchName string) error {
+	args := m.Called(ctx, branchName)
+	return args.Error(0)
+}
+
+func (m *mockGitManager) GetStatus(ctx context.Context) (*git.GitStatus, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*git.GitStatus), args.Error(1)
+}
+
+func (m *mockGitManager) GetLog(ctx context.Context, limit int) ([]*git.GitCommit, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*git.GitCommit), args.Error(1)
+}
+
+func TestCLIAgentDetectGeneratedFiles(t *testing.T) {
+	agent := NewCLIAgent(CLIAgentConfig{
+		Name:    "test-agent",
+		Command: "echo",
+	})
+
+	// Create mock git status before
+	beforeStatus := &git.GitStatus{
+		ModifiedFiles:  []string{"existing.go"},
+		UntrackedFiles: []string{},
+	}
+
+	// Create mock git status after
+	afterStatus := &git.GitStatus{
+		ModifiedFiles:  []string{"existing.go", "new-modified.go"},
+		UntrackedFiles: []string{"new-file1.go", "subdir/new-file2.go"},
+	}
+
+	// Create mock git manager
+	mockGit := &mockGitManager{}
+	mockGit.On("GetStatus", mock.Anything).Return(afterStatus, nil)
+
+	buildCtx := BuildContext{
+		ProjectRoot: "/test/project",
+		GitManager:  mockGit,
+	}
+
+	files, err := agent.detectGeneratedFiles(context.Background(), buildCtx, beforeStatus)
+	require.NoError(t, err)
+
+	expected := []string{
+		"/test/project/new-file1.go",
+		"/test/project/subdir/new-file2.go",
+		"/test/project/new-modified.go",
+	}
+
+	assert.ElementsMatch(t, expected, files)
+}
+
+func TestCLIAgentBuildWithGitDetection(t *testing.T) {
+	// Create a script that doesn't output file paths
+	tmpDir, err := os.MkdirTemp("", "cli-agent-git-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	scriptPath := filepath.Join(tmpDir, "build.sh")
+	scriptContent := `#!/bin/bash
+echo "Building project..."
+echo "Done building."
+`
+	err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+
+	// Create CLI agent
+	config := CLIAgentConfig{
+		Name:       "build-agent",
+		Command:    "bash",
+		Args:       []string{scriptPath},
+		Timeout:    5 * time.Second,
+		WorkingDir: tmpDir,
+	}
+	agent := NewCLIAgent(config)
+
+	// Mock git statuses
+	beforeStatus := &git.GitStatus{
+		ModifiedFiles:  []string{},
+		UntrackedFiles: []string{},
+	}
+
+	afterStatus := &git.GitStatus{
+		ModifiedFiles:  []string{},
+		UntrackedFiles: []string{"output/result.txt", "output/data.json"},
+	}
+
+	// Create mock git manager
+	mockGit := &mockGitManager{}
+	mockGit.On("GetStatus", mock.Anything).Return(beforeStatus, nil).Once()
+	mockGit.On("GetStatus", mock.Anything).Return(afterStatus, nil).Once()
+
+	// Create build context
+	buildCtx := BuildContext{
+		Intent: &src.Intent{
+			Name:    "test-feature",
+			Content: "Build something",
+		},
+		ProjectRoot:  tmpDir,
+		GenerationID: "gen-123",
+		GitManager:   mockGit,
+	}
+
+	// Execute build
+	ctx := context.Background()
+	files, err := agent.Build(ctx, buildCtx)
+	require.NoError(t, err)
+
+	// Should detect files via git
+	expected := []string{
+		filepath.Join(tmpDir, "output/result.txt"),
+		filepath.Join(tmpDir, "output/data.json"),
+	}
+	assert.ElementsMatch(t, expected, files)
+	mockGit.AssertExpectations(t)
 }
 
 func TestCLIAgentValidate(t *testing.T) {

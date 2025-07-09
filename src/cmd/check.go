@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/graph"
 	"github.com/pboueri/intentc/src/logger"
+	"github.com/pboueri/intentc/src/parser"
 )
 
 var (
@@ -47,9 +49,8 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in an intentc project (no .intentc found). Run 'intentc init' first")
 	}
 
-	// Create registry and parser
-	registry := intent.NewTargetRegistry(projectRoot)
-	parser := intent.NewParser()
+	// Create registry
+	registry := parser.NewTargetRegistry(projectRoot)
 
 	// Load all targets
 	if err := registry.LoadTargets(); err != nil {
@@ -64,20 +65,20 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		if !exists {
 			return fmt.Errorf("target %s not found", args[0])
 		}
-		result := checkTarget(target, registry, parser)
+		result := checkTarget(target, registry)
 		results = append(results, result)
 	} else {
 		// Check all targets
 		for _, target := range registry.GetAllTargets() {
-			result := checkTarget(target, registry, parser)
+			result := checkTarget(target, registry)
 			results = append(results, result)
 		}
 	}
 
 	// Check for circular dependencies
-	dag := intent.NewDAG()
+	dag := graph.NewDAG()
 	allTargets := registry.GetAllTargets()
-	var intents []*intent.IntentFile
+	var intents []*src.Intent
 	for _, target := range allTargets {
 		if target.Intent != nil {
 			intents = append(intents, target.Intent)
@@ -112,7 +113,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func checkTarget(target *intent.TargetInfo, registry *intent.TargetRegistry, parser *intent.Parser) CheckResult {
+func checkTarget(target *parser.TargetInfo, registry *parser.TargetRegistry) CheckResult {
 	result := CheckResult{
 		Target:   target.Name,
 		Valid:    true,
@@ -135,7 +136,7 @@ func checkTarget(target *intent.TargetInfo, registry *intent.TargetRegistry, par
 	}
 
 	// Check for empty content
-	if strings.TrimSpace(target.Intent.RawContent) == "" {
+	if strings.TrimSpace(target.Intent.Content) == "" {
 		result.Valid = false
 		result.Errors = append(result.Errors, "Intent file is empty")
 	}
@@ -149,23 +150,6 @@ func checkTarget(target *intent.TargetInfo, registry *intent.TargetRegistry, par
 		}
 	}
 
-	// Check for recommended sections
-	if target.Intent.Description == "" {
-		result.Warnings = append(result.Warnings, "Missing Description section")
-		result.Suggestions = append(result.Suggestions, "Add '## Description' section with product-focused description")
-	}
-
-	if target.Intent.Type == intent.IntentTypeFeature {
-		if target.Intent.UserExperience == "" {
-			result.Warnings = append(result.Warnings, "Missing User Experience section")
-			result.Suggestions = append(result.Suggestions, "Add '## User Experience' section describing how users interact with this feature")
-		}
-
-		if target.Intent.QualityGoals == "" {
-			result.Warnings = append(result.Warnings, "Missing Quality Goals section")
-			result.Suggestions = append(result.Suggestions, "Add '## Quality Goals' section with performance and usability requirements")
-		}
-	}
 
 	// Check validation files
 	if len(target.ValidationFiles) == 0 {
@@ -174,8 +158,8 @@ func checkTarget(target *intent.TargetInfo, registry *intent.TargetRegistry, par
 	}
 
 	// Check file naming convention
-	expectedPath := filepath.Join(filepath.Dir(target.Intent.Path), target.Name+".ic")
-	if target.Intent.Path != expectedPath {
+	expectedPath := filepath.Join(filepath.Dir(target.IntentPath), target.Name+".ic")
+	if target.IntentPath != expectedPath {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("Intent file name doesn't match target name (expected %s)", filepath.Base(expectedPath)))
 	}
 

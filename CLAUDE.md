@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 intentc is a "Compiler of Intent" - a tool that transforms loosely specified intents into precise code using AI coding agents, inspired by GNU Make's declarative approach to build management.
 
+## Key Directives
+
+- IMPORTANT: When an implementation exists, modify it to support the new functionality if required. Do not reimplement a totally new version of it. Keep it as dry as possible.
+- IMPORTANT: Modifying tests, do not try to cheat them. Implement any fixes that are needed, and if you are confused, please ask the user how to fix it.
+- IMPORTANT: Minimizing complexity is important. Please keep things as simple as possible as you go and try to abstract out interfaces as needed.
+
 ## Project Status
 
 Implementation in progress:

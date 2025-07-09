@@ -1,19 +1,22 @@
-package intent
+package parser
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/pboueri/intentc/src"
 )
 
 type TargetInfo struct {
-	Name           string
-	Intent         *IntentFile
-	ValidationFiles []string
-	LastModified   time.Time
-	CacheKey       string
+	Name            string
+	Intent          *src.Intent
+	ValidationFiles []*src.ValidationFile
+	IntentPath      string
+	LastModified    time.Time
 }
 
 type TargetRegistry struct {
@@ -26,7 +29,7 @@ type TargetRegistry struct {
 }
 
 type cacheEntry struct {
-	intent       *IntentFile
+	intent       *src.Intent
 	lastModified time.Time
 	expires      time.Time
 }
@@ -39,7 +42,7 @@ func NewTargetRegistry(projectRoot string) *TargetRegistry {
 		targets:     make(map[string]*TargetInfo),
 		aliases:     make(map[string][]string),
 		cache:       make(map[string]*cacheEntry),
-		parser:      NewParser(),
+		parser:      New(),
 	}
 }
 
@@ -47,16 +50,25 @@ func (r *TargetRegistry) LoadTargets() error {
 	// Clear existing targets
 	r.targets = make(map[string]*TargetInfo)
 	
-	// Discover all intent files
-	intents, err := r.parser.DiscoverIntentFiles(r.projectRoot)
-	if err != nil {
-		return fmt.Errorf("failed to discover intent files: %w", err)
+	// Discover all feature directories in intent/
+	intentsDir := filepath.Join(r.projectRoot, "intent")
+	if _, err := os.Stat(intentsDir); os.IsNotExist(err) {
+		return nil // No intents directory yet
 	}
 	
-	// Register each intent as a target
-	for _, intent := range intents {
-		if err := r.RegisterTarget(intent); err != nil {
-			return fmt.Errorf("failed to register target %s: %w", intent.Name, err)
+	entries, err := os.ReadDir(intentsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read intents directory: %w", err)
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirPath := filepath.Join(intentsDir, entry.Name())
+			if r.parser.hasIntentFile(dirPath) {
+				if err := r.loadTargetFromDirectory(dirPath); err != nil {
+					return fmt.Errorf("failed to load target from %s: %w", dirPath, err)
+				}
+			}
 		}
 	}
 	
@@ -66,77 +78,64 @@ func (r *TargetRegistry) LoadTargets() error {
 	return nil
 }
 
-func (r *TargetRegistry) RegisterTarget(intent *IntentFile) error {
+func (r *TargetRegistry) loadTargetFromDirectory(dirPath string) error {
+	// Find the .ic file
+	intentPath, err := r.parser.FindIntentFile(dirPath)
+	if err != nil {
+		return err
+	}
+	
+	// Parse the intent file
+	intent, err := r.parser.ParseIntentFile(intentPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse intent file: %w", err)
+	}
+	
 	// Get file modification time
-	stat, err := os.Stat(intent.Path)
+	stat, err := os.Stat(intentPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat intent file: %w", err)
 	}
 	
-	// Find validation files in the same directory
-	dir := filepath.Dir(intent.Path)
-	validationFiles, err := r.findValidationFiles(dir)
+	// Parse validation files
+	validationFiles, err := r.parser.ParseValidationFiles(dirPath)
 	if err != nil {
-		return fmt.Errorf("failed to find validation files: %w", err)
+		return fmt.Errorf("failed to parse validation files: %w", err)
 	}
 	
 	target := &TargetInfo{
 		Name:            intent.Name,
 		Intent:          intent,
 		ValidationFiles: validationFiles,
+		IntentPath:      intentPath,
 		LastModified:    stat.ModTime(),
-		CacheKey:        r.generateCacheKey(intent.Path),
 	}
 	
 	r.targets[intent.Name] = target
 	
-	// Also register by target names defined in the intent
-	for _, t := range intent.Targets {
-		if t.Name != "" && t.Name != intent.Name {
-			r.targets[t.Name] = target
-		}
-	}
-	
 	return nil
 }
 
-func (r *TargetRegistry) findValidationFiles(dir string) ([]string, error) {
-	var validationFiles []string
-	
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".icv" {
-			validationFiles = append(validationFiles, filepath.Join(dir, entry.Name()))
-		}
-	}
-	
-	return validationFiles, nil
-}
-
 func (r *TargetRegistry) GetTarget(name string) (*TargetInfo, bool) {
+	// Check if it's an alias
+	if targets, exists := r.aliases[name]; exists && len(targets) > 0 {
+		// Return the first target in the alias
+		return r.GetTarget(targets[0])
+	}
+	
 	target, exists := r.targets[name]
 	return target, exists
 }
 
 func (r *TargetRegistry) GetAllTargets() []*TargetInfo {
 	var targets []*TargetInfo
-	seen := make(map[string]bool)
-	
 	for _, target := range r.targets {
-		if !seen[target.Name] {
-			targets = append(targets, target)
-			seen[target.Name] = true
-		}
+		targets = append(targets, target)
 	}
-	
 	return targets
 }
 
-func (r *TargetRegistry) GetCachedIntent(path string) (*IntentFile, bool) {
+func (r *TargetRegistry) GetCachedIntent(path string) (*src.Intent, bool) {
 	r.cacheMutex.RLock()
 	defer r.cacheMutex.RUnlock()
 	
@@ -159,7 +158,7 @@ func (r *TargetRegistry) GetCachedIntent(path string) (*IntentFile, bool) {
 	return entry.intent, true
 }
 
-func (r *TargetRegistry) CacheIntent(path string, intent *IntentFile) {
+func (r *TargetRegistry) CacheIntent(path string, intent *src.Intent) {
 	r.cacheMutex.Lock()
 	defer r.cacheMutex.Unlock()
 	
@@ -189,16 +188,6 @@ func (r *TargetRegistry) InvalidateCache(path string) {
 	delete(r.cache, path)
 }
 
-func (r *TargetRegistry) generateCacheKey(path string) string {
-	// Generate a cache key based on the file path and modification time
-	stat, err := os.Stat(path)
-	if err != nil {
-		return path
-	}
-	
-	return fmt.Sprintf("%s-%d", path, stat.ModTime().Unix())
-}
-
 func (r *TargetRegistry) setupDefaultAliases() {
 	// All targets alias
 	var allTargets []string
@@ -209,22 +198,22 @@ func (r *TargetRegistry) setupDefaultAliases() {
 		r.aliases["all"] = allTargets
 	}
 	
-	// Project targets alias
+	// Project targets alias - targets that start with "project-"
 	var projectTargets []string
-	for _, target := range r.targets {
-		if target.Intent != nil && target.Intent.Type == IntentTypeProject {
-			projectTargets = append(projectTargets, target.Name)
+	for name := range r.targets {
+		if strings.HasPrefix(name, "project-") {
+			projectTargets = append(projectTargets, name)
 		}
 	}
 	if len(projectTargets) > 0 {
 		r.aliases["project"] = projectTargets
 	}
 	
-	// Feature targets alias
+	// Feature targets alias - all non-project targets
 	var featureTargets []string
-	for _, target := range r.targets {
-		if target.Intent != nil && target.Intent.Type == IntentTypeFeature {
-			featureTargets = append(featureTargets, target.Name)
+	for name := range r.targets {
+		if !strings.HasPrefix(name, "project-") {
+			featureTargets = append(featureTargets, name)
 		}
 	}
 	if len(featureTargets) > 0 {
@@ -247,38 +236,33 @@ func (r *TargetRegistry) RefreshTarget(name string) error {
 		return fmt.Errorf("target %s not found", name)
 	}
 	
-	if target.Intent == nil {
-		return fmt.Errorf("target %s has no associated intent", name)
-	}
-	
 	// Invalidate cache
-	r.InvalidateCache(target.Intent.Path)
+	r.InvalidateCache(target.IntentPath)
 	
 	// Re-parse the intent file
-	intent, err := r.parser.ParseIntentFile(target.Intent.Path)
+	intent, err := r.parser.ParseIntentFile(target.IntentPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse intent file: %w", err)
 	}
-	
-	// Override the name with the directory name (consistent with discoverInDirectory)
-	intent.Name = filepath.Base(filepath.Dir(target.Intent.Path))
 	
 	// Update the target
 	target.Intent = intent
 	
 	// Update modification time
-	stat, err := os.Stat(intent.Path)
+	stat, err := os.Stat(target.IntentPath)
 	if err == nil {
 		target.LastModified = stat.ModTime()
-		target.CacheKey = r.generateCacheKey(intent.Path)
+	}
+	
+	// Re-parse validation files
+	dirPath := filepath.Dir(target.IntentPath)
+	validationFiles, err := r.parser.ParseValidationFiles(dirPath)
+	if err == nil {
+		target.ValidationFiles = validationFiles
 	}
 	
 	// Cache the parsed intent
-	r.CacheIntent(intent.Path, intent)
+	r.CacheIntent(target.IntentPath, intent)
 	
 	return nil
-}
-
-func (r *TargetRegistry) getFileStat(path string) (os.FileInfo, error) {
-	return os.Stat(path)
 }

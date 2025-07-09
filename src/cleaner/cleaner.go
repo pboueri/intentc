@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/pboueri/intentc/src"
-	"github.com/pboueri/intentc/src/intent"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
 )
@@ -117,7 +116,7 @@ func (c *Cleaner) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 	targets := make(map[string]*src.Target)
 	
 	// Create target registry and load all targets
-	targetRegistry := intent.NewTargetRegistry(c.projectRoot)
+	targetRegistry := parser.NewTargetRegistry(c.projectRoot)
 	if err := targetRegistry.LoadTargets(); err != nil {
 		return nil, fmt.Errorf("failed to load targets: %w", err)
 	}
@@ -128,28 +127,10 @@ func (c *Cleaner) loadTargets(ctx context.Context) (map[string]*src.Target, erro
 			continue
 		}
 
-		// Convert IntentFile to Intent
-		intentData := &src.Intent{
-			Name:         targetInfo.Intent.Name,
-			Dependencies: targetInfo.Intent.Dependencies,
-			Content:      targetInfo.Intent.RawContent,
-			FilePath:     targetInfo.Intent.Path,
-		}
-
-		// Parse validation files
-		var validations []*src.ValidationFile
-		for _, valFilePath := range targetInfo.ValidationFiles {
-			valFile, err := c.parser.ParseValidationFile(valFilePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse validation file %s: %w", valFilePath, err)
-			}
-			validations = append(validations, valFile)
-		}
-
 		target := &src.Target{
 			Name:        targetInfo.Name,
-			Intent:      intentData,
-			Validations: validations,
+			Intent:      targetInfo.Intent,
+			Validations: targetInfo.ValidationFiles,
 		}
 		targets[targetInfo.Name] = target
 	}

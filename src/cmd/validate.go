@@ -11,7 +11,6 @@ import (
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
 	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src/intent"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
 	"github.com/pboueri/intentc/src/validation"
@@ -70,7 +69,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	runner := validation.NewRunner(projectRoot, registry)
 
 	// Create target registry and load targets
-	targetRegistry := intent.NewTargetRegistry(projectRoot)
+	targetRegistry := parser.NewTargetRegistry(projectRoot)
 	if err := targetRegistry.LoadTargets(); err != nil {
 		return fmt.Errorf("failed to load targets: %w", err)
 	}
@@ -91,20 +90,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("target %s has no intent file", targetName)
 	}
 
-	// Parse validation files
-	p := parser.New()
-	var validations []*src.ValidationFile
-	for _, valFilePath := range targetInfo.ValidationFiles {
-		valFile, err := p.ParseValidationFile(valFilePath)
-		if err != nil {
-			return fmt.Errorf("failed to parse validation file %s: %w", valFilePath, err)
-		}
-		validations = append(validations, valFile)
-	}
+	// Use validation files directly from target info
+	validations := targetInfo.ValidationFiles
 
 	target := &src.Target{
 		Name:        targetName,
-		Intent:      convertIntentFileToIntent(targetInfo.Intent),
+		Intent:      targetInfo.Intent,
 		Validations: validations,
 	}
 
@@ -141,12 +132,3 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// convertIntentFileToIntent converts from intent.IntentFile to src.Intent
-func convertIntentFileToIntent(intentFile *intent.IntentFile) *src.Intent {
-	return &src.Intent{
-		Name:         intentFile.Name,
-		Dependencies: intentFile.Dependencies,
-		Content:      intentFile.RawContent,
-		FilePath:     intentFile.Path,
-	}
-}

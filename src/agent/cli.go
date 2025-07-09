@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
 )
 
@@ -85,27 +86,58 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 	// Update working directory
 	a.workingDir = buildCtx.ProjectRoot
 
+	// Capture git status before execution
+	var beforeStatus *git.GitStatus
+	if buildCtx.GitManager != nil {
+		status, err := buildCtx.GitManager.GetStatus(ctx)
+		if err != nil {
+			logger.Warn("Failed to get git status before build: %v", err)
+		} else {
+			beforeStatus = status
+		}
+	}
+
 	// Create the prompt
 	prompt := a.createBuildPrompt(buildCtx)
 
 	// Execute with retries
 	var lastErr error
+	var output string
+	var success bool
 	for attempt := 1; attempt <= a.retries; attempt++ {
 		if attempt > 1 {
 			logger.Warn("[%s] Retrying build (attempt %d/%d) after error: %v", a.name, attempt, a.retries, lastErr)
 			time.Sleep(a.rateLimit)
 		}
 
-		output, err := a.executeCLI(ctx, prompt)
+		var err error
+		output, err = a.executeCLI(ctx, prompt)
 		if err == nil {
-			// Parse the generated files from the output
-			files := a.parseGeneratedFiles(output)
-			return files, nil
+			success = true
+			break
 		}
 		lastErr = err
 	}
 
-	return nil, fmt.Errorf("%s agent failed after %d attempts: %w", a.name, a.retries, lastErr)
+	if !success {
+		return nil, fmt.Errorf("%s agent failed after %d attempts: %w", a.name, a.retries, lastErr)
+	}
+
+	// Try parsing files from output first
+	files := a.parseGeneratedFiles(output, buildCtx.ProjectRoot)
+	
+	// If no files found from output parsing and we have git status, use git detection
+	if len(files) == 0 && beforeStatus != nil && buildCtx.GitManager != nil {
+		detectedFiles, err := a.detectGeneratedFiles(ctx, buildCtx, beforeStatus)
+		if err != nil {
+			logger.Warn("Failed to detect files via git: %v", err)
+		} else {
+			files = detectedFiles
+		}
+	}
+	
+	logger.Info("[%s] Generated %d file(s)", a.name, len(files))
+	return files, nil
 }
 
 // Refine implements the Agent interface
@@ -269,8 +301,41 @@ func (a *CLIAgent) createBuildPrompt(buildCtx BuildContext) string {
 	return buf.String()
 }
 
+// detectGeneratedFiles uses git status to detect newly created or modified files
+func (a *CLIAgent) detectGeneratedFiles(ctx context.Context, buildCtx BuildContext, beforeStatus *git.GitStatus) ([]string, error) {
+	// Get current git status
+	afterStatus, err := buildCtx.GitManager.GetStatus(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get git status: %w", err)
+	}
+
+	var generatedFiles []string
+	
+	// Collect all new untracked files
+	generatedFiles = append(generatedFiles, afterStatus.UntrackedFiles...)
+	
+	// Collect modified files that weren't modified before
+	beforeModified := make(map[string]bool)
+	for _, file := range beforeStatus.ModifiedFiles {
+		beforeModified[file] = true
+	}
+	
+	for _, file := range afterStatus.ModifiedFiles {
+		if !beforeModified[file] {
+			generatedFiles = append(generatedFiles, file)
+		}
+	}
+	
+	// Convert to absolute paths
+	for i, file := range generatedFiles {
+		generatedFiles[i] = filepath.Join(buildCtx.ProjectRoot, file)
+	}
+	
+	return generatedFiles, nil
+}
+
 // parseGeneratedFiles extracts file paths from the CLI output
-func (a *CLIAgent) parseGeneratedFiles(output string) []string {
+func (a *CLIAgent) parseGeneratedFiles(output string, projectRoot string) []string {
 	files := []string{}
 	lines := strings.Split(output, "\n")
 
@@ -292,7 +357,7 @@ func (a *CLIAgent) parseGeneratedFiles(output string) []string {
 					
 					// Make it absolute if relative
 					if !filepath.IsAbs(path) {
-						path = filepath.Join(a.workingDir, path)
+						path = filepath.Join(projectRoot, path)
 					}
 					
 					// Add the file path (in production, files would exist)

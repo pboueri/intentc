@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src"
-	"github.com/pboueri/intentc/src/intent"
+	"github.com/pboueri/intentc/src/parser"
 )
 
 var validationCmd = &cobra.Command{
@@ -170,7 +170,7 @@ func runValidationAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create target registry and load targets
-	targetRegistry := intent.NewTargetRegistry(projectRoot)
+	targetRegistry := parser.NewTargetRegistry(projectRoot)
 	if err := targetRegistry.LoadTargets(); err != nil {
 		return fmt.Errorf("failed to load targets: %w", err)
 	}
@@ -189,7 +189,7 @@ func runValidationAdd(cmd *cobra.Command, args []string) error {
 	content := generateValidationContent(targetName, src.ValidationType(validationType))
 
 	// Create validation file path
-	targetDir := filepath.Dir(targetInfo.Intent.Path)
+	targetDir := filepath.Dir(targetInfo.IntentPath)
 	validationFileName := fmt.Sprintf("%s-%s.icv", targetName, strings.ToLower(validationType))
 	validationPath := filepath.Join(targetDir, validationFileName)
 
