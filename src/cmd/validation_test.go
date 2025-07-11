@@ -16,12 +16,12 @@ func TestValidationListCommand(t *testing.T) {
 	buf := new(bytes.Buffer)
 	
 	// Create the command
-	cmd := validationListCmd
+	cmd := listValidationCmd
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 	
 	// Execute the command directly by calling its RunE function
-	err := runValidationList(cmd, []string{})
+	err := runListValidation(cmd, []string{})
 	require.NoError(t, err)
 	
 	// Check the output contains all validation types
@@ -136,7 +136,7 @@ name: test-target
 				Use:   "add [target] [validation-type]",
 				Short: "Add a validation stub to a target",
 				Args:  cobra.ExactArgs(2),
-				RunE:  runValidationAdd,
+				RunE:  runAddValidation,
 			}
 			cmd.SetOut(buf)
 			cmd.SetErr(buf)
@@ -213,7 +213,7 @@ Purpose: Test target
 		Use:   "add [target] [validation-type]",
 		Short: "Add a validation stub to a target",
 		Args:  cobra.ExactArgs(2),
-		RunE:  runValidationAdd,
+		RunE:  runAddValidation,
 	}
 	cmd.SetArgs([]string{"test-target", "FileCheck"})
 	
@@ -226,27 +226,29 @@ Purpose: Test target
 // The validation generation is now handled by the validation command itself
 
 func TestValidationCommandStructure(t *testing.T) {
-	// Test that validation command has proper subcommands
-	assert.NotNil(t, validationCmd)
-	assert.Equal(t, "validation", validationCmd.Use)
+	// Test that list and add commands have validation subcommands
+	assert.NotNil(t, listCmd)
+	assert.NotNil(t, addCmd)
 	
-	// Check subcommands are registered
-	subcommands := validationCmd.Commands()
-	assert.Len(t, subcommands, 2)
-	
-	// Find and verify subcommands
-	var hasListCmd, hasAddCmd bool
-	for _, cmd := range subcommands {
-		switch cmd.Use {
-		case "list":
-			hasListCmd = true
-		case "add [target] [validation-type]":
-			hasAddCmd = true
+	// Check list command has validation subcommand
+	var hasListValidation bool
+	for _, cmd := range listCmd.Commands() {
+		if cmd.Use == "validation" {
+			hasListValidation = true
+			break
 		}
 	}
+	assert.True(t, hasListValidation, "list command should have 'validation' subcommand")
 	
-	assert.True(t, hasListCmd, "validation command should have 'list' subcommand")
-	assert.True(t, hasAddCmd, "validation command should have 'add' subcommand")
+	// Check add command has validation subcommand
+	var hasAddValidation bool
+	for _, cmd := range addCmd.Commands() {
+		if cmd.Use == "validation [target] [validation-type]" {
+			hasAddValidation = true
+			break
+		}
+	}
+	assert.True(t, hasAddValidation, "add command should have 'validation' subcommand")
 }
 
 func TestValidationTypeCaseInsensitive(t *testing.T) {
@@ -288,7 +290,7 @@ func TestValidationTypeCaseInsensitive(t *testing.T) {
 				Use:   "add [target] [validation-type]",
 				Short: "Add a validation stub to a target",
 				Args:  cobra.ExactArgs(2),
-				RunE:  runValidationAdd,
+				RunE:  runAddValidation,
 			}
 			cmd.SetArgs([]string{"test-target", variation})
 			

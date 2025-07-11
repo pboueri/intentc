@@ -30,6 +30,9 @@ var rootCmd = &cobra.Command{
 	Short: "Compiler of Intent - Transform intents into code using AI agents",
 	Long: `intentc is a tool that transforms loosely specified intents into precise code 
 using AI coding agents, inspired by GNU Make's declarative approach to build management.`,
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true,
+	},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Set logger level based on verbose flag count
 		switch verboseCount {
@@ -67,18 +70,16 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Override log level (debug, info, warn, error)")
 	
 	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(intentCmd)
+	rootCmd.AddCommand(addCmd)
+	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(validateCmd)
-	rootCmd.AddCommand(validationCmd)
 	rootCmd.AddCommand(refineCmd)
 	rootCmd.AddCommand(commitCmd)
 	rootCmd.AddCommand(checkoutCmd)
-	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(helpCmd)
 	rootCmd.AddCommand(decompileCmd)
 }
 
