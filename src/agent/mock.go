@@ -15,6 +15,7 @@ type MockAgent struct {
 	BuildFunc     func(ctx context.Context, buildCtx BuildContext) ([]string, error)
 	RefineFunc    func(ctx context.Context, target *src.Target, prompt string) error
 	ValidateFunc  func(ctx context.Context, validation *src.Validation, generatedFiles []string) (bool, string, error)
+	DecompileFunc func(ctx context.Context, decompileCtx DecompileContext) ([]string, error)
 }
 
 func NewMockAgent(name string) *MockAgent {
@@ -91,6 +92,36 @@ func (m *MockAgent) GetName() string {
 
 func (m *MockAgent) GetType() string {
 	return "mock"
+}
+
+func (m *MockAgent) Decompile(ctx context.Context, decompileCtx DecompileContext) ([]string, error) {
+	if m.DecompileFunc != nil {
+		return m.DecompileFunc(ctx, decompileCtx)
+	}
+	
+	// Default implementation for testing
+	// Create a simple project.ic file
+	projectIC := filepath.Join(decompileCtx.OutputPath, "project.ic")
+	content := `# Project: Mock Project
+
+## Overview
+This is a mock project for testing decompile functionality.
+
+## Features
+- feature-mock: Mock feature for testing
+`
+	
+	err := os.MkdirAll(decompileCtx.OutputPath, 0755)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create output directory: %w", err)
+	}
+	
+	err = os.WriteFile(projectIC, []byte(content), 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create project.ic: %w", err)
+	}
+	
+	return []string{projectIC}, nil
 }
 
 type MockAgentFactory struct{}

@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/pboueri/intentc/src"
 )
 
 func TestValidationListCommand(t *testing.T) {
@@ -223,55 +222,8 @@ Purpose: Test target
 	assert.Contains(t, err.Error(), "already exists")
 }
 
-func TestGenerateValidationContent(t *testing.T) {
-	tests := []struct {
-		name           string
-		targetName     string
-		validationType string
-		checkContains  []string
-	}{
-		{
-			name:           "FileCheck content",
-			targetName:     "myapp",
-			validationType: "FileCheck",
-			checkContains:  []string{"Check myapp main file", "Type: FileCheck", "file:", "exists:", "contains:"},
-		},
-		{
-			name:           "FolderCheck content",
-			targetName:     "myapp",
-			validationType: "FolderCheck",
-			checkContains:  []string{"Check myapp directory", "Type: FolderCheck", "folder:", "min_files:"},
-		},
-		{
-			name:           "CommandLineCheck content",
-			targetName:     "myapp",
-			validationType: "CommandLineCheck",
-			checkContains:  []string{"myapp tests pass", "Type: CommandLineCheck", "command:", "exit_code:"},
-		},
-		{
-			name:           "WebCheck content",
-			targetName:     "myapp",
-			validationType: "WebCheck",
-			checkContains:  []string{"myapp web service", "Type: WebCheck", "url:", "check:"},
-		},
-		{
-			name:           "ProjectCheck content",
-			targetName:     "myapp",
-			validationType: "ProjectCheck",
-			checkContains:  []string{"myapp project structure", "Type: ProjectCheck", "check:"},
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			content := generateValidationContent(tt.targetName, src.ValidationType(tt.validationType))
-			
-			for _, expected := range tt.checkContains {
-				assert.Contains(t, content, expected)
-			}
-		})
-	}
-}
+// TestGenerateValidationContent removed - generateValidationContent function no longer exists
+// The validation generation is now handled by the validation command itself
 
 func TestValidationCommandStructure(t *testing.T) {
 	// Test that validation command has proper subcommands

@@ -36,50 +36,47 @@ func (p *ValidationParser) ParseValidationFile(filePath string) (*src.Validation
 func (p *ValidationParser) parseMarkdownValidations(doc *MarkdownDocument) ([]src.Validation, error) {
 	var validations []src.Validation
 	
-	// Get all level 2 sections (##) which represent individual validations
-	level2Sections := doc.GetSectionsByLevel(2)
+	// Get all sections
+	allSections := doc.Sections
 	
-	for _, section := range level2Sections {
+	// Process level 2 sections as validations
+	for i := 0; i < len(allSections); i++ {
+		section := allSections[i]
+		
+		// Skip non-level-2 sections
+		if section.Level != 2 {
+			continue
+		}
+		
 		validation := src.Validation{
 			Name:       section.Title,
 			Parameters: make(map[string]interface{}),
 		}
 		
-		// Parse the content of this validation section
+		// Parse the content of this validation section for Type
 		lines := strings.Split(section.Content, "\n")
-		var currentSubsection string
-		var subsectionContent strings.Builder
-		
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
-			
-			// Check for Type and Hidden metadata
 			if strings.HasPrefix(trimmed, "Type:") {
 				validation.Type = src.ValidationType(strings.TrimSpace(strings.TrimPrefix(trimmed, "Type:")))
 			} else if strings.HasPrefix(trimmed, "Hidden:") {
 				hiddenStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "Hidden:"))
 				validation.Hidden = hiddenStr == "true"
-			} else if strings.HasPrefix(line, "### ") {
-				// Process previous subsection
-				if currentSubsection == "parameters" {
-					validation.Parameters = ParseKeyValueList(subsectionContent.String())
-				} else if currentSubsection == "description" {
-					validation.Description = strings.TrimSpace(subsectionContent.String())
-				}
-				
-				// Start new subsection
-				currentSubsection = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "### ")))
-				subsectionContent.Reset()
-			} else if currentSubsection != "" {
-				subsectionContent.WriteString(line + "\n")
 			}
 		}
 		
-		// Process last subsection
-		if currentSubsection == "parameters" {
-			validation.Parameters = ParseKeyValueList(subsectionContent.String())
-		} else if currentSubsection == "description" {
-			validation.Description = strings.TrimSpace(subsectionContent.String())
+		// Look for level 3 subsections that follow this level 2 section
+		for j := i + 1; j < len(allSections) && allSections[j].Level >= 3; j++ {
+			if allSections[j].Level == 3 {
+				subsectionTitle := strings.ToLower(allSections[j].Title)
+				subsectionContent := allSections[j].Content
+				
+				if subsectionTitle == "parameters" {
+					validation.Parameters = ParseKeyValueList(subsectionContent)
+				} else if subsectionTitle == "description" {
+					validation.Description = strings.TrimSpace(subsectionContent)
+				}
+			}
 		}
 		
 		validations = append(validations, validation)

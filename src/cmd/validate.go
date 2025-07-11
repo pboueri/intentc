@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/parser"
 	"github.com/pboueri/intentc/src/state"
@@ -58,12 +59,22 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}
 
-	// Create agent (for now, use mock agent)
-	mockAgent := agent.NewMockAgent("default-agent")
+	// Load configuration with overrides
+	cfg, err := LoadConfigWithOverrides(projectRoot)
+	if err != nil {
+		// Use default config if no config found
+		cfg = config.GetDefaultConfig()
+	}
+
+	// Create agent based on configuration
+	validationAgent, err := agent.CreateFromConfig(cfg, "validation-agent")
+	if err != nil {
+		return fmt.Errorf("failed to create agent: %w", err)
+	}
 
 	// Create validator registry and register built-in validators
 	registry := validation.NewValidatorRegistry()
-	validation.RegisterBuiltinValidators(registry, mockAgent)
+	validation.RegisterBuiltinValidators(registry, validationAgent)
 
 	// Create validation runner
 	runner := validation.NewRunner(projectRoot, registry)

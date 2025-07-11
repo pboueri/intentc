@@ -255,6 +255,16 @@ func SetLevel(level Level) {
 	Get().SetLevel(level)
 }
 
+// IsDebugEnabled returns true if debug level logging is enabled
+func IsDebugEnabled() bool {
+	if logger, ok := Get().(*MultiLogger); ok {
+		logger.mu.RLock()
+		defer logger.mu.RUnlock()
+		return logger.level <= DebugLevel
+	}
+	return false
+}
+
 // ParseLevel converts a string to a Level
 func ParseLevel(s string) (Level, error) {
 	switch s {

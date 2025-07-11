@@ -104,7 +104,7 @@ Depends On:
 }
 
 func runIntentHelp(cmd *cobra.Command, args []string) {
-	fmt.Fprintln(cmd.OutOrStdout(), `Intent File Schema (.ic files)
+	fmt.Fprint(cmd.OutOrStdout(), `Intent File Schema (.ic files)
 =============================
 
 Intent files use Markdown format with specific sections that intentc recognizes.

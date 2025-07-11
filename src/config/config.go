@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"github.com/pboueri/intentc/src/logger"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -18,13 +18,13 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	Provider  string               `yaml:"provider"`
-	Command   string               `yaml:"command,omitempty"`   // For custom CLI agents
-	Timeout   time.Duration        `yaml:"timeout"`
-	Retries   int                  `yaml:"retries,omitempty"`
-	RateLimit time.Duration        `yaml:"rate_limit,omitempty"`
+	Provider  string                 `yaml:"provider"`
+	Command   string                 `yaml:"command,omitempty"` // For custom CLI agents
+	Timeout   time.Duration          `yaml:"timeout"`
+	Retries   int                    `yaml:"retries,omitempty"`
+	RateLimit time.Duration          `yaml:"rate_limit,omitempty"`
 	Config    map[string]interface{} `yaml:"config,omitempty"`
-	CLIArgs   []string             `yaml:"cli_args,omitempty"`
+	CLIArgs   []string               `yaml:"cli_args,omitempty"`
 }
 
 type BuildConfig struct {
@@ -33,29 +33,27 @@ type BuildConfig struct {
 }
 
 type LoggingConfig struct {
-	Level string      `yaml:"level"`
-	Sinks []LogSink   `yaml:"sinks"`
+	Level string    `yaml:"level"`
+	Sinks []LogSink `yaml:"sinks"`
 }
 
 type LogSink struct {
-	Type     string `yaml:"type"`     // "console" or "file"
-	Filename string `yaml:"filename,omitempty"` // For file sink
-	UseStderr bool  `yaml:"use_stderr,omitempty"` // For console sink
-	Colorize  bool  `yaml:"colorize,omitempty"`   // For console sink
+	Type      string `yaml:"type"`                 // "console" or "file"
+	Filename  string `yaml:"filename,omitempty"`   // For file sink
+	UseStderr bool   `yaml:"use_stderr,omitempty"` // For console sink
+	Colorize  bool   `yaml:"colorize,omitempty"`   // For console sink
 }
 
-func LoadConfig(projectRoot string) (*Config, error) {
-	configPath := filepath.Join(projectRoot, ".intentc", "config.yaml")
-	
-	// Default config
-	config := &Config{
+// GetDefaultConfig returns the default configuration
+func GetDefaultConfig() *Config {
+	return &Config{
 		Version: 1,
 		Agent: AgentConfig{
-			Provider: "claude",
-			Timeout:  5 * time.Minute,
-			Retries:  3,
+			Provider:  "claude",
+			Timeout:   5 * time.Minute,
+			Retries:   3,
 			RateLimit: 1 * time.Second,
-			CLIArgs:  []string{},
+			CLIArgs:   []string{"-p", "--dangerously-skip-permissions", "--output-format", "text"},
 		},
 		Build: BuildConfig{
 			Parallel:     false, // Sequential by default for git state tracking
@@ -71,6 +69,13 @@ func LoadConfig(projectRoot string) (*Config, error) {
 			},
 		},
 	}
+}
+
+func LoadConfig(projectRoot string) (*Config, error) {
+	configPath := filepath.Join(projectRoot, ".intentc", "config.yaml")
+
+	// Default config
+	config := GetDefaultConfig()
 
 	// Check if config file exists
 	data, err := os.ReadFile(configPath)
@@ -91,7 +96,7 @@ func LoadConfig(projectRoot string) (*Config, error) {
 
 func SaveConfig(projectRoot string, config *Config) error {
 	configPath := filepath.Join(projectRoot, ".intentc", "config.yaml")
-	
+
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)

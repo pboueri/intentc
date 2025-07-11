@@ -166,6 +166,12 @@ func (c *ClaudeAgent) SetTemplates(templates PromptTemplates) {
 	c.templates = templates
 }
 
+// Decompile implements the Decompiler interface
+func (c *ClaudeAgent) Decompile(ctx context.Context, decompileCtx DecompileContext) ([]string, error) {
+	// Claude agent delegates to the embedded CLI agent for decompile
+	return c.CLIAgent.Decompile(ctx, decompileCtx)
+}
+
 // ClaudeAgentFactory implements AgentFactory for Claude agents
 type ClaudeAgentFactory struct {
 	defaultConfig ClaudeAgentConfig

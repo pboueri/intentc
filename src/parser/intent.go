@@ -32,7 +32,7 @@ func (p *IntentParser) ParseIntent(filePath string) (*src.Intent, error) {
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// Handle "Depends On:" format
 		if strings.HasPrefix(line, "Depends On:") {
 			depLine := strings.TrimSpace(strings.TrimPrefix(line, "Depends On:"))
@@ -43,15 +43,6 @@ func (p *IntentParser) ParseIntent(filePath string) (*src.Intent, error) {
 	}
 
 	return intent, nil
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *IntentParser) ParseProjectIntent(filePath string) (*src.Intent, error) {

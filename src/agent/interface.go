@@ -16,10 +16,18 @@ type BuildContext struct {
 	GitManager   git.GitManager
 }
 
+// DecompileContext contains the context for decompiling a codebase
+type DecompileContext struct {
+	SourcePath   string // Path to source code to analyze
+	OutputPath   string // Path where intent files should be created
+	ProjectRoot  string // Project root for the decompile operation
+}
+
 type Agent interface {
 	Build(ctx context.Context, buildCtx BuildContext) ([]string, error)
 	Refine(ctx context.Context, target *src.Target, prompt string) error
 	Validate(ctx context.Context, validation *src.Validation, generatedFiles []string) (bool, string, error)
+	Decompile(ctx context.Context, decompileCtx DecompileContext) ([]string, error)
 	GetName() string
 	GetType() string
 }

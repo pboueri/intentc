@@ -3,14 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/kballard/go-shellquote"
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
@@ -99,6 +98,15 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 	// Create the prompt
 	prompt := a.createBuildPrompt(buildCtx)
 
+	// Log prompt preview in debug mode
+	if logger.IsDebugEnabled() {
+		promptPreview := prompt
+		if len(promptPreview) > 300 {
+			promptPreview = promptPreview[:300] + "..."
+		}
+		logger.Debug("[%s] Build prompt preview: %s", a.name, promptPreview)
+	}
+
 	// Execute with retries
 	var lastErr error
 	var output string
@@ -113,6 +121,10 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 		output, err = a.executeCLI(ctx, prompt)
 		if err == nil {
 			success = true
+			// For decompile, always show output at info level
+			if buildCtx.Intent.Name == "decompile" && len(output) > 0 {
+				logger.Info("[%s] Decompile completed. Agent output:\n%s", a.name, output)
+			}
 			break
 		}
 		lastErr = err
@@ -124,7 +136,7 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 
 	// Try parsing files from output first
 	files := a.parseGeneratedFiles(output, buildCtx.ProjectRoot)
-	
+
 	// If no files found from output parsing and we have git status, use git detection
 	if len(files) == 0 && beforeStatus != nil && buildCtx.GitManager != nil {
 		detectedFiles, err := a.detectGeneratedFiles(ctx, buildCtx, beforeStatus)
@@ -134,7 +146,7 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 			files = detectedFiles
 		}
 	}
-	
+
 	logger.Info("[%s] Generated %d file(s)", a.name, len(files))
 	return files, nil
 }
@@ -184,7 +196,7 @@ func (a *CLIAgent) Validate(ctx context.Context, validation *src.Validation, gen
 	// Parse result
 	output = strings.TrimSpace(output)
 	passed := strings.HasPrefix(strings.ToUpper(output), "PASS")
-	
+
 	return passed, output, nil
 }
 
@@ -194,43 +206,41 @@ func (a *CLIAgent) executeCLI(ctx context.Context, prompt string) (string, error
 	cmdCtx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
 
-	// Prepare the command
-	cmd := exec.CommandContext(cmdCtx, a.command, a.args...)
-	cmd.Dir = a.workingDir
-
-	// Set up stdin with the prompt
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to create stdin pipe: %w", err)
+	// Log the prompt in debug mode
+	logger.Debug("[%s] Prompt length: %d characters", a.name, len(prompt))
+	if logger.IsDebugEnabled() {
+		// Log first 500 chars of prompt or full prompt if shorter
+		promptPreview := prompt
+		if len(promptPreview) > 500 {
+			promptPreview = fmt.Sprintf("%s...\n[truncated - showing first 500 of %d characters]",
+				promptPreview[:500], len(prompt))
+		}
+		logger.Debug("[%s] Prompt content:\n%s", a.name, promptPreview)
 	}
+
+	// Create the shell command that pipes echo output to the agent command
+	// Use sh -c to execute the pipe command
+	quotedPrompt := shellquote.Join(prompt)
+	shellCmd := fmt.Sprintf("echo %s | %s %s",
+		quotedPrompt,
+		a.command,
+		strings.Join(a.args, " "))
+
+	// Execute using sh -c
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", shellCmd)
+	cmd.Dir = a.workingDir
 
 	// Set up output capture
 	var stdout, stderr strings.Builder
-	var wg sync.WaitGroup
-
-	// Create simple writers for output
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Start the command
-	logger.Debug("[%s] Executing command: %s %s", a.name, a.command, strings.Join(a.args, " "))
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start %s command: %w", a.command, err)
-	}
+	// Log the command being executed (replace prompt with placeholder for cleaner logs)
+	shellCmdForLog := fmt.Sprintf("echo {PROMPT} | %s %s", a.command, strings.Join(a.args, " "))
+	logger.Debug("[%s] Executing shell command: sh -c %s", a.name, shellCmdForLog)
 
-	// Write the prompt to stdin
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer stdin.Close()
-		if _, err := io.WriteString(stdin, prompt); err != nil {
-			logger.Error("[%s] Failed to write prompt to stdin: %v", a.name, err)
-		}
-	}()
-
-	// Wait for completion
-	wg.Wait()
-	err = cmd.Wait()
+	// Run the command
+	err := cmd.Run()
 
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
@@ -239,7 +249,119 @@ func (a *CLIAgent) executeCLI(ctx context.Context, prompt string) (string, error
 		return "", fmt.Errorf("%s command failed: %w\nstderr: %s", a.command, err, stderr.String())
 	}
 
-	return stdout.String(), nil
+	output := stdout.String()
+
+	// Log the output in debug mode
+	if logger.IsDebugEnabled() && len(output) > 0 {
+		outputPreview := output
+		if len(outputPreview) > 1000 {
+			outputPreview = fmt.Sprintf("%s...\n[truncated - showing first 1000 of %d characters]",
+				outputPreview[:1000], len(output))
+		}
+		logger.Debug("[%s] Command output:\n%s", a.name, outputPreview)
+	}
+
+	return output, nil
+}
+
+// Decompile implements the Decompiler interface
+func (a *CLIAgent) Decompile(ctx context.Context, decompileCtx DecompileContext) ([]string, error) {
+	logger.Info("[%s] Starting decompile of codebase: %s", a.name, decompileCtx.SourcePath)
+	logger.Info("[%s] Output directory: %s", a.name, decompileCtx.OutputPath)
+
+	// Save original working directory and restore it after
+	originalWorkingDir := a.workingDir
+	defer func() {
+		a.workingDir = originalWorkingDir
+	}()
+
+	// Set working directory to source path for analysis
+	a.workingDir = decompileCtx.SourcePath
+
+	// Create the decompile prompt
+	prompt, err := a.createDecompilePrompt(decompileCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decompile prompt: %w", err)
+	}
+
+	// Log prompt preview in debug mode
+	if logger.IsDebugEnabled() {
+		promptPreview := prompt
+		if len(promptPreview) > 300 {
+			promptPreview = promptPreview[:300] + "..."
+		}
+		logger.Debug("[%s] Decompile prompt preview: %s", a.name, promptPreview)
+	}
+
+	// Execute with retries
+	var lastErr error
+	var output string
+	var success bool
+	for attempt := 1; attempt <= a.retries; attempt++ {
+		if attempt > 1 {
+			logger.Warn("[%s] Retrying decompile (attempt %d/%d) after error: %v", a.name, attempt, a.retries, lastErr)
+			time.Sleep(a.rateLimit)
+		}
+
+		var err error
+		output, err = a.executeCLI(ctx, prompt)
+		if err == nil {
+			success = true
+			// Always show decompile output at info level
+			if len(output) > 0 {
+				logger.Info("[%s] Decompile completed. Agent output:\n%s", a.name, output)
+			}
+			break
+		}
+		lastErr = err
+	}
+
+	if !success {
+		return nil, fmt.Errorf("%s agent failed after %d attempts: %w", a.name, a.retries, lastErr)
+	}
+
+	// Parse generated files from output
+	files := a.parseGeneratedFiles(output, decompileCtx.OutputPath)
+
+	// If no files found from output parsing, scan the output directory
+	if len(files) == 0 {
+		logger.Debug("No files reported by agent, scanning output directory for .ic and .icv files...")
+		var foundFiles []string
+		err = filepath.Walk(decompileCtx.OutputPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !info.IsDir() && (strings.HasSuffix(path, ".ic") || strings.HasSuffix(path, ".icv")) {
+				foundFiles = append(foundFiles, path)
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Warn("Failed to scan output directory: %v", err)
+		} else if len(foundFiles) > 0 {
+			files = foundFiles
+			logger.Debug("Found %d intent files in output directory", len(foundFiles))
+		}
+	}
+
+	logger.Info("[%s] Generated %d file(s)", a.name, len(files))
+	return files, nil
+}
+
+// createDecompilePrompt creates the prompt for decompiling
+func (a *CLIAgent) createDecompilePrompt(decompileCtx DecompileContext) (string, error) {
+	// Use the decompile template
+	data := PromptData{
+		SourcePath: decompileCtx.SourcePath,
+		OutputPath: decompileCtx.OutputPath,
+	}
+
+	prompt, err := ExecuteTemplate(a.templates.Decompile, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to create decompile prompt: %w", err)
+	}
+
+	return prompt, nil
 }
 
 // createBuildPrompt creates the prompt for building
@@ -267,27 +389,27 @@ func (a *CLIAgent) detectGeneratedFiles(ctx context.Context, buildCtx BuildConte
 	}
 
 	var generatedFiles []string
-	
+
 	// Collect all new untracked files
 	generatedFiles = append(generatedFiles, afterStatus.UntrackedFiles...)
-	
+
 	// Collect modified files that weren't modified before
 	beforeModified := make(map[string]bool)
 	for _, file := range beforeStatus.ModifiedFiles {
 		beforeModified[file] = true
 	}
-	
+
 	for _, file := range afterStatus.ModifiedFiles {
 		if !beforeModified[file] {
 			generatedFiles = append(generatedFiles, file)
 		}
 	}
-	
+
 	// Convert to absolute paths
 	for i, file := range generatedFiles {
 		generatedFiles[i] = filepath.Join(buildCtx.ProjectRoot, file)
 	}
-	
+
 	return generatedFiles, nil
 }
 
@@ -296,12 +418,15 @@ func (a *CLIAgent) parseGeneratedFiles(output string, projectRoot string) []stri
 	files := []string{}
 	lines := strings.Split(output, "\n")
 
+	logger.Debug("Parsing output for generated files (projectRoot: %s)", projectRoot)
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// Look for common patterns that indicate file creation
-		if strings.Contains(line, "Created") || strings.Contains(line, "Generated") || 
-		   strings.Contains(line, "Wrote") || strings.Contains(line, "Writing") || strings.Contains(line, "Modified") {
+		if strings.Contains(line, "Created") || strings.Contains(line, "Generated") ||
+			strings.Contains(line, "Wrote") || strings.Contains(line, "Writing") || strings.Contains(line, "Modified") {
+			logger.Debug("Found creation line: %s", line)
 			// Extract file paths (this is a simple heuristic)
 			parts := strings.Fields(line)
 			for _, part := range parts {
@@ -309,10 +434,12 @@ func (a *CLIAgent) parseGeneratedFiles(output string, projectRoot string) []stri
 				if strings.Contains(part, "/") || strings.Contains(part, ".") {
 					// Use utility to clean up the path
 					path := util.CleanFilePath(part)
-					
+
 					// Make it absolute if relative
 					path = util.MakeAbsolute(path, projectRoot)
-					
+
+					logger.Debug("Found potential file path in output: %s (absolute: %s)", part, path)
+
 					// Add the file path (in production, files would exist)
 					files = append(files, path)
 				}
