@@ -1,9 +1,0 @@
-version: 1
-
-agent:
-  provider: claude
-  timeout: 600s
-
-build:
-  parallel: true
-  cache_enabled: true
