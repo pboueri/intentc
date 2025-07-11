@@ -3,11 +3,13 @@ package builder
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/parser"
@@ -21,15 +23,17 @@ type Builder struct {
 	stateManager state.StateManager
 	parser       *parser.Parser
 	gitManager   git.GitManager
+	config       *config.Config
 }
 
 type BuildOptions struct {
 	Target    string
 	Force     bool
 	DryRun    bool
+	BuildName string // Name for the build directory (optional, uses default if empty)
 }
 
-func NewBuilder(projectRoot string, agent agent.Agent, stateManager state.StateManager, gitManager git.GitManager) *Builder {
+func NewBuilder(projectRoot string, agent agent.Agent, stateManager state.StateManager, gitManager git.GitManager, cfg *config.Config) *Builder {
 	return &Builder{
 		projectRoot:  projectRoot,
 		intentDir:    filepath.Join(projectRoot, "intent"),
@@ -37,10 +41,25 @@ func NewBuilder(projectRoot string, agent agent.Agent, stateManager state.StateM
 		stateManager: stateManager,
 		parser:       parser.New(),
 		gitManager:   gitManager,
+		config:       cfg,
 	}
 }
 
 func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
+	// Determine build name
+	buildName := opts.BuildName
+	if buildName == "" {
+		buildName = b.config.Build.DefaultBuildName
+	}
+	
+	// Create build directory
+	buildPath, err := b.createBuildDirectory(buildName)
+	if err != nil {
+		return fmt.Errorf("failed to create build directory: %w", err)
+	}
+	
+	logger.Info("Using build directory: %s", buildPath)
+
 	targets, err := b.loadTargets(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load targets: %w", err)
@@ -59,7 +78,7 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
 		}
 		targetsToBuild = b.getTargetsInOrder(dag, target)
 	} else {
-		targetsToBuild = b.getAllUnbuiltTargets(ctx, dag)
+		targetsToBuild = b.getAllUnbuiltTargets(ctx, dag, buildName)
 	}
 
 	if opts.DryRun {
@@ -71,7 +90,7 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
 	}
 
 	for _, target := range targetsToBuild {
-		if err := b.buildTarget(ctx, target, opts.Force); err != nil {
+		if err := b.buildTarget(ctx, target, opts.Force, buildName, buildPath); err != nil {
 			return fmt.Errorf("failed to build target %s: %w", target.Name, err)
 		}
 	}
@@ -79,21 +98,27 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
 	return nil
 }
 
-func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force bool) error {
-	status, err := b.stateManager.GetTargetStatus(ctx, target.Name)
+func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force bool, buildName, buildPath string) error {
+	// Use build-aware status check
+	status, err := b.stateManager.GetTargetStatusForBuild(ctx, target.Name, buildName)
 	if err != nil {
 		return fmt.Errorf("failed to get target status: %w", err)
 	}
 
 	if status == src.TargetStatusBuilt && !force {
-		logger.Info("Target %s is already built, skipping", target.Name)
+		logger.Info("Target %s is already built in build '%s', skipping", target.Name, buildName)
 		return nil
 	}
 
 	logger.Info("Building target: %s", target.Name)
 	
-	if err := b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusBuilding); err != nil {
+	// Update build-specific status
+	if err := b.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, buildName, src.TargetStatusBuilding); err != nil {
 		return fmt.Errorf("failed to update target status: %w", err)
+	}
+	// Also update global status for backward compatibility
+	if err := b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusBuilding); err != nil {
+		return fmt.Errorf("failed to update global target status: %w", err)
 	}
 
 	generationID := b.generateID()
@@ -104,10 +129,13 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 		ProjectRoot:  b.projectRoot,
 		GenerationID: generationID,
 		GitManager:   b.gitManager,
+		BuildName:    buildName,
+		BuildPath:    buildPath,
 	}
 
 	files, err := b.agent.Build(ctx, buildCtx)
 	if err != nil {
+		b.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, buildName, src.TargetStatusFailed)
 		b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusFailed)
 		return fmt.Errorf("agent build failed: %w", err)
 	}
@@ -118,14 +146,22 @@ func (b *Builder) buildTarget(ctx context.Context, target *src.Target, force boo
 		Success:      true,
 		GeneratedAt:  time.Now(),
 		Files:        files,
+		BuildName:    buildName,
+		BuildPath:    buildPath,
 	}
 
+	// Save build result - if GitStateManager, it will handle build-specific storage
 	if err := b.stateManager.SaveBuildResult(ctx, result); err != nil {
 		return fmt.Errorf("failed to save build result: %w", err)
 	}
 
-	if err := b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusBuilt); err != nil {
+	// Update build-specific status
+	if err := b.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, buildName, src.TargetStatusBuilt); err != nil {
 		return fmt.Errorf("failed to update target status: %w", err)
+	}
+	// Also update global status for backward compatibility
+	if err := b.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusBuilt); err != nil {
+		return fmt.Errorf("failed to update global target status: %w", err)
 	}
 
 	logger.Info("Successfully built target: %s (generation ID: %s)", target.Name, generationID)
@@ -232,7 +268,7 @@ func (b *Builder) getTargetsInOrder(dag map[string]*src.Target, target *src.Targ
 	return order
 }
 
-func (b *Builder) getAllUnbuiltTargets(ctx context.Context, dag map[string]*src.Target) []*src.Target {
+func (b *Builder) getAllUnbuiltTargets(ctx context.Context, dag map[string]*src.Target, buildName string) []*src.Target {
 	var unbuilt []*src.Target
 	visited := make(map[string]bool)
 
@@ -247,7 +283,7 @@ func (b *Builder) getAllUnbuiltTargets(ctx context.Context, dag map[string]*src.
 			visit(dep)
 		}
 
-		status, _ := b.stateManager.GetTargetStatus(ctx, t.Name)
+		status, _ := b.stateManager.GetTargetStatusForBuild(ctx, t.Name, buildName)
 		if status != src.TargetStatusBuilt {
 			unbuilt = append(unbuilt, t)
 		}
@@ -262,4 +298,25 @@ func (b *Builder) getAllUnbuiltTargets(ctx context.Context, dag map[string]*src.
 
 func (b *Builder) generateID() string {
 	return fmt.Sprintf("gen-%d", time.Now().Unix())
+}
+
+// createBuildDirectory creates the build directory and returns its path
+func (b *Builder) createBuildDirectory(buildName string) (string, error) {
+	// Build directory path: {projectRoot}/build-{buildName}
+	buildPath := filepath.Join(b.projectRoot, "build-"+buildName)
+	
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(buildPath, 0755); err != nil {
+		return "", fmt.Errorf("failed to create build directory: %w", err)
+	}
+	
+	return buildPath, nil
+}
+
+// GetBuildDirectory returns the path to a specific build directory
+func (b *Builder) GetBuildDirectory(buildName string) string {
+	if buildName == "" {
+		buildName = b.config.Build.DefaultBuildName
+	}
+	return filepath.Join(b.projectRoot, "build-"+buildName)
 }

@@ -24,6 +24,8 @@ func PrepareTemplateData(buildCtx BuildContext) map[string]interface{} {
 		"IntentName":    buildCtx.Intent.Name,
 		"IntentContent": buildCtx.Intent.Content,
 		"Dependencies":  dependencies,
+		"BuildName":     buildCtx.BuildName,
+		"BuildPath":     buildCtx.BuildPath,
 	}
 
 	// Convert validations to template-friendly format

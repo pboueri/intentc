@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/graph"
 	"github.com/pboueri/intentc/src/logger"
@@ -18,11 +19,13 @@ import (
 )
 
 var (
-	statusTree bool
+	statusTree      bool
+	statusBuildName string
 )
 
 func init() {
 	statusCmd.Flags().BoolVarP(&statusTree, "tree", "t", true, "Show dependency tree visualization")
+	statusCmd.Flags().StringVar(&statusBuildName, "build-name", "", "Show status for specific build directory")
 }
 
 var statusCmd = &cobra.Command{
@@ -54,6 +57,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	stateManager := state.NewGitStateManager(gitInterface, projectRoot)
 	if err := stateManager.Initialize(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
+	}
+
+	// Load configuration to get default build name if needed
+	cfg, err := LoadConfigWithOverrides(projectRoot)
+	if err != nil {
+		cfg = config.GetDefaultConfig()
+	}
+
+	// Determine build name to use
+	buildName := statusBuildName
+	if buildName == "" {
+		buildName = cfg.Build.DefaultBuildName
 	}
 
 	// Create registry and load targets
@@ -93,9 +108,29 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
+	// Print build info if showing build-specific status
+	if buildName != "" {
+		fmt.Printf("Build: %s\n", buildName)
+		buildPath := filepath.Join(projectRoot, "build-"+buildName)
+		if _, err := os.Stat(buildPath); err == nil {
+			fmt.Printf("Build Directory: %s\n", buildPath)
+		} else {
+			fmt.Printf("Build Directory: %s (not created yet)\n", buildPath)
+		}
+		fmt.Println()
+	}
+
 	// Status function for DAG visualization
 	statusFunc := func(name string) string {
-		status, err := stateManager.GetTargetStatus(context.Background(), name)
+		var status src.TargetStatus
+		var err error
+		
+		if buildName != "" {
+			status, err = stateManager.GetTargetStatusForBuild(context.Background(), name, buildName)
+		} else {
+			status, err = stateManager.GetTargetStatus(context.Background(), name)
+		}
+		
 		if err != nil {
 			return "pending"
 		}
@@ -114,13 +149,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	
 	targets := registry.GetAllTargets()
 	for _, target := range targets {
-		printTargetStatus(context.Background(), target, stateManager)
+		printTargetStatus(context.Background(), target, stateManager, buildName)
 	}
 
 	// Print summary
 	var pending, built, failed, outdated int
 	for _, target := range targets {
-		status, _ := stateManager.GetTargetStatus(context.Background(), target.Name)
+		var status src.TargetStatus
+		if buildName != "" {
+			status, _ = stateManager.GetTargetStatusForBuild(context.Background(), target.Name, buildName)
+		} else {
+			status, _ = stateManager.GetTargetStatus(context.Background(), target.Name)
+		}
 		switch string(status) {
 		case "built":
 			built++
@@ -139,14 +179,24 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func printTargetStatus(ctx context.Context, target *parser.TargetInfo, stateManager state.StateManager) {
-	status, err := stateManager.GetTargetStatus(ctx, target.Name)
-	if err != nil {
-		status = "pending"
+func printTargetStatus(ctx context.Context, target *parser.TargetInfo, stateManager state.StateManager, buildName string) {
+	var status src.TargetStatus
+	var err error
+	var result *src.BuildResult
+	
+	if buildName != "" {
+		status, err = stateManager.GetTargetStatusForBuild(ctx, target.Name, buildName)
+		if err != nil {
+			status = "pending"
+		}
+		result, _ = stateManager.GetLatestBuildResultForBuild(ctx, target.Name, buildName)
+	} else {
+		status, err = stateManager.GetTargetStatus(ctx, target.Name)
+		if err != nil {
+			status = "pending"
+		}
+		result, _ = stateManager.GetLatestBuildResult(ctx, target.Name)
 	}
-
-	// Get latest build result
-	result, _ := stateManager.GetLatestBuildResult(ctx, target.Name)
 
 	// Format status with color
 	var statusStr string

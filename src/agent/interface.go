@@ -14,6 +14,8 @@ type BuildContext struct {
 	ProjectRoot  string
 	GenerationID string
 	GitManager   git.GitManager
+	BuildName    string // Name of the build directory (e.g., "default", "experimental")
+	BuildPath    string // Full path to the build directory
 }
 
 // DecompileContext contains the context for decompiling a codebase

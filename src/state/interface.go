@@ -14,4 +14,9 @@ type StateManager interface {
 	CommitChanges(ctx context.Context, message string, files []string) error
 	GetTargetStatus(ctx context.Context, target string) (src.TargetStatus, error)
 	UpdateTargetStatus(ctx context.Context, target string, status src.TargetStatus) error
+	
+	// Build-name aware methods
+	GetTargetStatusForBuild(ctx context.Context, target string, buildName string) (src.TargetStatus, error)
+	UpdateTargetStatusForBuild(ctx context.Context, target string, buildName string, status src.TargetStatus) error
+	GetLatestBuildResultForBuild(ctx context.Context, target string, buildName string) (*src.BuildResult, error)
 }

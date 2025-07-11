@@ -17,11 +17,13 @@ import (
 var (
 	buildForce  bool
 	buildDryRun bool
+	buildName   string
 )
 
 func init() {
 	buildCmd.Flags().BoolVarP(&buildForce, "force", "f", false, "Force rebuild even if target is up to date")
 	buildCmd.Flags().BoolVar(&buildDryRun, "dry-run", false, "Show what would be built without actually building")
+	buildCmd.Flags().StringVar(&buildName, "build-name", "", "Name for the build directory (uses default if not specified)")
 }
 
 var buildCmd = &cobra.Command{
@@ -74,12 +76,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create builder
-	bldr := builder.NewBuilder(projectRoot, buildAgent, stateManager, gitInterface)
+	bldr := builder.NewBuilder(projectRoot, buildAgent, stateManager, gitInterface, cfg)
 
 	// Build options
 	opts := builder.BuildOptions{
-		Force:  buildForce,
-		DryRun: buildDryRun,
+		Force:     buildForce,
+		DryRun:    buildDryRun,
+		BuildName: buildName,
 	}
 
 	if len(args) > 0 {

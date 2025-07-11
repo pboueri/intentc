@@ -174,6 +174,7 @@ func TestClaudeParseGeneratedFiles(t *testing.T) {
 			Name: "test-feature",
 		},
 		ProjectRoot: "/test/project",
+		BuildPath:   "/test/project",
 	}
 
 	tests := []struct {

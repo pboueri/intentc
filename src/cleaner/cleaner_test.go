@@ -10,14 +10,18 @@ import (
 )
 
 type mockStateManager struct {
-	statuses     map[string]src.TargetStatus
-	buildResults map[string]*src.BuildResult
+	statuses          map[string]src.TargetStatus
+	buildResults      map[string]*src.BuildResult
+	buildStatuses     map[string]map[string]src.TargetStatus // buildName -> target -> status
+	buildBuildResults map[string]map[string]*src.BuildResult   // buildName -> target -> result
 }
 
 func newMockStateManager() *mockStateManager {
 	return &mockStateManager{
-		statuses:     make(map[string]src.TargetStatus),
-		buildResults: make(map[string]*src.BuildResult),
+		statuses:          make(map[string]src.TargetStatus),
+		buildResults:      make(map[string]*src.BuildResult),
+		buildStatuses:     make(map[string]map[string]src.TargetStatus),
+		buildBuildResults: make(map[string]map[string]*src.BuildResult),
 	}
 }
 
@@ -27,6 +31,15 @@ func (m *mockStateManager) Initialize(ctx context.Context) error {
 
 func (m *mockStateManager) SaveBuildResult(ctx context.Context, result *src.BuildResult) error {
 	m.buildResults[result.Target] = result
+	
+	// Also store in build-specific map if BuildName is set
+	if result.BuildName != "" {
+		if _, ok := m.buildBuildResults[result.BuildName]; !ok {
+			m.buildBuildResults[result.BuildName] = make(map[string]*src.BuildResult)
+		}
+		m.buildBuildResults[result.BuildName][result.Target] = result
+	}
+	
 	return nil
 }
 
@@ -60,6 +73,31 @@ func (m *mockStateManager) GetTargetStatus(ctx context.Context, target string) (
 func (m *mockStateManager) UpdateTargetStatus(ctx context.Context, target string, status src.TargetStatus) error {
 	m.statuses[target] = status
 	return nil
+}
+
+// New build-aware methods
+func (m *mockStateManager) GetTargetStatusForBuild(ctx context.Context, target string, buildName string) (src.TargetStatus, error) {
+	if buildStatuses, ok := m.buildStatuses[buildName]; ok {
+		if status, ok := buildStatuses[target]; ok {
+			return status, nil
+		}
+	}
+	return src.TargetStatusPending, nil
+}
+
+func (m *mockStateManager) UpdateTargetStatusForBuild(ctx context.Context, target string, buildName string, status src.TargetStatus) error {
+	if _, ok := m.buildStatuses[buildName]; !ok {
+		m.buildStatuses[buildName] = make(map[string]src.TargetStatus)
+	}
+	m.buildStatuses[buildName][target] = status
+	return nil
+}
+
+func (m *mockStateManager) GetLatestBuildResultForBuild(ctx context.Context, target string, buildName string) (*src.BuildResult, error) {
+	if buildResults, ok := m.buildBuildResults[buildName]; ok {
+		return buildResults[target], nil
+	}
+	return nil, nil
 }
 
 func setupTestProject(t *testing.T) string {
@@ -275,4 +313,126 @@ func TestCleaner_Clean_NoBuiltTarget(t *testing.T) {
 	}
 	
 	// Should succeed without errors
+}
+
+// Tests for build directory cleaning
+func TestCleaner_CleanBuildDirectory(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockState := newMockStateManager()
+	
+	// Create build directories
+	buildDir := filepath.Join(projectRoot, "build-test-build")
+	os.MkdirAll(buildDir, 0755)
+	
+	// Create some files in the build directory
+	testFile1 := filepath.Join(buildDir, "file1.go")
+	testFile2 := filepath.Join(buildDir, "subdir", "file2.js")
+	os.WriteFile(testFile1, []byte("test content"), 0644)
+	os.MkdirAll(filepath.Dir(testFile2), 0755)
+	os.WriteFile(testFile2, []byte("test content 2"), 0644)
+	
+	cleaner := NewCleaner(projectRoot, mockState)
+	
+	// Clean specific build directory
+	err := cleaner.Clean(context.Background(), CleanOptions{
+		BuildName: "test-build",
+	})
+	
+	if err != nil {
+		t.Fatalf("Clean failed: %v", err)
+	}
+	
+	// Verify build directory was removed
+	if _, err := os.Stat(buildDir); !os.IsNotExist(err) {
+		t.Error("Expected build directory to be removed")
+	}
+}
+
+func TestCleaner_CleanBuildDirectory_NonExistent(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockState := newMockStateManager()
+	
+	cleaner := NewCleaner(projectRoot, mockState)
+	
+	// Try to clean non-existent build directory
+	err := cleaner.Clean(context.Background(), CleanOptions{
+		BuildName: "nonexistent-build",
+	})
+	
+	// Should succeed without error
+	if err != nil {
+		t.Fatalf("Clean failed: %v", err)
+	}
+}
+
+func TestCleaner_CleanBuildDirectory_DryRun(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockState := newMockStateManager()
+	
+	// Create build directory
+	buildDir := filepath.Join(projectRoot, "build-dry-run-test")
+	os.MkdirAll(buildDir, 0755)
+	testFile := filepath.Join(buildDir, "test.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	
+	cleaner := NewCleaner(projectRoot, mockState)
+	
+	// Clean with dry run
+	err := cleaner.Clean(context.Background(), CleanOptions{
+		BuildName: "dry-run-test",
+		DryRun:    true,
+	})
+	
+	if err != nil {
+		t.Fatalf("Clean failed: %v", err)
+	}
+	
+	// Verify build directory still exists
+	if _, err := os.Stat(buildDir); os.IsNotExist(err) {
+		t.Error("Expected build directory to still exist in dry run mode")
+	}
+	
+	// Verify test file still exists
+	if _, err := os.Stat(testFile); os.IsNotExist(err) {
+		t.Error("Expected test file to still exist in dry run mode")
+	}
+}
+
+func TestCleaner_CleanMultipleBuildDirectories(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockState := newMockStateManager()
+	
+	// Create multiple build directories
+	buildNames := []string{"dev", "staging", "prod"}
+	for _, name := range buildNames {
+		buildDir := filepath.Join(projectRoot, "build-"+name)
+		os.MkdirAll(buildDir, 0755)
+		testFile := filepath.Join(buildDir, "app.js")
+		os.WriteFile(testFile, []byte(name), 0644)
+	}
+	
+	cleaner := NewCleaner(projectRoot, mockState)
+	
+	// Clean only staging build
+	err := cleaner.Clean(context.Background(), CleanOptions{
+		BuildName: "staging",
+	})
+	
+	if err != nil {
+		t.Fatalf("Clean failed: %v", err)
+	}
+	
+	// Verify only staging was removed
+	for _, name := range buildNames {
+		buildDir := filepath.Join(projectRoot, "build-"+name)
+		if name == "staging" {
+			if _, err := os.Stat(buildDir); !os.IsNotExist(err) {
+				t.Errorf("Expected %s build directory to be removed", name)
+			}
+		} else {
+			if _, err := os.Stat(buildDir); os.IsNotExist(err) {
+				t.Errorf("Expected %s build directory to still exist", name)
+			}
+		}
+	}
 }

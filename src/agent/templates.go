@@ -15,6 +15,7 @@ var DefaultPromptTemplates = PromptTemplates{
 	Build: `# Code Generation Request
 
 Project: {{.ProjectRoot}}
+Build Directory: {{.BuildPath}}
 Target: {{.IntentName}}
 {{if .GenerationID}}Generation ID: {{.GenerationID}}{{end}}
 {{if .Dependencies}}Dependencies: {{.Dependencies}}{{end}}
@@ -32,11 +33,12 @@ Please ensure the generated code meets these requirements:
 
 ## Instructions
 1. Generate the code to implement all the features described above
-2. Create all necessary files and directories  
-3. Follow best practices for the programming language and framework
-4. Ensure the code meets all validation constraints
-5. Include appropriate error handling and logging
-6. Write clean, maintainable code
+2. Create all necessary files and directories in the build directory: {{.BuildPath}}
+3. Your current working directory is set to the build directory
+4. Follow best practices for the programming language and framework
+5. Ensure the code meets all validation constraints
+6. Include appropriate error handling and logging
+7. Write clean, maintainable code
 
 Please generate the complete implementation.`,
 

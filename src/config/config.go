@@ -28,8 +28,9 @@ type AgentConfig struct {
 }
 
 type BuildConfig struct {
-	Parallel     bool `yaml:"parallel"`
-	CacheEnabled bool `yaml:"cache_enabled"`
+	Parallel         bool   `yaml:"parallel"`
+	CacheEnabled     bool   `yaml:"cache_enabled"`
+	DefaultBuildName string `yaml:"default_build_name"` // Default build directory name
 }
 
 type LoggingConfig struct {
@@ -56,8 +57,9 @@ func GetDefaultConfig() *Config {
 			CLIArgs:   []string{"-p", "--dangerously-skip-permissions", "--output-format", "text"},
 		},
 		Build: BuildConfig{
-			Parallel:     false, // Sequential by default for git state tracking
-			CacheEnabled: false,
+			Parallel:         false, // Sequential by default for git state tracking
+			CacheEnabled:     false,
+			DefaultBuildName: "default",
 		},
 		Logging: LoggingConfig{
 			Level: "info",
@@ -162,6 +164,9 @@ func MergeConfig(base, override *Config) *Config {
 	}
 	if override.Build.CacheEnabled {
 		result.Build.CacheEnabled = override.Build.CacheEnabled
+	}
+	if override.Build.DefaultBuildName != "" {
+		result.Build.DefaultBuildName = override.Build.DefaultBuildName
 	}
 
 	// Merge Logging config

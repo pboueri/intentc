@@ -61,6 +61,8 @@ type BuildResult struct {
 	Error        error
 	GeneratedAt  time.Time
 	Files        []string
+	BuildName    string   // Name of the build directory used
+	BuildPath    string   // Full path to the build directory
 }
 
 type ProjectConfig struct {

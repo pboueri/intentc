@@ -150,7 +150,7 @@ func (c *ClaudeAgent) parseClaudeGeneratedFiles(output string, buildCtx BuildCon
 	logger.Debug("=== Parsing generated files from output ===")
 
 	// Use the parent CLIAgent's parser
-	files := c.CLIAgent.parseGeneratedFiles(output, buildCtx.ProjectRoot)
+	files := c.CLIAgent.parseGeneratedFiles(output, buildCtx.BuildPath)
 
 	if len(files) > 0 {
 		for _, file := range files {

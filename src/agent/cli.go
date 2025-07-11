@@ -81,8 +81,9 @@ func (a *CLIAgent) GetType() string {
 func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, error) {
 	logger.Info("[%s] Starting build for target: %s", a.name, buildCtx.Intent.Name)
 
-	// Update working directory
-	a.workingDir = buildCtx.ProjectRoot
+	// Update working directory to build directory
+	a.workingDir = buildCtx.BuildPath
+	logger.Debug("[%s] Working directory set to build path: %s", a.name, a.workingDir)
 
 	// Capture git status before execution
 	var beforeStatus *git.GitStatus
@@ -135,7 +136,7 @@ func (a *CLIAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string, 
 	}
 
 	// Try parsing files from output first
-	files := a.parseGeneratedFiles(output, buildCtx.ProjectRoot)
+	files := a.parseGeneratedFiles(output, buildCtx.BuildPath)
 
 	// If no files found from output parsing and we have git status, use git detection
 	if len(files) == 0 && beforeStatus != nil && buildCtx.GitManager != nil {
@@ -405,7 +406,8 @@ func (a *CLIAgent) detectGeneratedFiles(ctx context.Context, buildCtx BuildConte
 		}
 	}
 
-	// Convert to absolute paths
+	// Convert to absolute paths relative to project root
+	// Git status returns paths relative to project root, not build directory
 	for i, file := range generatedFiles {
 		generatedFiles[i] = filepath.Join(buildCtx.ProjectRoot, file)
 	}

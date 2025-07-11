@@ -44,7 +44,8 @@ func (m *MockAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string,
 		fileName := fileNameMatch[1]
 		keyword := keywordMatch[1]
 		
-		// Create the file
+		// For mock agent, always create in project root to match validation expectations
+		// This is a simplification for testing - real agents should use BuildPath
 		filePath := filepath.Join(buildCtx.ProjectRoot, fileName)
 		err := os.WriteFile(filePath, []byte(keyword), 0644)
 		if err != nil {
@@ -57,6 +58,8 @@ func (m *MockAgent) Build(ctx context.Context, buildCtx BuildContext) ([]string,
 	
 	// Fallback: create a default file
 	fileName := fmt.Sprintf("%s.txt", buildCtx.Intent.Name)
+	// For mock agent, always create in project root to match validation expectations
+	// This is a simplification for testing - real agents should use BuildPath
 	filePath := filepath.Join(buildCtx.ProjectRoot, fileName)
 	content := fmt.Sprintf("Generated content for %s", buildCtx.Intent.Name)
 	

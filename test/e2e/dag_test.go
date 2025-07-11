@@ -238,7 +238,7 @@ func createFeature(t *testing.T, intentDir string, name string, deps []string, k
 	// Create intent file
 	intentContent := fmt.Sprintf(`# %s Feature
 
-Create a file named %s.txt in the project root containing the keyword "%s".
+Create a file named %s.txt containing the keyword "%s".
 
 `, name, name, keyword)
 	
@@ -347,6 +347,7 @@ agent:
 build:
   parallel: false
   cache_enabled: false
+  default_build_name: default
 logging:
   level: info
   sinks:

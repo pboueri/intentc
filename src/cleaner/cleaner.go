@@ -19,8 +19,9 @@ type Cleaner struct {
 }
 
 type CleanOptions struct {
-	Target string
-	DryRun bool
+	Target    string
+	DryRun    bool
+	BuildName string // Optional: specific build directory to clean
 }
 
 func NewCleaner(projectRoot string, stateManager state.StateManager) *Cleaner {
@@ -33,6 +34,13 @@ func NewCleaner(projectRoot string, stateManager state.StateManager) *Cleaner {
 }
 
 func (c *Cleaner) Clean(ctx context.Context, opts CleanOptions) error {
+	// If build name is specified, clean the entire build directory
+	if opts.BuildName != "" {
+		return c.cleanBuildDirectory(opts.BuildName, opts.DryRun)
+	}
+
+	// Otherwise, clean based on targets (legacy behavior for now)
+	// In the future, this could be updated to clean from the default build directory
 	targets, err := c.loadTargets(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to load targets: %w", err)
@@ -95,15 +103,33 @@ func (c *Cleaner) cleanTarget(ctx context.Context, target *src.Target) error {
 
 	// Remove generated files
 	for _, file := range result.Files {
-		filePath := filepath.Join(c.projectRoot, file)
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Warning: failed to remove %s: %v\n", file, err)
+		// Use build path if available, otherwise default to project root
+		var filePath string
+		if result.BuildPath != "" {
+			filePath = filepath.Join(result.BuildPath, file)
+		} else {
+			filePath = filepath.Join(c.projectRoot, file)
+		}
+		
+		if err := os.Remove(filePath); err != nil {
+			if !os.IsNotExist(err) {
+				fmt.Printf("Warning: failed to remove %s: %v\n", filePath, err)
+			} else {
+				fmt.Printf("File not found (already removed?): %s\n", filePath)
+			}
 		} else {
 			fmt.Printf("Removed: %s\n", file)
 		}
 	}
 
 	// Update target status
+	// If the result has a build name, update the build-specific status
+	if result.BuildName != "" {
+		if err := c.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, result.BuildName, src.TargetStatusPending); err != nil {
+			return fmt.Errorf("failed to update target status: %w", err)
+		}
+	}
+	// Also update global status for backward compatibility
 	if err := c.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusPending); err != nil {
 		return fmt.Errorf("failed to update target status: %w", err)
 	}
@@ -204,4 +230,28 @@ func (c *Cleaner) getTargetsAndDependents(dag map[string]*src.Target, target *sr
 
 	visit(target)
 	return result
+}
+
+// cleanBuildDirectory removes an entire build directory
+func (c *Cleaner) cleanBuildDirectory(buildName string, dryRun bool) error {
+	buildPath := filepath.Join(c.projectRoot, "build-"+buildName)
+	
+	// Check if directory exists
+	if _, err := os.Stat(buildPath); os.IsNotExist(err) {
+		fmt.Printf("Build directory '%s' does not exist\n", buildName)
+		return nil
+	}
+	
+	if dryRun {
+		fmt.Printf("Would remove build directory: %s\n", buildPath)
+		return nil
+	}
+	
+	// Remove the directory and all its contents
+	if err := os.RemoveAll(buildPath); err != nil {
+		return fmt.Errorf("failed to remove build directory: %w", err)
+	}
+	
+	fmt.Printf("Removed build directory: %s\n", buildPath)
+	return nil
 }

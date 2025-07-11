@@ -79,6 +79,11 @@ EOF
 	}
 	agent := NewCLIAgent(config)
 
+	// Create build directory
+	buildDir := filepath.Join(tmpDir, "build-test")
+	err = os.MkdirAll(buildDir, 0755)
+	require.NoError(t, err)
+
 	// Create build context
 	buildCtx := BuildContext{
 		Intent: &src.Intent{
@@ -88,6 +93,8 @@ EOF
 		Validations:  []*src.ValidationFile{},
 		ProjectRoot:  tmpDir,
 		GenerationID: "test-gen-123",
+		BuildName:    "test",
+		BuildPath:    buildDir,
 	}
 
 	// Execute build
@@ -99,8 +106,8 @@ EOF
 	assert.Len(t, files, 1)
 	assert.Contains(t, files[0], "test.go")
 
-	// Verify file was created
-	testFile := filepath.Join(tmpDir, "test.go")
+	// Verify file was created in build directory
+	testFile := filepath.Join(buildDir, "test.go")
 	assert.FileExists(t, testFile)
 }
 
@@ -161,6 +168,7 @@ fi
 		},
 		ProjectRoot:  tmpDir,
 		GenerationID: "test-gen-456",
+		BuildPath:    tmpDir, // For tests, use tmpDir as build path
 	}
 
 	// Execute build - should succeed on second attempt
@@ -208,6 +216,7 @@ echo "This should not be reached"
 		},
 		ProjectRoot:  tmpDir,
 		GenerationID: "test-gen-789",
+		BuildPath:    tmpDir, // For tests, use tmpDir as build path
 	}
 
 	// Execute build - should timeout
@@ -358,6 +367,7 @@ func TestCLIAgentDetectGeneratedFiles(t *testing.T) {
 
 	buildCtx := BuildContext{
 		ProjectRoot: "/test/project",
+		BuildPath:   "/test/project/build",
 		GitManager:  mockGit,
 	}
 
@@ -422,6 +432,7 @@ echo "Done building."
 		ProjectRoot:  tmpDir,
 		GenerationID: "gen-123",
 		GitManager:   mockGit,
+		BuildPath:    tmpDir, // For tests, use tmpDir as build path
 	}
 
 	// Execute build
@@ -479,4 +490,147 @@ fi
 	require.NoError(t, err)
 	assert.True(t, passed)
 	assert.Contains(t, explanation, "PASS")
+}
+
+// TestCLIAgentBuildDirectoryIsolation tests that the agent executes in the build directory
+func TestCLIAgentBuildDirectoryIsolation(t *testing.T) {
+	// Create a temporary directory for testing
+	tmpDir, err := os.MkdirTemp("", "cli-agent-build-isolation")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Create build directory
+	buildDir := filepath.Join(tmpDir, "build-isolated")
+	err = os.MkdirAll(buildDir, 0755)
+	require.NoError(t, err)
+
+	// Create a test script that prints the working directory and creates a file
+	scriptPath := filepath.Join(tmpDir, "check-pwd.sh")
+	scriptContent := `#!/bin/bash
+echo "Working directory: $(pwd)"
+echo "Creating file in current directory..."
+echo "test content" > generated.txt
+echo "Generated file: generated.txt"
+`
+	err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+
+	// Create CLI agent
+	config := CLIAgentConfig{
+		Name:    "test-agent",
+		Command: "bash",
+		Args:    []string{scriptPath},
+		Timeout: 5 * time.Second,
+	}
+	agent := NewCLIAgent(config)
+
+	// Create build context with build directory
+	buildCtx := BuildContext{
+		Intent: &src.Intent{
+			Name:    "test-isolation",
+			Content: "Test working directory isolation",
+		},
+		Validations:  []*src.ValidationFile{},
+		ProjectRoot:  tmpDir,
+		GenerationID: "test-gen-456",
+		BuildName:    "isolated",
+		BuildPath:    buildDir,
+	}
+
+	// Execute build
+	ctx := context.Background()
+	files, err := agent.Build(ctx, buildCtx)
+	require.NoError(t, err)
+
+	// Verify that working directory was set to build directory
+	assert.Equal(t, buildDir, agent.workingDir)
+
+	// Verify file was detected
+	assert.Len(t, files, 1)
+	assert.Contains(t, files[0], "generated.txt")
+
+	// Verify the file was created in the build directory
+	generatedFile := filepath.Join(buildDir, "generated.txt")
+	_, err = os.Stat(generatedFile)
+	assert.NoError(t, err, "File should exist in build directory")
+
+	// Verify the file was NOT created in the project root
+	rootFile := filepath.Join(tmpDir, "generated.txt")
+	_, err = os.Stat(rootFile)
+	assert.True(t, os.IsNotExist(err), "File should NOT exist in project root")
+}
+
+// TestCLIAgentMultipleBuildDirectories tests multiple builds with different directories
+func TestCLIAgentMultipleBuildDirectories(t *testing.T) {
+	// Create a temporary directory for testing
+	tmpDir, err := os.MkdirTemp("", "cli-agent-multi-build")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Create a test script that creates a file with build name content
+	scriptPath := filepath.Join(tmpDir, "create-build-file.sh")
+	scriptContent := `#!/bin/bash
+# Extract build name from working directory
+BUILD_NAME=$(basename "$PWD")
+echo "Creating file for build: $BUILD_NAME"
+echo "$BUILD_NAME" > output.txt
+echo "Generated file: output.txt"
+`
+	err = os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	require.NoError(t, err)
+
+	// Test with multiple build names
+	buildNames := []string{"dev", "staging", "prod"}
+	
+	for _, buildName := range buildNames {
+		// Create build directory
+		buildDir := filepath.Join(tmpDir, "build-"+buildName)
+		err = os.MkdirAll(buildDir, 0755)
+		require.NoError(t, err)
+
+		// Create CLI agent
+		config := CLIAgentConfig{
+			Name:    "test-agent",
+			Command: "bash",
+			Args:    []string{scriptPath},
+			Timeout: 5 * time.Second,
+		}
+		agent := NewCLIAgent(config)
+
+		// Create build context
+		buildCtx := BuildContext{
+			Intent: &src.Intent{
+				Name:    buildName + "-target",
+				Content: buildName, // Pass build name as content
+			},
+			Validations:  []*src.ValidationFile{},
+			ProjectRoot:  tmpDir,
+			GenerationID: "gen-" + buildName,
+			BuildName:    buildName,
+			BuildPath:    buildDir,
+		}
+
+		// Execute build
+		ctx := context.Background()
+		_, err = agent.Build(ctx, buildCtx)
+		require.NoError(t, err)
+
+		// Verify file was created in the correct build directory
+		outputFile := filepath.Join(buildDir, "output.txt")
+		content, err := os.ReadFile(outputFile)
+		require.NoError(t, err)
+		assert.Equal(t, "build-"+buildName+"\n", string(content))
+
+		// Verify files in other build directories are not affected
+		for _, otherBuild := range buildNames {
+			if otherBuild != buildName {
+				otherFile := filepath.Join(tmpDir, "build-"+otherBuild, "output.txt")
+				if _, err := os.Stat(otherFile); err == nil {
+					// If file exists, verify it has the correct content
+					otherContent, _ := os.ReadFile(otherFile)
+					assert.Equal(t, "build-"+otherBuild+"\n", string(otherContent))
+				}
+			}
+		}
+	}
 }

@@ -9,18 +9,24 @@ import (
 
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/agent"
+	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
+	"github.com/stretchr/testify/assert"
 )
 
 type mockStateManager struct {
-	statuses     map[string]src.TargetStatus
-	buildResults map[string]*src.BuildResult
+	statuses          map[string]src.TargetStatus
+	buildResults      map[string]*src.BuildResult
+	buildStatuses     map[string]map[string]src.TargetStatus // buildName -> target -> status
+	buildBuildResults map[string]map[string]*src.BuildResult   // buildName -> target -> result
 }
 
 func newMockStateManager() *mockStateManager {
 	return &mockStateManager{
-		statuses:     make(map[string]src.TargetStatus),
-		buildResults: make(map[string]*src.BuildResult),
+		statuses:          make(map[string]src.TargetStatus),
+		buildResults:      make(map[string]*src.BuildResult),
+		buildStatuses:     make(map[string]map[string]src.TargetStatus),
+		buildBuildResults: make(map[string]map[string]*src.BuildResult),
 	}
 }
 
@@ -31,6 +37,15 @@ func (m *mockStateManager) Initialize(ctx context.Context) error {
 func (m *mockStateManager) SaveBuildResult(ctx context.Context, result *src.BuildResult) error {
 	key := result.Target + "-" + result.GenerationID
 	m.buildResults[key] = result
+	
+	// Also store in build-specific map if BuildName is set
+	if result.BuildName != "" {
+		if _, ok := m.buildBuildResults[result.BuildName]; !ok {
+			m.buildBuildResults[result.BuildName] = make(map[string]*src.BuildResult)
+		}
+		m.buildBuildResults[result.BuildName][result.Target] = result
+	}
+	
 	return nil
 }
 
@@ -76,6 +91,31 @@ func (m *mockStateManager) GetTargetStatus(ctx context.Context, target string) (
 func (m *mockStateManager) UpdateTargetStatus(ctx context.Context, target string, status src.TargetStatus) error {
 	m.statuses[target] = status
 	return nil
+}
+
+// New build-aware methods
+func (m *mockStateManager) GetTargetStatusForBuild(ctx context.Context, target string, buildName string) (src.TargetStatus, error) {
+	if buildStatuses, ok := m.buildStatuses[buildName]; ok {
+		if status, ok := buildStatuses[target]; ok {
+			return status, nil
+		}
+	}
+	return src.TargetStatusPending, nil
+}
+
+func (m *mockStateManager) UpdateTargetStatusForBuild(ctx context.Context, target string, buildName string, status src.TargetStatus) error {
+	if _, ok := m.buildStatuses[buildName]; !ok {
+		m.buildStatuses[buildName] = make(map[string]src.TargetStatus)
+	}
+	m.buildStatuses[buildName][target] = status
+	return nil
+}
+
+func (m *mockStateManager) GetLatestBuildResultForBuild(ctx context.Context, target string, buildName string) (*src.BuildResult, error) {
+	if buildResults, ok := m.buildBuildResults[buildName]; ok {
+		return buildResults[target], nil
+	}
+	return nil, nil
 }
 
 // mockGitManager for tests
@@ -124,6 +164,14 @@ func (m *mockGitManager) GetStatus(ctx context.Context) (*git.GitStatus, error) 
 
 func (m *mockGitManager) GetLog(ctx context.Context, limit int) ([]*git.GitCommit, error) {
 	return []*git.GitCommit{}, nil
+}
+
+func getTestConfig() *config.Config {
+	return &config.Config{
+		Build: config.BuildConfig{
+			DefaultBuildName: "test-build",
+		},
+	}
 }
 
 func setupTestProject(t *testing.T) string {
@@ -175,7 +223,7 @@ func TestBuilder_Build_SingleTarget(t *testing.T) {
 		return []string{"src/feature1.go"}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -189,7 +237,8 @@ func TestBuilder_Build_SingleTarget(t *testing.T) {
 		t.Error("Expected build to be called")
 	}
 	
-	status, _ := mockState.GetTargetStatus(context.Background(), "feature1")
+	// Check build-specific status
+	status, _ := mockState.GetTargetStatusForBuild(context.Background(), "feature1", "test-build")
 	if status != src.TargetStatusBuilt {
 		t.Errorf("Expected target status to be built, got %s", status)
 	}
@@ -206,7 +255,7 @@ func TestBuilder_Build_WithDependencies(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature2",
@@ -240,7 +289,7 @@ func TestBuilder_Build_AllTargets(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{})
 	
@@ -262,8 +311,8 @@ func TestBuilder_Build_SkipAlreadyBuilt(t *testing.T) {
 	mockAgent := agent.NewMockAgent("test-agent")
 	mockState := newMockStateManager()
 	
-	// Mark feature1 as already built
-	mockState.UpdateTargetStatus(context.Background(), "feature1", src.TargetStatusBuilt)
+	// Mark feature1 as already built in the default build
+	mockState.UpdateTargetStatusForBuild(context.Background(), "feature1", "test-build", src.TargetStatusBuilt)
 	
 	buildCalled := false
 	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
@@ -273,7 +322,7 @@ func TestBuilder_Build_SkipAlreadyBuilt(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -293,8 +342,8 @@ func TestBuilder_Build_ForceRebuild(t *testing.T) {
 	mockAgent := agent.NewMockAgent("test-agent")
 	mockState := newMockStateManager()
 	
-	// Mark feature1 as already built
-	mockState.UpdateTargetStatus(context.Background(), "feature1", src.TargetStatusBuilt)
+	// Mark feature1 as already built in the default build
+	mockState.UpdateTargetStatusForBuild(context.Background(), "feature1", "test-build", src.TargetStatusBuilt)
 	
 	buildCalled := false
 	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
@@ -304,7 +353,7 @@ func TestBuilder_Build_ForceRebuild(t *testing.T) {
 		return []string{fmt.Sprintf("src/%s.go", buildCtx.Intent.Name)}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -331,7 +380,7 @@ func TestBuilder_Build_DryRun(t *testing.T) {
 		return []string{}, nil
 	}
 	
-	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -366,7 +415,7 @@ Depends On: feature1`), 0644)
 	mockAgent := agent.NewMockAgent("test-agent")
 	mockState := newMockStateManager()
 	
-	builder := NewBuilder(tmpDir, mockAgent, mockState, &mockGitManager{})
+	builder := NewBuilder(tmpDir, mockAgent, mockState, &mockGitManager{}, getTestConfig())
 	
 	err := builder.Build(context.Background(), BuildOptions{
 		Target: "feature1",
@@ -379,4 +428,234 @@ Depends On: feature1`), 0644)
 	if err.Error() != "failed to build dependency graph: dependency cycle detected" {
 		t.Errorf("Expected cycle detection error, got: %v", err)
 	}
+}
+
+// Test build directory functionality
+func TestBuilder_BuildDirectory_Creation(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	var capturedBuildPath string
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		capturedBuildPath = buildCtx.BuildPath
+		// Verify build directory exists
+		if _, err := os.Stat(buildCtx.BuildPath); os.IsNotExist(err) {
+			t.Errorf("Build directory does not exist: %s", buildCtx.BuildPath)
+		}
+		return []string{"src/feature1.go"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	err := builder.Build(context.Background(), BuildOptions{
+		Target: "feature1",
+	})
+	
+	assert.NoError(t, err)
+	
+	// Verify build directory was created with default name
+	expectedPath := filepath.Join(projectRoot, "build-test-build")
+	assert.Equal(t, expectedPath, capturedBuildPath)
+	
+	// Verify directory still exists after build
+	_, err = os.Stat(expectedPath)
+	assert.NoError(t, err)
+}
+
+func TestBuilder_BuildDirectory_CustomName(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	var capturedBuildPath string
+	var capturedBuildName string
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		capturedBuildPath = buildCtx.BuildPath
+		capturedBuildName = buildCtx.BuildName
+		return []string{"src/feature1.go"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	err := builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "custom-build",
+	})
+	
+	assert.NoError(t, err)
+	
+	// Verify custom build directory was used
+	expectedPath := filepath.Join(projectRoot, "build-custom-build")
+	assert.Equal(t, expectedPath, capturedBuildPath)
+	assert.Equal(t, "custom-build", capturedBuildName)
+}
+
+func TestBuilder_BuildResult_IncludesBuildInfo(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		return []string{"src/feature1.go"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	err := builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "test-run",
+	})
+	
+	assert.NoError(t, err)
+	
+	// Get the saved build result
+	result, err := mockState.GetLatestBuildResult(context.Background(), "feature1")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	
+	// Verify build info is included
+	assert.Equal(t, "test-run", result.BuildName)
+	expectedPath := filepath.Join(projectRoot, "build-test-run")
+	assert.Equal(t, expectedPath, result.BuildPath)
+}
+
+func TestBuilder_BuildDirectory_IsolatedWorkingDir(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	// Track if agent's working directory is set correctly
+	workingDirCorrect := false
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		// In a real agent, the working directory would be changed
+		// Here we just verify the build path is provided
+		workingDirCorrect = buildCtx.BuildPath == filepath.Join(projectRoot, "build-isolated-test")
+		return []string{"app.js"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	err := builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "isolated-test",
+	})
+	
+	assert.NoError(t, err)
+	assert.True(t, workingDirCorrect, "Agent should receive correct build path")
+}
+
+func TestBuilder_MultipleBuildDirectories(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	buildPaths := make(map[string]string)
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		buildPaths[buildCtx.BuildName] = buildCtx.BuildPath
+		// Create a file in the build directory to simulate generation
+		testFile := filepath.Join(buildCtx.BuildPath, "test.txt")
+		os.WriteFile(testFile, []byte(buildCtx.BuildName), 0644)
+		return []string{"test.txt"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	// Build with different build names
+	for _, buildName := range []string{"dev", "staging", "prod"} {
+		err := builder.Build(context.Background(), BuildOptions{
+			Target:    "feature1",
+			BuildName: buildName,
+			Force:     true, // Force rebuild
+		})
+		assert.NoError(t, err)
+	}
+	
+	// Verify all build directories exist and are separate
+	assert.Len(t, buildPaths, 3)
+	for name, path := range buildPaths {
+		expectedPath := filepath.Join(projectRoot, "build-"+name)
+		assert.Equal(t, expectedPath, path)
+		
+		// Verify the test file exists in each build directory
+		testFile := filepath.Join(path, "test.txt")
+		content, err := os.ReadFile(testFile)
+		assert.NoError(t, err)
+		assert.Equal(t, name, string(content))
+	}
+}
+
+// Test that build state is tracked separately per build name
+func TestBuilder_PerBuildStateTracking(t *testing.T) {
+	projectRoot := setupTestProject(t)
+	mockAgent := agent.NewMockAgent("test-agent")
+	mockState := newMockStateManager()
+	cfg := getTestConfig()
+	
+	buildCount := 0
+	mockAgent.BuildFunc = func(ctx context.Context, buildCtx agent.BuildContext) ([]string, error) {
+		buildCount++
+		return []string{"output.txt"}, nil
+	}
+	
+	builder := NewBuilder(projectRoot, mockAgent, mockState, &mockGitManager{}, cfg)
+	
+	// Build feature1 in "dev" build
+	err := builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "dev",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, buildCount)
+	
+	// Check that feature1 is built in "dev"
+	status, err := mockState.GetTargetStatusForBuild(context.Background(), "feature1", "dev")
+	assert.NoError(t, err)
+	assert.Equal(t, src.TargetStatusBuilt, status)
+	
+	// Check that feature1 is NOT built in "staging"
+	status, err = mockState.GetTargetStatusForBuild(context.Background(), "feature1", "staging")
+	assert.NoError(t, err)
+	assert.Equal(t, src.TargetStatusPending, status)
+	
+	// Build feature1 again in "dev" - should skip
+	err = builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "dev",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, buildCount) // Should not increment
+	
+	// Build feature1 in "staging" - should build
+	err = builder.Build(context.Background(), BuildOptions{
+		Target:    "feature1",
+		BuildName: "staging",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 2, buildCount) // Should increment
+	
+	// Check that feature1 is now built in both
+	status, err = mockState.GetTargetStatusForBuild(context.Background(), "feature1", "dev")
+	assert.NoError(t, err)
+	assert.Equal(t, src.TargetStatusBuilt, status)
+	
+	status, err = mockState.GetTargetStatusForBuild(context.Background(), "feature1", "staging")
+	assert.NoError(t, err)
+	assert.Equal(t, src.TargetStatusBuilt, status)
+	
+	// Verify build results are stored separately
+	devResult, err := mockState.GetLatestBuildResultForBuild(context.Background(), "feature1", "dev")
+	assert.NoError(t, err)
+	assert.NotNil(t, devResult)
+	assert.Equal(t, "dev", devResult.BuildName)
+	
+	stagingResult, err := mockState.GetLatestBuildResultForBuild(context.Background(), "feature1", "staging")
+	assert.NoError(t, err)
+	assert.NotNil(t, stagingResult)
+	assert.Equal(t, "staging", stagingResult.BuildName)
 }

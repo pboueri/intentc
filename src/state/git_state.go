@@ -50,6 +50,7 @@ func (m *GitStateManager) Initialize(ctx context.Context) error {
 }
 
 func (m *GitStateManager) SaveBuildResult(ctx context.Context, result *src.BuildResult) error {
+	// Save in the global location (for backward compatibility)
 	targetDir := filepath.Join(m.stateDir, "builds", result.Target)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
@@ -63,6 +64,24 @@ func (m *GitStateManager) SaveBuildResult(ctx context.Context, result *src.Build
 	latestLink := filepath.Join(targetDir, "latest.json")
 	if err := m.writeJSON(latestLink, result); err != nil {
 		return fmt.Errorf("failed to update latest link: %w", err)
+	}
+
+	// Also save in build-specific location if BuildName is set
+	if result.BuildName != "" {
+		targetDir := filepath.Join(m.stateDir, "builds", result.BuildName, result.Target)
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return fmt.Errorf("failed to create build-specific target directory: %w", err)
+		}
+		
+		resultFile := filepath.Join(targetDir, fmt.Sprintf("%s.json", result.GenerationID))
+		if err := m.writeJSON(resultFile, result); err != nil {
+			return fmt.Errorf("failed to save build-specific result: %w", err)
+		}
+		
+		latestLink := filepath.Join(targetDir, "latest.json")
+		if err := m.writeJSON(latestLink, result); err != nil {
+			return fmt.Errorf("failed to update build-specific latest link: %w", err)
+		}
 	}
 
 	return nil
@@ -191,3 +210,64 @@ func (m *GitStateManager) readJSON(filename string, data interface{}) error {
 
 	return json.NewDecoder(file).Decode(data)
 }
+
+// GetTargetStatusForBuild returns the build status for a specific target and build name
+func (m *GitStateManager) GetTargetStatusForBuild(ctx context.Context, target string, buildName string) (src.TargetStatus, error) {
+	statusFile := filepath.Join(m.stateDir, "builds", buildName, "status.json")
+	
+	statuses := make(map[string]src.TargetStatus)
+	if err := m.readJSON(statusFile, &statuses); err != nil {
+		if os.IsNotExist(err) {
+			// No status file for this build yet, return pending
+			return src.TargetStatusPending, nil
+		}
+		return src.TargetStatusPending, fmt.Errorf("failed to read build status: %w", err)
+	}
+	
+	status, exists := statuses[target]
+	if !exists {
+		return src.TargetStatusPending, nil
+	}
+	
+	return status, nil
+}
+
+// UpdateTargetStatusForBuild updates the build status for a specific target and build name
+func (m *GitStateManager) UpdateTargetStatusForBuild(ctx context.Context, target string, buildName string, status src.TargetStatus) error {
+	buildDir := filepath.Join(m.stateDir, "builds", buildName)
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return fmt.Errorf("failed to create build directory: %w", err)
+	}
+	
+	statusFile := filepath.Join(buildDir, "status.json")
+	
+	statuses := make(map[string]src.TargetStatus)
+	// Try to read existing statuses
+	if err := m.readJSON(statusFile, &statuses); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing status: %w", err)
+	}
+	
+	statuses[target] = status
+	
+	if err := m.writeJSON(statusFile, statuses); err != nil {
+		return fmt.Errorf("failed to write status: %w", err)
+	}
+	
+	return nil
+}
+
+// GetLatestBuildResultForBuild returns the latest build result for a specific target and build name
+func (m *GitStateManager) GetLatestBuildResultForBuild(ctx context.Context, target string, buildName string) (*src.BuildResult, error) {
+	latestFile := filepath.Join(m.stateDir, "builds", buildName, target, "latest.json")
+	
+	var result src.BuildResult
+	if err := m.readJSON(latestFile, &result); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read latest build result: %w", err)
+	}
+	
+	return &result, nil
+}
+

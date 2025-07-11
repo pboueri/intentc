@@ -13,9 +13,11 @@ import (
 )
 
 var cleanDryRun bool
+var cleanBuildName string
 
 func init() {
 	cleanCmd.Flags().BoolVar(&cleanDryRun, "dry-run", false, "Show what would be cleaned without actually cleaning")
+	cleanCmd.Flags().StringVar(&cleanBuildName, "build-name", "", "Name of the build directory to clean (cleans all if not specified)")
 }
 
 var cleanCmd = &cobra.Command{
@@ -55,7 +57,8 @@ func runClean(cmd *cobra.Command, args []string) error {
 
 	// Clean options
 	opts := cleaner.CleanOptions{
-		DryRun: cleanDryRun,
+		DryRun:    cleanDryRun,
+		BuildName: cleanBuildName,
 	}
 
 	if len(args) > 0 {
