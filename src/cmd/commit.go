@@ -8,9 +8,7 @@ import (
 	"strings"
 
 	"github.com/pboueri/intentc/src/config"
-	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
-	"github.com/pboueri/intentc/src/state"
 	"github.com/spf13/cobra"
 )
 
@@ -56,16 +54,20 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Initialize git manager
-	gitMgr := git.NewGitManager(projectRoot)
+	// Create appropriate managers based on git availability
+	gitMgr, _, err := CreateManagers(ctx, projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to initialize managers: %w", err)
+	}
 
-	// Check if it's a git repo
+	// Check if it's a git repo (no-op git manager will return false)
 	isRepo, err := gitMgr.IsGitRepo(ctx, projectRoot)
 	if err != nil {
 		return fmt.Errorf("failed to check git status: %w", err)
 	}
 	if !isRepo {
-		return fmt.Errorf("not in a git repository")
+		logger.Info("No git repository detected - commit operation will be skipped")
+		return nil
 	}
 
 	// Get git status
@@ -110,8 +112,11 @@ func runCommit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Initialize state manager to get generation ID if needed
-	stateMgr := state.NewGitStateManager(gitMgr, projectRoot)
+	// Get state manager from CreateManagers (we already have gitMgr)
+	_, stateMgr, err := CreateManagers(ctx, projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to get state manager: %w", err)
+	}
 	if err := stateMgr.Initialize(ctx); err != nil {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}

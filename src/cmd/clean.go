@@ -8,8 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src/cleaner"
-	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src/state"
 )
 
 var cleanDryRun bool
@@ -40,14 +38,13 @@ func runClean(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in an intentc project (no .intentc found). Run 'intentc init' first")
 	}
 
-	// Initialize git interface
-	gitInterface := git.New()
-	if err := gitInterface.Initialize(context.Background(), projectRoot); err != nil {
-		return fmt.Errorf("failed to initialize git: %w", err)
+	// Create appropriate managers based on git availability
+	_, stateManager, err := CreateManagers(context.Background(), projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to initialize managers: %w", err)
 	}
 
 	// Initialize state manager
-	stateManager := state.NewGitStateManager(gitInterface, projectRoot)
 	if err := stateManager.Initialize(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}

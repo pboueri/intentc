@@ -1,0 +1,12 @@
+# Example Feature Validations
+
+## File Structure Check
+
+Type: FileCheck
+
+### Parameters
+- Path: index.html
+- Exists: true
+
+### Description
+ensures that the index has been created.

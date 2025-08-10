@@ -10,8 +10,6 @@ import (
 	"github.com/pboueri/intentc/src/agent"
 	"github.com/pboueri/intentc/src/builder"
 	"github.com/pboueri/intentc/src/config"
-	"github.com/pboueri/intentc/src/git"
-	"github.com/pboueri/intentc/src/state"
 )
 
 var (
@@ -57,14 +55,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-	// Initialize git interface
-	gitInterface := git.New()
-	if err := gitInterface.Initialize(context.Background(), projectRoot); err != nil {
-		return fmt.Errorf("failed to initialize git: %w", err)
+	// Create appropriate managers based on git availability
+	gitInterface, stateManager, err := CreateManagers(context.Background(), projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to initialize managers: %w", err)
 	}
 
 	// Initialize state manager
-	stateManager := state.NewGitStateManager(gitInterface, projectRoot)
 	if err := stateManager.Initialize(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}

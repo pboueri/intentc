@@ -27,13 +27,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
+	// Try to use git, but fall back to no-op if not available
 	gitMgr := git.NewGitManager(cwd)
 	isGitRepo, err := gitMgr.IsGitRepo(ctx, cwd)
 	if err != nil {
-		return fmt.Errorf("failed to check git repository: %w", err)
+		logger.Info("Git not available, using file-based state tracking")
+		isGitRepo = false
 	}
+	
 	if !isGitRepo {
-		return fmt.Errorf("intentc requires a git repository. Please run 'git init' first")
+		logger.Info("No git repository detected, using file-based state tracking")
+	} else {
+		logger.Info("Git repository detected, using git-based state tracking")
 	}
 
 	intentDir := filepath.Join(cwd, "intent")

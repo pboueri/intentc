@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src"
 	"github.com/pboueri/intentc/src/config"
-	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/graph"
 	"github.com/pboueri/intentc/src/logger"
 	"github.com/pboueri/intentc/src/parser"
@@ -47,14 +46,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in an intentc project (no .intentc found). Run 'intentc init' first")
 	}
 
-	// Initialize git interface
-	gitInterface := git.New()
-	if err := gitInterface.Initialize(context.Background(), projectRoot); err != nil {
-		return fmt.Errorf("failed to initialize git: %w", err)
+	// Create appropriate managers based on git availability
+	gitInterface, stateManager, err := CreateManagers(context.Background(), projectRoot)
+	if err != nil {
+		return fmt.Errorf("failed to initialize managers: %w", err)
 	}
 
 	// Initialize state manager
-	stateManager := state.NewGitStateManager(gitInterface, projectRoot)
 	if err := stateManager.Initialize(context.Background()); err != nil {
 		return fmt.Errorf("failed to initialize state manager: %w", err)
 	}
