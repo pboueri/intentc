@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse the Builds</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: white;
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .header {
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin: 0;
+            color: #333;
+        }
+        
+        .subtitle {
+            font-size: 1rem;
+            margin: 10px 0 0 0;
+            color: #666;
+        }
+        
+        .main-container {
+            display: flex;
+            height: calc(100vh - 120px);
+        }
+        
+        .sidebar {
+            width: 350px;
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+            overflow-y: auto;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .builds-list {
+            padding: 20px;
+            flex: 1;
+        }
+        
+        .builds-header {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .build-item {
+            padding: 12px 15px;
+            margin: 8px 0;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .build-item:hover {
+            background: #e9ecef;
+            border-color: #007bff;
+            transform: translateX(2px);
+        }
+        
+        .build-item.selected {
+            background: #007bff;
+            border-color: #007bff;
+            color: white;
+        }
+        
+        .build-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .build-timestamp {
+            font-size: 0.85rem;
+            opacity: 0.7;
+        }
+        
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+        
+        .content-header {
+            background: #343a40;
+            color: white;
+            padding: 15px 20px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        iframe {
+            flex: 1;
+            border: none;
+            width: 100%;
+        }
+        
+        .no-builds {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+        
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px 20px;
+            background: white;
+            border-top: 1px solid #dee2e6;
+        }
+        
+        .nav-button {
+            padding: 8px 16px;
+            background: #007bff;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        
+        .nav-button:hover:not(:disabled) {
+            background: #0056b3;
+        }
+        
+        .nav-button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        .keyboard-hint {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #666;
+        }
+        
+        .placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Browse the Builds</h1>
+        <p class="subtitle">Navigate through different build versions using the list or keyboard arrows</p>
+    </div>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="builds-list">
+                <div class="builds-header">Build Directories</div>
+                <div id="builds-container">
+                    <div class="no-builds">Loading build directories...</div>
+                </div>
+            </div>
+            
+            <div class="navigation">
+                <button class="nav-button" id="prev-btn" onclick="navigateBuild(-1)">
+                    ← Previous
+                </button>
+                <button class="nav-button" id="next-btn" onclick="navigateBuild(1)">
+                    Next →
+                </button>
+            </div>
+            
+            <div class="keyboard-hint">
+                Use ← → arrow keys to navigate
+            </div>
+        </div>
+        
+        <div class="content-area">
+            <div class="content-header" id="content-header" style="display: none;">
+                Loading...
+            </div>
+            <div class="placeholder" id="placeholder">
+                Select a build from the list to view its content
+            </div>
+            <iframe id="build-iframe" src="" style="display: none;"></iframe>
+        </div>
+    </div>
+
+    <script>
+        let builds = [];
+        let currentBuildIndex = 0;
+
+        async function loadBuilds() {
+            builds = [];
+            
+            // Try multiple dynamic detection methods
+            await tryFileSystemAccess() || 
+            await tryWebkitDirectory() || 
+            await tryBruteForceDetection() ||
+            await tryUserSelection();
+        }
+
+        // Modern browsers: File System Access API
+        async function tryFileSystemAccess() {
+            if (!('showDirectoryPicker' in window)) return false;
+            
+            try {
+                const container = document.getElementById('builds-container');
+                container.innerHTML = `
+                    <div class="no-builds">
+                        <button onclick="selectDirectory()" class="nav-button" style="margin: 10px;">
+                            📁 Select Project Directory
+                        </button>
+                        <p style="font-size: 0.9rem; margin-top: 10px;">
+                            Click to browse for your project folder containing build directories
+                        </p>
+                    </div>
+                `;
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Directory selection handler
+        async function selectDirectory() {
+            try {
+                const dirHandle = await window.showDirectoryPicker();
+                const buildDirs = [];
+                
+                for await (const [name, handle] of dirHandle.entries()) {
+                    if (handle.kind === 'directory' && name.startsWith('build')) {
+                        // Check if it has an index.html
+                        try {
+                            await handle.getFileHandle('index.html');
+                            buildDirs.push(name);
+                        } catch (e) {
+                            // No index.html, skip this directory
+                        }
+                    }
+                }
+                
+                builds = buildDirs.map(name => ({
+                    name: name,
+                    timestamp: extractTimestamp(name),
+                    path: name + '/index.html'
+                })).sort((a, b) => b.timestamp - a.timestamp);
+                
+                renderBuilds();
+                
+            } catch (e) {
+                console.log('Directory selection cancelled or failed');
+            }
+        }
+
+        // Webkit browsers: webkitdirectory
+        async function tryWebkitDirectory() {
+            try {
+                const container = document.getElementById('builds-container');
+                container.innerHTML = `
+                    <div class="no-builds">
+                        <input type="file" id="dir-input" webkitdirectory style="display: none;" onchange="handleDirectorySelect(event)">
+                        <button onclick="document.getElementById('dir-input').click()" class="nav-button" style="margin: 10px;">
+                            📂 Select Project Folder
+                        </button>
+                        <p style="font-size: 0.9rem; margin-top: 10px;">
+                            Select your project folder to automatically detect build directories
+                        </p>
+                    </div>
+                `;
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Handle directory selection via webkitdirectory
+        function handleDirectorySelect(event) {
+            const files = Array.from(event.target.files);
+            const buildDirs = new Set();
+            
+            files.forEach(file => {
+                const pathParts = file.webkitRelativePath.split('/');
+                const dirName = pathParts[0];
+                
+                if (dirName.startsWith('build') && file.name === 'index.html') {
+                    buildDirs.add(dirName);
+                }
+            });
+            
+            builds = Array.from(buildDirs).map(name => ({
+                name: name,
+                timestamp: extractTimestamp(name),
+                path: name + '/index.html'
+            })).sort((a, b) => b.timestamp - a.timestamp);
+            
+            renderBuilds();
+        }
+
+        // Fallback: Intelligent brute force detection
+        async function tryBruteForceDetection() {
+            const container = document.getElementById('builds-container');
+            container.innerHTML = `
+                <div class="no-builds">
+                    <div>🔍 Scanning for build directories...</div>
+                    <div style="font-size: 0.8rem; margin-top: 10px;">
+                        Testing common build patterns
+                    </div>
+                </div>
+            `;
+            
+            const potentialBuilds = generatePotentialBuilds();
+            const validBuilds = [];
+            let checked = 0;
+            
+            // Update progress
+            const updateProgress = () => {
+                const container = document.getElementById('builds-container');
+                container.innerHTML = `
+                    <div class="no-builds">
+                        <div>🔍 Scanning... ${checked}/${potentialBuilds.length}</div>
+                        <div style="font-size: 0.8rem; margin-top: 10px;">
+                            Found ${validBuilds.length} builds so far
+                        </div>
+                    </div>
+                `;
+            };
+            
+            // Test each potential build
+            for (const buildName of potentialBuilds) {
+                try {
+                    const response = await fetch(buildName + '/index.html', { method: 'HEAD' });
+                    if (response.ok) {
+                        validBuilds.push(buildName);
+                    }
+                } catch (e) {
+                    // Build doesn't exist or isn't accessible
+                }
+                checked++;
+                updateProgress();
+            }
+            
+            if (validBuilds.length > 0) {
+                builds = validBuilds.map(name => ({
+                    name: name,
+                    timestamp: extractTimestamp(name),
+                    path: name + '/index.html'
+                })).sort((a, b) => b.timestamp - a.timestamp);
+                
+                renderBuilds();
+                return true;
+            }
+            
+            return false;
+        }
+
+        // Generate potential build directory names
+        function generatePotentialBuilds() {
+            const potential = [];
+            const now = Math.floor(Date.now() / 1000);
+            
+            // Recent timestamps (last 30 days)
+            for (let days = 0; days < 30; days++) {
+                for (let hours = 0; hours < 24; hours += 6) {
+                    const timestamp = now - (days * 24 * 60 * 60) - (hours * 60 * 60);
+                    potential.push(`build-${timestamp}`);
+                }
+            }
+            
+            // Common patterns
+            potential.push('build-latest', 'build-dev', 'build-prod', 'build-staging');
+            
+            // Known existing builds
+            potential.push('build-1754859052', 'build-1754859359', 'build-1754859681');
+            
+            return potential;
+        }
+
+        // Last resort: Manual entry
+        async function tryUserSelection() {
+            const container = document.getElementById('builds-container');
+            container.innerHTML = `
+                <div class="no-builds">
+                    <div>🔧 Manual Build Entry</div>
+                    <input type="text" id="manual-build" placeholder="Enter build directory name" 
+                           style="margin: 10px; padding: 8px; width: 200px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button onclick="addManualBuild()" class="nav-button" style="margin: 10px;">
+                        Add Build
+                    </button>
+                    <div style="font-size: 0.8rem; margin-top: 10px;">
+                        Enter build directory names manually (e.g., "build-1754859052")
+                    </div>
+                </div>
+            `;
+            return true;
+        }
+
+        // Add build manually
+        function addManualBuild() {
+            const input = document.getElementById('manual-build');
+            const buildName = input.value.trim();
+            
+            if (buildName && buildName.startsWith('build')) {
+                const buildExists = builds.some(b => b.name === buildName);
+                if (!buildExists) {
+                    builds.push({
+                        name: buildName,
+                        timestamp: extractTimestamp(buildName),
+                        path: buildName + '/index.html'
+                    });
+                    
+                    builds.sort((a, b) => b.timestamp - a.timestamp);
+                    renderBuilds();
+                }
+                input.value = '';
+            }
+        }
+
+        function extractTimestamp(buildName) {
+            const match = buildName.match(/build-(\d+)/);
+            return match ? parseInt(match[1]) : 0;
+        }
+
+        function formatTimestamp(timestamp) {
+            if (timestamp === 0) return 'Unknown time';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+
+        function renderBuilds() {
+            const container = document.getElementById('builds-container');
+            
+            if (builds.length === 0) {
+                container.innerHTML = '<div class="no-builds">No build directories found with "build-" prefix</div>';
+                return;
+            }
+
+            container.innerHTML = builds.map((build, index) => `
+                <div class="build-item ${index === currentBuildIndex ? 'selected' : ''}" 
+                     onclick="selectBuild(${index})">
+                    <div class="build-name">${build.name}</div>
+                    <div class="build-timestamp">${formatTimestamp(build.timestamp)}</div>
+                </div>
+            `).join('');
+
+            updateNavigation();
+            loadCurrentBuild();
+        }
+
+        function selectBuild(index) {
+            if (index >= 0 && index < builds.length) {
+                currentBuildIndex = index;
+                renderBuilds();
+            }
+        }
+
+        function navigateBuild(direction) {
+            const newIndex = currentBuildIndex + direction;
+            if (newIndex >= 0 && newIndex < builds.length) {
+                selectBuild(newIndex);
+            }
+        }
+
+        function updateNavigation() {
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            
+            prevBtn.disabled = currentBuildIndex <= 0;
+            nextBtn.disabled = currentBuildIndex >= builds.length - 1;
+        }
+
+        function loadCurrentBuild() {
+            if (builds.length === 0) return;
+            
+            const currentBuild = builds[currentBuildIndex];
+            const iframe = document.getElementById('build-iframe');
+            const contentHeader = document.getElementById('content-header');
+            const placeholder = document.getElementById('placeholder');
+            
+            contentHeader.textContent = `${currentBuild.name} - ${formatTimestamp(currentBuild.timestamp)}`;
+            iframe.src = currentBuild.path;
+            
+            // Show iframe and header, hide placeholder
+            placeholder.style.display = 'none';
+            contentHeader.style.display = 'block';
+            iframe.style.display = 'block';
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                navigateBuild(-1);
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                navigateBuild(1);
+            }
+        });
+
+        // Initialize
+        window.addEventListener('load', function() {
+            loadBuilds();
+        });
+    </script>
+</body>
+</html>
