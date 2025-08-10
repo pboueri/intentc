@@ -23,7 +23,7 @@ var (
 func init() {
 	buildCmd.Flags().BoolVarP(&buildForce, "force", "f", false, "Force rebuild even if target is up to date")
 	buildCmd.Flags().BoolVar(&buildDryRun, "dry-run", false, "Show what would be built without actually building")
-	buildCmd.Flags().StringVar(&buildName, "build-name", "", "Name for the build directory (uses default if not specified)")
+	buildCmd.Flags().StringVar(&buildName, "build-name", "", "Name for the build directory (uses timestamp if not specified)")
 }
 
 var buildCmd = &cobra.Command{

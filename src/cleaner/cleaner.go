@@ -97,7 +97,11 @@ func (c *Cleaner) cleanTarget(ctx context.Context, target *src.Target) error {
 	}
 
 	if result == nil {
-		fmt.Printf("Target %s has no build results, skipping\n", target.Name)
+		fmt.Printf("Target %s has no build results, but resetting status to pending\n", target.Name)
+		// Still reset the status even if no build results exist
+		if err := c.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusPending); err != nil {
+			return fmt.Errorf("failed to update target status: %w", err)
+		}
 		return nil
 	}
 
@@ -123,15 +127,16 @@ func (c *Cleaner) cleanTarget(ctx context.Context, target *src.Target) error {
 	}
 
 	// Update target status
-	// If the result has a build name, update the build-specific status
-	if result.BuildName != "" {
-		if err := c.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, result.BuildName, src.TargetStatusPending); err != nil {
-			return fmt.Errorf("failed to update target status: %w", err)
-		}
-	}
-	// Also update global status for backward compatibility
+	// Always reset global status
 	if err := c.stateManager.UpdateTargetStatus(ctx, target.Name, src.TargetStatusPending); err != nil {
 		return fmt.Errorf("failed to update target status: %w", err)
+	}
+	
+	// If the result has a build name, also update the build-specific status
+	if result.BuildName != "" {
+		if err := c.stateManager.UpdateTargetStatusForBuild(ctx, target.Name, result.BuildName, src.TargetStatusPending); err != nil {
+			return fmt.Errorf("failed to update build-specific target status: %w", err)
+		}
 	}
 
 	fmt.Printf("Successfully cleaned target: %s\n", target.Name)

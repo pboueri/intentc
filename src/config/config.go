@@ -30,7 +30,7 @@ type AgentConfig struct {
 type BuildConfig struct {
 	Parallel         bool   `yaml:"parallel"`
 	CacheEnabled     bool   `yaml:"cache_enabled"`
-	DefaultBuildName string `yaml:"default_build_name"` // Default build directory name
+	DefaultBuildName string `yaml:"default_build_name"` // Default build directory name (empty = use timestamp)
 }
 
 type LoggingConfig struct {
@@ -59,7 +59,7 @@ func GetDefaultConfig() *Config {
 		Build: BuildConfig{
 			Parallel:         false, // Sequential by default for git state tracking
 			CacheEnabled:     false,
-			DefaultBuildName: "default",
+			DefaultBuildName: "",     // Empty = use timestamp
 		},
 		Logging: LoggingConfig{
 			Level: "info",

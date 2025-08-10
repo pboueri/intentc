@@ -4,6 +4,10 @@
 
 Transform loosely specified intents into precise code using AI coding agents. Inspired by GNU Make's declarative approach, intentc uses markdown-based intent files (`.ic`) to generate working code through Claude or any CLI-based coding tool.
 
+## WARNING 
+
+This code is extremely alpha as I make it in my spare time sporadically. Things may not work as intended or at all. A full rewrite may be required to get the bones right
+
 ## Key Commands
 
 ```bash

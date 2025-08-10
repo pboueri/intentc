@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/pboueri/intentc/src/config"
 	"github.com/pboueri/intentc/src/git"
 	"github.com/pboueri/intentc/src/logger"
+	"github.com/spf13/cobra"
 )
 
 var initCmd = &cobra.Command{
@@ -137,13 +137,22 @@ Ensures the project builds successfully.
 		Version: 1,
 		Agent: config.AgentConfig{
 			Provider:  "claude",
-			Timeout:   5 * time.Minute,
+			Timeout:   20 * time.Minute,
 			Retries:   3,
 			RateLimit: 1 * time.Second,
 		},
 		Build: config.BuildConfig{
 			Parallel:     false, // Sequential by default for git state tracking
 			CacheEnabled: false,
+		},
+		Logging: config.LoggingConfig{
+			Level: "info",
+			Sinks: []config.LogSink{
+				{
+					Type:     "console",
+					Colorize: true,
+				},
+			},
 		},
 	}
 

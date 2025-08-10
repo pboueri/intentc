@@ -49,7 +49,13 @@ func (b *Builder) Build(ctx context.Context, opts BuildOptions) error {
 	// Determine build name
 	buildName := opts.BuildName
 	if buildName == "" {
-		buildName = b.config.Build.DefaultBuildName
+		// Check if config specifies a default build name
+		if b.config.Build.DefaultBuildName != "" {
+			buildName = b.config.Build.DefaultBuildName
+		} else {
+			// Generate timestamp-based build name if none provided
+			buildName = fmt.Sprintf("%d", time.Now().Unix())
+		}
 	}
 	
 	// Create build directory
