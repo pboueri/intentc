@@ -1,0 +1,8 @@
+# Example Feature Validations
+
+## Homepage responds
+Type: WebCheck
+
+### Parameters
+- url: http://localhost:8080 And the main menu renders.
+- check: Verify the homepage loads and contains a welcome message  and the main menu renders

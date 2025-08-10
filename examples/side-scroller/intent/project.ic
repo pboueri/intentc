@@ -1,0 +1,26 @@
+# Project Intent
+
+This is a 2D side-scroller game that allows someone to walk to the right and left. And as they do, they have to battle bad guys. There are multiple levels, as the levels progress in difficulty. It is meant to be hosted online and the theme will be described below.
+
+## Theme
+
+The main character is a Chicago time traveler that is dressed as a hot dog. His goal is to fight his way back to the present after being flung into The past after what riding the ferris wheel at Navy Pier. The character has wit and confidence but also is a little flabby and slow.
+The player is meant to empathize with the hot dog through time and learn things along the way as well.
+The background of the levels is thematic to the period of time in which the level is set.
+Each level should take approximately one or two minutes.
+
+## Core Principles
+
+- Focus on historical accuracy. Ensure that the level background, the enemies, and the references are all historically accurate.
+- Ensure the graphics are of medium quality and recognizable.
+
+## Architecture
+
+- This game is meant to be hosted online as a standalone service. Ensure that all the server and front-end components are built together.
+- Use 3JS as the primary game engine.
+- Use https://kenney.nl/assets for any game assets required. Inspect them as you go and please ensure that they fit the theme.
+- The player can move around with WASD and can attack with J, K, and L. They can jump with space and they can crouch with shift.
+- The game should have a display for health as well as energy and a timer for how long it takes for you to go through the level.
+- The user can both kick and punch as well as throw things, like Hot dogs. 
+- The enemies are typically dumb but do try and attack you. 
+- The main menu allows you to edit the difficulty and there is a sound that is thematically relevant to the time period.

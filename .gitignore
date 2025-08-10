@@ -31,3 +31,4 @@ go.work.sum
 
 # Build directories created by intentc
 build-*
+**/.intentc/state

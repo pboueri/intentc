@@ -1,0 +1,18 @@
+# Level 1
+
+Level 1 starts at the founding of Chicago. Here the hot dog battles the wild animals of Chicago.
+
+## Dependencies
+
+Depends On: game_engine
+
+## Intent
+
+The hot dog navigates the landscape and battles bison and goose as they try to get to the mouth of the Chicago River. They start inland and have to walk through the marsh. There are many smelly onions. The character speaks about how gross it is.
+At the end of the level, they are met with Joliet and Marquette, who congratulate them for getting to the end of the level and allow them to win this level. 
+
+## Implementation Notes
+
+- The background should be marshy with a river.
+- The enemies are Bison and Goose.
+- The hot dog is trying to reach the end of the mouth of the river. The background should reflect this.

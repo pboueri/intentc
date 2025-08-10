@@ -1,0 +1,13 @@
+version: 1
+agent:
+    provider: claude
+    timeout: 20m0s
+    retries: 3
+    rate_limit: 1s
+build:
+    parallel: false
+    cache_enabled: false
+    default_build_name: ""
+logging:
+    level: INFO
+    sinks: []

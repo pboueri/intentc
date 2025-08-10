@@ -1,0 +1,20 @@
+# Game engine
+
+Build the scaffolding for the game. Ensure that there is clear contribution patterns to add new levels as you go, which would add it in the main menu as well as clear separation in the code.
+
+## Dependencies
+
+Depends On: 
+
+## Intent
+
+This allows you to build the game engine where someone can walk left, right, and center, and defines the primary character of the hot dog
+The main menu is defined as well as the architecture for adding new levels.
+
+## Implementation Notes
+
+- Use React as your javascript framework
+- Ensure that you test things with Playwright and ensure that the game is able to run and render.
+- Ensure that libraries are loaded and there are no race conditions.
+- Ensure that all buttons are clickable and pay special attention that things are loaded correctly.
+
