@@ -1,0 +1,108 @@
+---
+name: builder
+version: 1
+depends_on: [core, parser, config, graph, agent, git, state, validation]
+tags: [orchestration]
+---
+
+# Build Orchestration
+
+The builder package is the heart of intentc. It orchestrates the full build pipeline: loading specs, resolving dependencies into a DAG, determining what needs building, invoking the agent for each target, and tracking results. It is the highest-level package below the CLI.
+
+## Package
+
+`github.com/pboueri/intentc/src/builder`
+
+## Builder Struct
+
+```
+Builder:
+    projectRoot: string
+    agent: agent.Agent
+    stateManager: state.StateManager
+    parser: *parser.TargetRegistry
+    gitManager: git.GitManager
+    config: *config.Config
+```
+
+Constructor: `NewBuilder(projectRoot string, agent agent.Agent, state state.StateManager, git git.GitManager, cfg *config.Config) *Builder`
+
+## Build Options
+
+```
+BuildOptions:
+    Target: string        # Specific target to build, or empty for "all unbuilt".
+    Force: bool           # Rebuild even if already built.
+    DryRun: bool          # Print what would be built without building.
+    OutputDir: string     # Output directory for generated code. Overrides config default.
+    ProfileName: string   # Agent profile to use. Default "" (uses "default" profile).
+```
+
+## Build Pipeline
+
+`(b *Builder) Build(ctx context.Context, opts BuildOptions) error`
+
+### Step 0: Schema Validation
+Run `parser.ValidateAllSpecs(projectRoot)` to validate all spec files against their schemas. Also run `config.ValidateConfig(cfg)` to validate the config file. If any violations with severity "error" are found, abort the build immediately and report all violations. This ensures no build ever proceeds with malformed or inconsistent spec files.
+
+### Step 1: Load Targets
+Use the TargetRegistry to discover and parse all intent/validation files from `intent/`.
+
+### Step 2: Build DAG
+Create a DAG from all targets. Resolve dependencies. Detect cycles. If a cycle is found, return the error immediately.
+
+### Step 3: Determine Build Set
+- If `opts.Target` is specified, get its dependency chain (the target + all transitive dependencies) in topological order.
+- If no target specified, get all targets that are not status `built` (unless `Force` is true, in which case get all targets).
+
+### Step 4: Resolve Output Directory
+- Use `opts.OutputDir` if specified.
+- Otherwise use `config.Build.DefaultOutput`.
+- Create the directory if it doesn't exist.
+
+### Step 5: Dry Run Check
+If `opts.DryRun`, print the build set and return.
+
+### Step 6: Build Each Target
+For each target in topological order:
+
+1. Check status. Skip if `built` and not `Force`.
+2. **Resolve agent profile for this target.** Priority order:
+   - `opts.ProfileName` (CLI `--profile` flag) if set — always wins.
+   - `target.Intent.Profile` (per-target `profile:` field in .ic frontmatter) if set.
+   - `"default"` as final fallback.
+   Look up the resolved name in `config.Profiles` via `config.GetProfile()`. Create agent from the profile via `agent.CreateFromProfile(profile)`. This means different targets in the same build can use different agents/models.
+3. Update status to `building`.
+4. Generate a generation ID: `gen-{unix-timestamp}`.
+5. Load the project-level intent (project.ic) for context.
+6. Construct a `BuildContext` with the intent, validations, output dir, generation ID, project intent, and dependency names.
+7. Invoke `agent.Build(ctx, buildCtx)`.
+8. On success: save BuildResult via state manager, update status to `built`, log success.
+9. On failure: save BuildResult with error, update status to `failed`, return error (stop building).
+
+### Error Handling
+
+- If any target fails, stop the entire build (don't continue to dependents).
+- Log clear messages: "Building target: auth", "Successfully built target: auth (gen-1234567890)", "Failed to build target: auth: {error}".
+- The builder does NOT commit to git. That's the user's explicit action via `intentc commit`.
+
+## Clean
+
+`(b *Builder) Clean(ctx context.Context, target string, outputDir string) error`
+
+Remove generated files for a target (or all targets if target is empty):
+1. Get the latest build result for the target.
+2. Delete the files listed in the result.
+3. Update status to `pending`.
+4. If cleaning a target, also mark all its dependents as `outdated`.
+
+## Validation
+
+`(b *Builder) Validate(ctx context.Context, target string, outputDir string, opts validation.RunOptions) (*validation.RunReport, error)`
+
+Run validations for a target:
+1. Run schema validation on all spec files (Step 0). Abort if violations found.
+2. Load the target and its validations.
+3. Create a validation Runner.
+4. Run validations against the output directory.
+5. Return the report.

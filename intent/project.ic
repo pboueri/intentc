@@ -1,0 +1,193 @@
+---
+name: intentc
+version: 1
+tags: [meta, project]
+---
+
+# intentc - A Compiler of Intent
+
+intentc transforms loosely-specified intents into precise, working code using AI coding agents. It is inspired by GNU Make's declarative approach: developers author spec files describing *what* they want, and intentc orchestrates AI agents to generate *how*.
+
+## Philosophy
+
+- **Specs are the source of truth.** Intent files (.ic) and validation files (.icv) are human-authored, version-controlled documents that capture product intent independently of any implementation.
+- **Validation constrains generation.** Validations are not afterthoughts - they are co-authored with intents and guide the agent toward correct output. The tighter the constraints, the more reproducible the result.
+- **Git is the backbone.** All state is tracked through git. Intent commits and generated commits are separated. The append-only log is the history of the project.
+- **Agents are pluggable.** intentc ships with Claude Code support but any CLI tool that accepts prompts can be used as a code generation agent. The agent interface is minimal and explicit.
+- **Build outputs are independent.** Each build run targets an output directory specified at invocation time. Builds can be independent or layer on top of existing output.
+
+## Language and Tooling
+
+intentc is written in Go. It uses Cobra for CLI, standard library for most operations, and YAML for structured configuration. It ships as a single binary with no runtime dependencies beyond git and a configured agent.
+
+## Spec File Formats
+
+intentc defines two file formats, both using YAML frontmatter with a markdown body. All spec files are validated against their schemas on every operation that reads them (build, validate, check, status).
+
+### Intent Files (.ic)
+
+Intent files describe what a feature should do. The YAML frontmatter contains machine-readable metadata. The markdown body is freeform prose passed directly to the agent.
+
+**Frontmatter Schema (v1):**
+
+```yaml
+name: string           # REQUIRED. Feature identifier. Must match the containing directory name.
+version: integer       # REQUIRED. Schema version. Currently 1.
+depends_on: string[]   # OPTIONAL. List of feature names this feature depends on.
+tags: string[]         # OPTIONAL. Categorization tags for filtering and organization.
+profile: string        # OPTIONAL. Named agent profile to use when building this target. Must reference a profile defined in .intentc/config.yaml. If omitted, uses the CLI --profile flag or "default".
+```
+
+**Conventions:**
+- One .ic file per feature directory.
+- The `name` field must match the directory name exactly.
+- The markdown body should describe intent, not implementation. Focus on *what* and *why*, not *how*.
+- Dependencies create an implicit DAG. Circular dependencies are an error.
+- The `profile` field allows different targets to use different agents or models (e.g., a complex core module uses a powerful model, simple scaffolding uses a fast/cheap model). The CLI `--profile` flag overrides this.
+
+### Project Intent File (project.ic)
+
+The project-level intent file lives at `intent/project.ic`. It is the only .ic file not inside a feature subdirectory. It uses the same frontmatter format as feature .ic files but with project-level semantics.
+
+**Frontmatter Schema (v1):**
+
+```yaml
+name: string           # REQUIRED. Project identifier (e.g., "intentc", "my-app").
+version: integer       # REQUIRED. Schema version. Currently 1.
+tags: string[]         # OPTIONAL. Project-level tags.
+```
+
+**project.ic must NOT have:**
+- `depends_on` - The project intent has no dependencies; it is the root.
+
+**Conventions:**
+- Exactly one project.ic file per project, at `intent/project.ic`.
+- The markdown body describes the project's purpose, philosophy, language choices, and global conventions.
+- The project intent is passed to the agent as context for every target build.
+- Schema validation of project.ic runs before any build or validation operation.
+
+### Validation Files (.icv)
+
+Validation files define verifiable constraints on generated code. They live alongside the intent file in the feature directory.
+
+**Frontmatter Schema (v1):**
+
+```yaml
+target: string             # REQUIRED. Feature name this validates. Must match the parent directory.
+version: integer           # REQUIRED. Schema version. Currently 1.
+judge_profile: string      # OPTIONAL. Named agent profile for llm_judge validations in this file. Allows the judge to use a different agent/model than the one that generated the code, avoiding self-grading bias. Must reference a profile in .intentc/config.yaml. If omitted, uses the build agent.
+validations:               # REQUIRED. List of validation definitions.
+  - name: string           # REQUIRED. Unique identifier for this validation.
+    type: string           # REQUIRED. One of: file_check, folder_check, command_check, llm_judge.
+    hidden: boolean        # OPTIONAL. Default false. If true, the agent does not see this validation during generation.
+
+    # --- file_check fields ---
+    path: string           # REQUIRED for file_check. File path relative to build output root.
+    contains: string[]     # OPTIONAL. Strings the file must contain.
+
+    # --- folder_check fields ---
+    path: string           # REQUIRED for folder_check. Directory path relative to build output root.
+    children: string[]     # OPTIONAL. Expected child file/directory names.
+
+    # --- command_check fields ---
+    command: string        # REQUIRED for command_check. Shell command to execute.
+    working_dir: string    # OPTIONAL. Working directory for the command. Defaults to build output root.
+    exit_code: integer     # OPTIONAL. Expected exit code. Default 0.
+    stdout_contains: string[]  # OPTIONAL. Strings stdout must contain.
+    stderr_contains: string[]  # OPTIONAL. Strings stderr must contain.
+
+    # --- llm_judge fields ---
+    rubric: string         # REQUIRED for llm_judge. Natural language rubric for the LLM to evaluate against.
+    severity: string       # OPTIONAL. "error" (default) or "warning". Warnings don't fail the build.
+    context_files: string[] # OPTIONAL. Glob patterns for files to include as context for the judge.
+```
+
+**Conventions:**
+- Multiple .icv files per feature are allowed (e.g., `unit-tests.icv`, `structure.icv`).
+- Validations run in order. Deterministic checks (file_check, command_check) run before llm_judge.
+- Hidden validations are used for "grading" checks the agent shouldn't optimize for directly.
+
+### Project Configuration (.intentc/config.yaml)
+
+Runtime configuration lives in `.intentc/config.yaml` at the project root. Specs never reference agent configuration - that is purely a runtime concern. The config file is validated against its schema on every load.
+
+```yaml
+version: 1
+profiles:
+  default:                   # REQUIRED. The default agent profile.
+    provider: string         # Agent provider: "claude", "codex", or "cli".
+    command: string          # For CLI agents: the command to invoke.
+    timeout: duration        # Agent invocation timeout. Default "5m".
+    retries: integer         # Number of retries on failure. Default 3.
+    rate_limit: duration     # Delay between retries. Default "1s".
+    model_id: string         # Optional model identifier (e.g., "claude-sonnet-4-6").
+    cli_args: string[]       # Additional CLI arguments passed to the agent.
+    prompt_templates:        # Optional prompt template overrides.
+      build: string          # Go text/template for build prompts.
+      validate: string       # Go text/template for validation prompts.
+      system: string         # System prompt for all invocations.
+    tools:                   # Tool configurations for the agent.
+      - name: string
+        enabled: boolean
+        config: map
+    skills: string[]         # Named skills (e.g., "code-generation", "testing").
+  # Additional named profiles can be added for different use cases.
+build:
+  default_output: string     # Default output directory. Default "build-default".
+logging:
+  level: string              # Log level: debug, info, warn, error. Default "info".
+```
+
+## Project Directory Structure
+
+```
+project-root/
+  .intentc/
+    config.yaml            # Runtime configuration
+    state/                 # Build state tracking
+  intent/                  # Spec files (human-authored)
+    project.ic             # Project-level intent
+    {feature}/
+      {feature}.ic         # Feature intent
+      *.icv                # Feature validations
+  {output-dir}/            # Generated code (agent-authored)
+```
+
+## Schema Validation
+
+All spec files (.ic, .icv) and the config file (.intentc/config.yaml) are validated against their schemas on every operation that reads them. Schema validation is the first step in any pipeline (build, validate, check, status) and runs before any other processing.
+
+Schema validation checks:
+1. **Structural validity** - YAML frontmatter is well-formed and contains only known fields.
+2. **Required fields** - All required fields are present and non-empty.
+3. **Type correctness** - Fields have the expected types (e.g., `version` is an integer, `depends_on` is a string list).
+4. **Value constraints** - Enum fields contain valid values (e.g., validation `type` is one of the known types).
+5. **Cross-file consistency** - Feature directory names match their .ic `name` field; .icv `target` fields match their parent directory.
+6. **Project.ic constraints** - project.ic must not have `depends_on`.
+
+If schema validation fails, the operation is aborted with a clear error listing all violations. The `intentc check` command runs schema validation explicitly and reports results.
+
+## CLI Commands (v2 Scope)
+
+- `intentc init` - Initialize project structure
+- `intentc build [target] --output <dir> --profile <name>` - Build targets from specs using named agent profile
+- `intentc clean [target] --output <dir>` - Remove generated files
+- `intentc validate [target] --output <dir> --profile <name>` - Run validations
+- `intentc status` - Show target status and dependency tree
+- `intentc commit` - Commit changes with appropriate prefixes
+- `intentc check [target]` - Validate spec files against schemas (parse + schema validation)
+- `intentc add intent <name>` - Create new intent file scaffold
+- `intentc add validation <target> <type>` - Add validation scaffold
+- `intentc list intents` - List all intent files
+- `intentc list validations` - List validation types
+- `intentc list profiles` - List configured agent profiles
+
+## Deferred Features (Anticipated in Design)
+
+These features are not in v2 scope but the architecture should not preclude them:
+
+- **REPL refinement** (`intentc refine`) - Interactive refinement loop
+- **Decompile** (`intentc decompile`) - Reverse-engineer specs from existing code
+- **Stability metrics** (`intentc stability`) - Build N times, compute reproducibility distance
+- **LSP server** - Language server for .ic/.icv files with diagnostics and completion
+- **State sharing** - Share build state between runs for incremental builds

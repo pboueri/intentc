@@ -1,0 +1,89 @@
+---
+target: agent
+version: 1
+validations:
+  - name: agent-package-exists
+    type: file_check
+    path: src/agent/interface.go
+    contains:
+      - "package agent"
+      - "type Agent interface"
+
+  - name: cli-agent-exists
+    type: file_check
+    path: src/agent/cli.go
+    contains:
+      - "package agent"
+      - "CLIAgent"
+
+  - name: claude-agent-exists
+    type: file_check
+    path: src/agent/claude.go
+    contains:
+      - "package agent"
+      - "ClaudeAgent"
+
+  - name: agent-factory-from-profile
+    type: command_check
+    command: grep -c "func CreateFromProfile" src/agent/*.go
+    exit_code: 0
+
+  - name: build-context-type
+    type: command_check
+    command: grep -c "type BuildContext struct" src/agent/*.go
+    exit_code: 0
+
+  - name: prompt-templates-exist
+    type: command_check
+    command: grep -c "template" src/agent/*.go
+    exit_code: 0
+
+  - name: retry-logic-exists
+    type: command_check
+    command: grep -c "retry\|Retry\|retries\|Retries" src/agent/cli.go
+    exit_code: 0
+
+  - name: agent-uses-profile
+    type: llm_judge
+    rubric: |
+      Verify that agents are constructed from AgentProfile objects:
+      1. CLIAgent constructor accepts *core.AgentProfile (not flat config fields)
+      2. ClaudeAgent constructor accepts *core.AgentProfile
+      3. Prompt templates from the profile are used for prompt construction
+      4. Tools and Skills from the profile are translated into provider-specific args
+      5. CreateFromProfile dispatches based on profile.Provider
+    severity: error
+    context_files: ["src/agent/cli.go", "src/agent/claude.go", "src/agent/factory.go"]
+
+  - name: claude-embeds-cli
+    type: llm_judge
+    rubric: |
+      Verify that ClaudeAgent uses Go struct embedding to extend CLIAgent:
+      1. ClaudeAgent struct embeds CLIAgent (not duplicates its fields)
+      2. ClaudeAgent only overrides methods where Claude-specific behavior differs
+      3. The claude command is hardcoded to "claude" (not configurable)
+      4. Default Claude CLI args include pipe mode
+      5. Profile ModelID is translated to --model flag if set
+    severity: error
+    context_files: ["src/agent/claude.go", "src/agent/cli.go"]
+
+  - name: agent-tests-pass
+    type: command_check
+    command: go test ./src/agent/...
+    exit_code: 0
+
+  - name: mock-agent-exists
+    type: llm_judge
+    rubric: |
+      Verify a mock agent exists for testing:
+      1. Implements the Agent interface
+      2. Records Build and Validate calls
+      3. Returns configurable responses
+      4. Is in a test file or test-only package (not compiled into binary)
+    severity: error
+    context_files: ["src/agent/*_test.go", "src/agent/mock*.go"]
+---
+
+# Agent Validations
+
+The agent system is intentc's interface to the outside world. The CLIAgent must robustly handle subprocess execution, timeout, retry, and output parsing. The ClaudeAgent should cleanly extend CLIAgent without duplication. The mock agent enables testing the rest of the system without real agent invocations.

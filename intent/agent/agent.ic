@@ -1,0 +1,183 @@
+---
+name: agent
+version: 1
+depends_on: [core, config]
+tags: [core]
+---
+
+# Pluggable Agent System
+
+The agent package defines the interface for code generation agents and provides concrete implementations. Agents are the bridge between intentc's spec system and the actual code generation - they accept a prompt (constructed from intent + validations) and produce files.
+
+The agent system is deliberately pluggable: any CLI tool that accepts prompts via stdin or arguments and produces file output can be used as an intentc agent.
+
+## Package
+
+`github.com/pboueri/intentc/src/agent`
+
+## Agent Interface
+
+```
+type Agent interface {
+    Build(ctx context.Context, buildCtx BuildContext) ([]string, error)
+    Validate(ctx context.Context, validation *core.Validation, generatedFiles []string) (bool, string, error)
+    GetName() string
+    GetType() string
+}
+```
+
+### Build
+
+The primary operation. Takes a BuildContext and returns a list of generated/modified file paths.
+
+The agent receives:
+- The intent content (markdown body of the .ic file)
+- Non-hidden validations (so the agent knows the constraints)
+- The output directory (where to write files)
+- The project root (for context)
+- Dependency information (names of features this depends on)
+
+### Validate (LLM-as-judge)
+
+Used for `llm_judge` validations. Takes a validation rubric and list of generated files, returns pass/fail with explanation. This is a separate invocation from Build to avoid the agent grading its own work.
+
+### BuildContext
+
+```
+BuildContext:
+    Intent: *core.Intent           # The parsed intent
+    Validations: []*core.ValidationFile  # Associated validations (non-hidden only)
+    ProjectRoot: string            # Absolute path to project root
+    OutputDir: string              # Absolute path to output directory
+    GenerationID: string           # Unique build identifier
+    DependencyNames: []string      # Names of dependency features (for context)
+    ProjectIntent: *core.Intent    # The project-level intent (intent/project.ic) for global context
+```
+
+## Agent Profiles
+
+Agents are configured through **AgentProfile** objects (defined in `core`). A profile bundles together everything needed to invoke an agent: which provider, what prompt templates, which tools/skills, and runtime parameters (timeout, retries). Profiles are defined in `.intentc/config.yaml` and a `"default"` profile is always present.
+
+### Profile Resolution
+
+When creating an agent:
+1. Look up the named profile from config (default: `"default"`).
+2. Merge with built-in defaults for the provider (e.g., Claude's defaults include `-p` flag and pipe mode).
+3. Apply any CLI flag overrides on top.
+
+### Prompt Templates
+
+Prompt construction uses Go `text/template`. The profile's `PromptTemplates` fields override the built-in defaults. If a template field is empty, the default for that provider is used.
+
+**Default build template** includes:
+1. The system prompt (if set in profile).
+2. The project intent (from project.ic) for global context.
+3. The feature intent (markdown body).
+4. Non-hidden validations with their types and parameters.
+5. The output directory path with instructions to write files there.
+6. Dependency context (names of dependencies so the agent knows what else exists).
+7. Tool and skill instructions derived from the profile's `Tools` and `Skills` lists.
+
+**Default validate template** includes:
+1. The system prompt (if set).
+2. The rubric text.
+3. Context file contents.
+4. Instructions to return a structured pass/fail judgment.
+
+### Tools and Skills
+
+The profile's `Tools` list declares which tools the agent has access to. Each tool has a name, enabled flag, and optional config map. The agent translates these into provider-specific arguments (e.g., Claude's `--allowedTools` flag, Codex's tool config).
+
+The `Skills` list is a set of named capabilities the agent should activate. Skills are provider-specific - the agent implementation maps skill names to provider features (e.g., "code-generation" might map to specific Claude system prompts or Codex modes).
+
+## CLIAgent (Base Implementation)
+
+The generic CLI agent wraps any command-line tool. It constructs a prompt from the BuildContext using the profile's templates, pipes it to the configured command, and detects which files were created or modified.
+
+### Construction
+
+Created from an `AgentProfile`:
+
+`NewCLIAgent(profile *core.AgentProfile) *CLIAgent`
+
+The CLIAgent reads all configuration from the profile: command, CLI args, timeout, retries, rate limit, prompt templates, tools, and skills.
+
+### File Detection
+
+After the agent command completes, detect which files were created/modified:
+1. Parse the agent's stdout for file paths (lines containing paths within the output directory).
+2. Fallback: compare git status before and after the agent run to detect new/modified files.
+
+### Retry Logic
+
+If the command fails (non-zero exit code or timeout), retry up to `profile.Retries` times with `profile.RateLimit` delay between attempts. Log each retry attempt.
+
+## ClaudeAgent (Extends CLIAgent)
+
+A specialization for Claude Code. Inherits from CLIAgent via struct embedding.
+
+- Sets the command to `claude`.
+- Adds default Claude-specific CLI args: `-p` (pipe mode), `--output-format text`.
+- Translates profile `Tools` into `--allowedTools` flags.
+- Translates profile `ModelID` into `--model` flag if set.
+- Uses Claude-optimized default prompt templates.
+
+### Constructor
+
+`NewClaudeAgent(profile *core.AgentProfile) *ClaudeAgent`
+
+The profile's `Command` field is ignored (always "claude"). All other profile fields are respected.
+
+### Default Profile
+
+When provider is "claude" and no explicit profile customization exists, the defaults are:
+```yaml
+provider: claude
+timeout: 5m
+retries: 3
+rate_limit: 1s
+tools:
+  - name: bash
+    enabled: true
+  - name: file_read
+    enabled: true
+  - name: file_write
+    enabled: true
+skills: [code-generation]
+```
+
+## CodexAgent (Extends CLIAgent)
+
+A specialization for OpenAI Codex CLI. Inherits from CLIAgent via struct embedding.
+
+- Sets the command to `codex`.
+- Adds Codex-specific CLI args for non-interactive mode.
+- Translates profile `ModelID` into Codex model selection.
+
+### Constructor
+
+`NewCodexAgent(profile *core.AgentProfile) *CodexAgent`
+
+## Agent Factory
+
+`CreateFromProfile(profile *core.AgentProfile) (Agent, error)`
+
+Creates the appropriate agent based on `profile.Provider`:
+- `"claude"` -> ClaudeAgent
+- `"codex"` -> CodexAgent
+- `"cli"` -> CLIAgent (using profile.Command)
+- Unknown provider -> error
+
+The legacy `CreateFromConfig(cfg *config.Config) (Agent, error)` function is preserved for backward compatibility. It resolves the default profile from config and delegates to `CreateFromProfile`.
+
+## MockAgent
+
+A mock implementation for testing. Records all calls and returns configurable responses.
+
+Fields:
+- `BuildCalls` ([]BuildContext) - Recorded build calls.
+- `BuildFiles` ([]string) - Files to return from Build.
+- `BuildError` (error) - Error to return from Build.
+- Similar fields for Validate.
+
+This lives in a `_test.go` file or an `agenttest` sub-package so it's not compiled into the binary.

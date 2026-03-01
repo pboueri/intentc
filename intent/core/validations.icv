@@ -1,0 +1,94 @@
+---
+target: core
+version: 1
+validations:
+  - name: core-package-exists
+    type: file_check
+    path: src/core/types.go
+    contains:
+      - "package core"
+
+  - name: intent-type-defined
+    type: command_check
+    command: grep -c "type Intent struct" src/core/types.go
+    exit_code: 0
+
+  - name: validation-type-defined
+    type: command_check
+    command: grep -c "type Validation struct" src/core/types.go
+    exit_code: 0
+
+  - name: target-type-defined
+    type: command_check
+    command: grep -c "type Target struct" src/core/types.go
+    exit_code: 0
+
+  - name: build-result-type-defined
+    type: command_check
+    command: grep -c "type BuildResult struct" src/core/types.go
+    exit_code: 0
+
+  - name: validation-result-type-defined
+    type: command_check
+    command: grep -c "type ValidationResult struct" src/core/types.go
+    exit_code: 0
+
+  - name: validation-types-enum
+    type: command_check
+    command: grep -c "file_check\|folder_check\|command_check\|llm_judge" src/core/types.go
+    exit_code: 0
+    stdout_contains: ["4"]
+
+  - name: target-status-enum
+    type: command_check
+    command: grep -c "pending\|building\|built\|failed\|outdated" src/core/types.go
+    exit_code: 0
+
+  - name: core-no-internal-imports
+    type: command_check
+    command: grep -c "github.com/pboueri/intentc/src/" src/core/types.go || echo "0"
+    exit_code: 0
+    stdout_contains: ["0"]
+
+  - name: core-tests-pass
+    type: command_check
+    command: go test ./src/core/...
+    exit_code: 0
+
+  - name: agent-profile-type-defined
+    type: command_check
+    command: grep -c "type AgentProfile struct" src/core/types.go
+    exit_code: 0
+
+  - name: prompt-templates-type-defined
+    type: command_check
+    command: grep -c "type PromptTemplates struct" src/core/types.go
+    exit_code: 0
+
+  - name: tool-config-type-defined
+    type: command_check
+    command: grep -c "type ToolConfig struct" src/core/types.go
+    exit_code: 0
+
+  - name: schema-violation-type-defined
+    type: command_check
+    command: grep -c "type SchemaViolation struct" src/core/types.go
+    exit_code: 0
+
+  - name: core-types-quality
+    type: llm_judge
+    rubric: |
+      Evaluate the core types package for:
+      1. All types from the spec are present with correct fields, including: Intent, Validation, ValidationType, ValidationFile, Target, TargetStatus, BuildResult, ValidationResult, AgentProfile, PromptTemplates, ToolConfig, SchemaViolation
+      2. Types are JSON/YAML serializable (appropriate struct tags)
+      3. No dependencies on other intentc packages
+      4. Follows Go conventions (exported types, godoc-compatible names)
+      5. Enum types have const blocks with all specified values
+      6. AgentProfile has all fields: Name, Provider, Command, CLIArgs, Timeout, Retries, RateLimit, PromptTemplates, Tools, Skills, ModelID
+    severity: error
+    context_files: ["src/core/*.go"]
+---
+
+# Core Types Validations
+
+These validations ensure the core types package is complete, self-contained, and follows the specification. The core package is the foundation - if it's wrong, everything else breaks. The AgentProfile, PromptTemplates, ToolConfig, and SchemaViolation types are essential for the agent profile system and schema validation features.

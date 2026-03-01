@@ -1,0 +1,46 @@
+---
+target: git
+version: 1
+validations:
+  - name: git-package-exists
+    type: file_check
+    path: src/git/git.go
+    contains:
+      - "package git"
+
+  - name: git-interface-defined
+    type: command_check
+    command: grep -c "type GitManager interface" src/git/*.go
+    exit_code: 0
+
+  - name: git-status-type
+    type: command_check
+    command: grep -c "type GitStatus struct" src/git/*.go
+    exit_code: 0
+
+  - name: commit-prefix-constants
+    type: command_check
+    command: grep -c "intent:\|generated:" src/git/*.go
+    exit_code: 0
+
+  - name: git-tests-pass
+    type: command_check
+    command: go test ./src/git/...
+    exit_code: 0
+
+  - name: git-tests-isolation
+    type: llm_judge
+    rubric: |
+      Verify that git tests:
+      1. Create temporary directories for test repos (os.MkdirTemp or t.TempDir)
+      2. Run git init in those temp directories
+      3. Never reference or modify the project's own .git directory
+      4. Clean up temp directories after tests
+      5. Test actual git operations (add, commit, status) not just mocks
+    severity: error
+    context_files: ["src/git/*_test.go"]
+---
+
+# Git Validations
+
+Git integration must be thoroughly tested with real temporary repositories. The most critical invariant is test isolation - tests must never touch the project's own git state.

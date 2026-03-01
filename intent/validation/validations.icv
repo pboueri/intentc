@@ -1,0 +1,90 @@
+---
+target: validation
+version: 1
+validations:
+  - name: validation-package-exists
+    type: file_check
+    path: src/validation/runner.go
+    contains:
+      - "package validation"
+
+  - name: validator-interface-defined
+    type: command_check
+    command: grep -c "type Validator interface" src/validation/*.go
+    exit_code: 0
+
+  - name: registry-defined
+    type: command_check
+    command: grep -c "type Registry struct" src/validation/*.go
+    exit_code: 0
+
+  - name: file-check-validator
+    type: file_check
+    path: src/validation/file_check.go
+    contains:
+      - "package validation"
+      - "FileCheck"
+
+  - name: command-check-validator
+    type: file_check
+    path: src/validation/command_check.go
+    contains:
+      - "package validation"
+      - "CommandCheck"
+
+  - name: llm-judge-validator
+    type: file_check
+    path: src/validation/llm_judge.go
+    contains:
+      - "package validation"
+      - "LLMJudge"
+
+  - name: runner-defined
+    type: command_check
+    command: grep -c "type Runner struct" src/validation/runner.go
+    exit_code: 0
+
+  - name: validation-tests-pass
+    type: command_check
+    command: go test ./src/validation/...
+    exit_code: 0
+
+  - name: deterministic-validators-tested
+    type: llm_judge
+    rubric: |
+      Check that tests cover:
+      1. FileCheck: file exists, file missing, file exists but missing content
+      2. FolderCheck: folder exists, folder missing, missing children
+      3. CommandCheck: command passes, command fails, timeout, stdout checking
+      4. Each validator is tested with a real temporary directory containing real files
+      5. The Runner correctly aggregates results and sorts deterministic before LLM checks
+    severity: error
+    context_files: ["src/validation/*_test.go"]
+
+  - name: llm-judge-uses-agent
+    type: llm_judge
+    rubric: |
+      Verify that the LLMJudge validator:
+      1. Accepts an Agent in its constructor (dependency injection, not global)
+      2. Calls agent.Validate() with the rubric
+      3. Handles the "warning" severity correctly (doesn't fail the build)
+      4. Resolves context_files globs and reads matching files
+    severity: error
+    context_files: ["src/validation/llm_judge.go"]
+
+  - name: runner-resolves-judge-profile
+    type: llm_judge
+    rubric: |
+      Verify that the validation Runner supports judge profiles:
+      1. Runner struct holds a config reference for profile resolution
+      2. When a ValidationFile has JudgeProfile set, Runner creates a separate agent for that file's llm_judge validations
+      3. When JudgeProfile is empty, Runner uses the default agent
+      4. Profile resolution errors (unknown profile name) produce clear errors
+      5. Different ValidationFiles on the same target can use different judge profiles
+    severity: error
+    context_files: ["src/validation/runner.go"]
+---
+
+# Validation Validations
+
+The validation system is the quality gate for intentc. Deterministic validators must be thorough and well-tested. The LLM judge must properly delegate to the agent and handle severity levels. The Runner supports per-file judge profiles to prevent self-grading bias when the build agent and judge should differ.

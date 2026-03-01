@@ -1,0 +1,72 @@
+---
+name: git
+version: 1
+depends_on: [core]
+tags: [integration]
+---
+
+# Git Integration
+
+The git package provides an interface for git operations used by intentc. Git is a prerequisite - intentc requires a git repository. The package wraps git CLI commands and provides structured output.
+
+## Package
+
+`github.com/pboueri/intentc/src/git`
+
+## Interface
+
+All git operations go through the `GitManager` interface so they can be mocked in tests.
+
+```
+type GitManager interface {
+    Initialize(ctx context.Context, projectRoot string) error
+    IsGitRepo(ctx context.Context) bool
+    Add(ctx context.Context, files []string) error
+    Commit(ctx context.Context, message string) error
+    GetStatus(ctx context.Context) (*GitStatus, error)
+    GetCurrentBranch(ctx context.Context) (string, error)
+    GetCommitHash(ctx context.Context) (string, error)
+}
+```
+
+### GitStatus
+
+Fields:
+- `Branch` (string) - Current branch name.
+- `Clean` (bool) - True if working tree has no changes.
+- `ModifiedFiles` ([]string) - Files with changes.
+- `UntrackedFiles` ([]string) - New untracked files.
+- `StagedFiles` ([]string) - Files in the staging area.
+
+## Implementation
+
+`NewGitManager() GitManager` - Returns the concrete implementation.
+
+The concrete implementation shells out to `git` commands:
+- `git init` / `git rev-parse --git-dir` for initialization checks.
+- `git add <files>` for staging.
+- `git commit -m <message>` for commits.
+- `git status --porcelain` for status parsing.
+- `git branch --show-current` for branch name.
+- `git rev-parse HEAD` for commit hash.
+
+All git commands are executed in the project root directory.
+
+## Commit Conventions
+
+intentc uses commit message prefixes to distinguish changes:
+- `intent: <message>` - Changes to spec files in `intent/`.
+- `generated: <message>` - Changes to generated code.
+- `refine: <message>` - Changes from refinement sessions (future).
+
+The git package provides these as constants but does not enforce them - that's the caller's responsibility (the commit command in CLI).
+
+## Error Handling
+
+- If git is not installed, return a clear error: "git is not installed or not in PATH".
+- If the project root is not a git repository, return: "not a git repository. Run 'git init' first."
+- All git command failures should include stderr output in the error message.
+
+## Testing
+
+Tests must create temporary git repositories and never touch the project's own repository. Use `os.MkdirTemp` for test repos, `git init` them, and clean up in `t.Cleanup`.

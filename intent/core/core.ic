@@ -1,0 +1,161 @@
+---
+name: core
+version: 1
+tags: [foundation]
+---
+
+# Core Types and Interfaces
+
+The core package defines the foundational data types used throughout intentc. It is a leaf dependency with no imports from other intentc packages. All other packages depend on core.
+
+## Package
+
+`github.com/pboueri/intentc/src/core`
+
+## Types
+
+### Intent
+
+Represents a parsed .ic file. Contains both the structured frontmatter metadata and the raw markdown body.
+
+Fields:
+- `Name` (string) - Feature identifier, matches directory name.
+- `Version` (int) - Schema version from frontmatter.
+- `DependsOn` ([]string) - List of feature dependency names.
+- `Tags` ([]string) - Categorization tags.
+- `Profile` (string) - Optional named agent profile for building this target. Empty means use the default or CLI-specified profile.
+- `Content` (string) - The full raw markdown body (everything after the frontmatter).
+- `FilePath` (string) - Absolute path to the source .ic file.
+
+### Validation
+
+Represents a single validation definition extracted from an .icv file's frontmatter.
+
+Fields:
+- `Name` (string) - Unique validation identifier.
+- `Type` (ValidationType) - The validation type enum.
+- `Hidden` (bool) - Whether the agent should see this validation.
+- `Parameters` (map[string]any) - Type-specific parameters (path, command, rubric, etc.).
+
+### ValidationType
+
+A string enum with values:
+- `file_check`
+- `folder_check`
+- `command_check`
+- `llm_judge`
+
+### ValidationFile
+
+Represents a parsed .icv file containing multiple validations.
+
+Fields:
+- `Target` (string) - Feature name this validates.
+- `Version` (int) - Schema version.
+- `JudgeProfile` (string) - Optional named agent profile for llm_judge validations in this file. When set, the LLM judge uses a different agent than the one that built the target, preventing self-grading bias. Empty means use the build agent.
+- `Validations` ([]Validation) - The validation definitions.
+- `FilePath` (string) - Absolute path to the source .icv file.
+
+### Target
+
+Represents a buildable unit: an intent paired with its validations and resolved dependencies.
+
+Fields:
+- `Name` (string) - Feature identifier.
+- `Intent` (*Intent) - The parsed intent.
+- `Validations` ([]*ValidationFile) - Associated validation files.
+- `Dependencies` ([]*Target) - Resolved dependency targets (pointers, not names).
+- `Status` (TargetStatus) - Current build status.
+
+### TargetStatus
+
+A string enum with values:
+- `pending` - Not yet built.
+- `building` - Currently being built.
+- `built` - Successfully built.
+- `failed` - Build failed.
+- `outdated` - Built but spec has changed since.
+
+### BuildResult
+
+Represents the outcome of a single target build.
+
+Fields:
+- `Target` (string) - Target name.
+- `GenerationID` (string) - Unique build identifier (e.g., `gen-1234567890`).
+- `Success` (bool) - Whether the build succeeded.
+- `Error` (string) - Error message if failed (not an error type - must be serializable).
+- `GeneratedAt` (time.Time) - When the build completed.
+- `Files` ([]string) - List of files created or modified.
+- `OutputDir` (string) - The output directory used for this build.
+
+### ValidationResult
+
+Represents the outcome of running a single validation.
+
+Fields:
+- `ValidationName` (string) - Which validation was run.
+- `Passed` (bool) - Whether it passed.
+- `Message` (string) - Human-readable result message.
+- `Details` ([]string) - Additional detail lines.
+- `Severity` (string) - "error" or "warning".
+
+### AgentProfile
+
+Represents a named, reusable agent configuration that bundles provider, prompt templates, tools, and skills into a single unit. Agent profiles are defined in `.intentc/config.yaml` and referenced by name.
+
+Fields:
+- `Name` (string) - Profile identifier (e.g., "default", "fast", "review").
+- `Provider` (string) - Agent provider name: "claude", "codex", "cli". Determines which agent implementation is used.
+- `Command` (string) - For CLI provider: the shell command to invoke. Ignored for built-in providers.
+- `CLIArgs` ([]string) - Additional CLI arguments passed to the agent command.
+- `Timeout` (time.Duration) - Per-invocation timeout. Default 5m.
+- `Retries` (int) - Number of retries on failure. Default 3.
+- `RateLimit` (time.Duration) - Delay between retries. Default 1s.
+- `PromptTemplates` (PromptTemplates) - Customizable prompt templates for build and validate operations.
+- `Tools` ([]ToolConfig) - Tool configurations available to the agent during generation.
+- `Skills` ([]string) - Named skills the agent should use (e.g., "code-generation", "refactoring", "testing").
+- `ModelID` (string) - Optional model identifier override (e.g., "claude-sonnet-4-6", "gpt-4o"). Provider-specific.
+
+### PromptTemplates
+
+Customizable Go text/template strings for constructing agent prompts. Each field is optional; if empty, the default template for that operation is used.
+
+Fields:
+- `Build` (string) - Template for the build prompt. Available variables: `.ProjectIntent`, `.Intent`, `.Validations`, `.OutputDir`, `.DependencyNames`, `.GenerationID`.
+- `Validate` (string) - Template for the LLM judge validation prompt. Available variables: `.Rubric`, `.ContextFiles`, `.GeneratedFiles`.
+- `System` (string) - Optional system prompt prepended to all agent invocations.
+
+### ToolConfig
+
+Represents a tool available to the agent during generation.
+
+Fields:
+- `Name` (string) - Tool identifier (e.g., "bash", "file_read", "web_search").
+- `Enabled` (bool) - Whether the tool is available. Default true.
+- `Config` (map[string]any) - Tool-specific configuration parameters.
+
+### SchemaVersion
+
+A string enum tracking the spec file schema versions. Used for forward-compatible parsing and migration.
+
+Values:
+- `v1` - Current schema version for .ic and .icv files.
+
+### SchemaViolation
+
+Represents a single schema validation error found during spec file parsing.
+
+Fields:
+- `FilePath` (string) - Path to the file with the violation.
+- `Field` (string) - The field name that failed validation (e.g., "name", "version", "validations[0].type").
+- `Message` (string) - Human-readable description of the violation.
+- `Severity` (string) - "error" or "warning". Errors prevent builds; warnings are informational.
+
+## Constraints
+
+- Core must have zero dependencies on other intentc packages.
+- All types should be serializable to JSON and YAML (for state persistence).
+- Error fields in serializable types must be strings, not error interfaces.
+- Types should use value semantics where practical, pointer semantics for large structs passed across package boundaries (Target, Intent).
+- AgentProfile must be fully serializable to YAML for config file storage.

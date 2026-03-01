@@ -1,0 +1,86 @@
+---
+target: config
+version: 1
+validations:
+  - name: config-package-exists
+    type: file_check
+    path: src/config/config.go
+    contains:
+      - "package config"
+
+  - name: config-struct-defined
+    type: command_check
+    command: grep -c "type Config struct" src/config/config.go
+    exit_code: 0
+
+  - name: profiles-map-in-config
+    type: command_check
+    command: grep -c "Profiles" src/config/config.go
+    exit_code: 0
+
+  - name: default-config-function
+    type: command_check
+    command: grep -c "func GetDefaultConfig" src/config/config.go
+    exit_code: 0
+
+  - name: default-profile-function
+    type: command_check
+    command: grep -c "func GetDefaultProfile" src/config/config.go
+    exit_code: 0
+
+  - name: get-profile-function
+    type: command_check
+    command: grep -c "func GetProfile" src/config/config.go
+    exit_code: 0
+
+  - name: validate-config-function
+    type: command_check
+    command: grep -c "func ValidateConfig" src/config/config.go
+    exit_code: 0
+
+  - name: load-config-function
+    type: command_check
+    command: grep -c "func LoadConfig" src/config/config.go
+    exit_code: 0
+
+  - name: merge-config-function
+    type: command_check
+    command: grep -c "func MergeConfig" src/config/config.go
+    exit_code: 0
+
+  - name: config-tests-pass
+    type: command_check
+    command: go test ./src/config/...
+    exit_code: 0
+
+  - name: config-defaults-sensible
+    type: llm_judge
+    rubric: |
+      Verify that GetDefaultConfig returns sensible defaults:
+      1. Default profile has provider "claude"
+      2. Default profile timeout is 5 minutes
+      3. Default profile retries is 3
+      4. Default profile includes default tools (bash, file_read, file_write)
+      5. Default output directory is "build-default"
+      6. Log level is "info"
+      7. Profiles map contains a "default" entry
+    severity: error
+    context_files: ["src/config/config.go"]
+
+  - name: config-validation-checks
+    type: llm_judge
+    rubric: |
+      Verify ValidateConfig performs proper schema validation:
+      1. Checks version is present and supported
+      2. Checks profiles map exists and has "default" key
+      3. Checks each profile has a valid provider
+      4. Checks CLI provider profiles have a command
+      5. Returns []core.SchemaViolation (not error)
+      6. LoadConfig calls ValidateConfig and returns errors on violation
+    severity: error
+    context_files: ["src/config/config.go"]
+---
+
+# Config Validations
+
+Validates the configuration system loads, saves, and merges correctly with sensible defaults. The config now uses agent profiles instead of flat agent config, and includes schema validation to catch invalid configuration early.

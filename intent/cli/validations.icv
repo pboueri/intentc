@@ -1,0 +1,158 @@
+---
+target: cli
+version: 1
+validations:
+  - name: main-go-exists
+    type: file_check
+    path: main.go
+    contains:
+      - "package main"
+      - "cmd.Execute"
+
+  - name: root-command-exists
+    type: file_check
+    path: src/cmd/root.go
+    contains:
+      - "package cmd"
+      - "rootCmd"
+      - "cobra.Command"
+
+  - name: init-command-exists
+    type: file_check
+    path: src/cmd/init.go
+    contains:
+      - "package cmd"
+      - "initCmd"
+
+  - name: build-command-exists
+    type: file_check
+    path: src/cmd/build.go
+    contains:
+      - "package cmd"
+      - "buildCmd"
+      - "--output"
+      - "profile"
+
+  - name: clean-command-exists
+    type: file_check
+    path: src/cmd/clean.go
+    contains:
+      - "package cmd"
+
+  - name: validate-command-exists
+    type: file_check
+    path: src/cmd/validate.go
+    contains:
+      - "package cmd"
+
+  - name: status-command-exists
+    type: file_check
+    path: src/cmd/status.go
+    contains:
+      - "package cmd"
+
+  - name: commit-command-exists
+    type: file_check
+    path: src/cmd/commit.go
+    contains:
+      - "package cmd"
+      - "intent:"
+      - "generated:"
+
+  - name: check-command-exists
+    type: file_check
+    path: src/cmd/check.go
+    contains:
+      - "package cmd"
+      - "ValidateAllSpecs"
+
+  - name: add-command-exists
+    type: command_check
+    command: grep -rl "add.*intent\|add.*validation" src/cmd/*.go | wc -l
+    exit_code: 0
+
+  - name: list-command-exists
+    type: command_check
+    command: grep -rl "list.*intent\|list.*validation\|list.*profile" src/cmd/*.go | wc -l
+    exit_code: 0
+
+  - name: go-mod-exists
+    type: file_check
+    path: go.mod
+    contains:
+      - "module github.com/pboueri/intentc"
+      - "github.com/spf13/cobra"
+
+  - name: binary-builds
+    type: command_check
+    command: go build -o /dev/null .
+    exit_code: 0
+
+  - name: all-tests-pass
+    type: command_check
+    command: go test ./...
+    exit_code: 0
+
+  - name: cli-no-globals
+    type: llm_judge
+    rubric: |
+      Verify that CLI commands follow proper dependency injection:
+      1. No global agent, builder, or state manager instances
+      2. Each command function creates its own dependencies
+      3. Config is loaded per-command, not globally cached
+      4. The only globals are Cobra command definitions and flag variables
+    severity: warning
+    context_files: ["src/cmd/*.go"]
+
+  - name: init-creates-structure
+    type: llm_judge
+    rubric: |
+      Verify the init command:
+      1. Creates .intentc/ directory with config.yaml containing a default agent profile
+      2. Creates intent/ directory
+      3. Creates a template project.ic with valid YAML frontmatter (name, version, tags)
+      4. Adds .intentc/state/ to .gitignore
+      5. Errors if already initialized
+      6. Errors if not in a git repository
+      7. The generated config.yaml has a "default" profile with provider "claude"
+    severity: error
+    context_files: ["src/cmd/init.go"]
+
+  - name: commit-separates-intent-and-generated
+    type: llm_judge
+    rubric: |
+      Verify the commit command:
+      1. Separates intent/ files from generated files
+      2. Creates separate commits with "intent:" and "generated:" prefixes
+      3. Only commits staged/changed files (doesn't commit everything blindly)
+      4. Handles the case where only intent files changed, or only generated files changed
+    severity: error
+    context_files: ["src/cmd/commit.go"]
+  - name: check-runs-schema-validation
+    type: llm_judge
+    rubric: |
+      Verify the check command:
+      1. Calls parser.ValidateAllSpecs to validate all spec files against schemas
+      2. Calls config.ValidateConfig to validate the config file
+      3. Reports schema violations with file path, field, and description
+      4. Separates errors from warnings in output
+      5. Exits with code 1 if any error-severity violations found
+      6. Prints "All spec files are valid." only when everything passes
+    severity: error
+    context_files: ["src/cmd/check.go"]
+
+  - name: build-uses-profile
+    type: llm_judge
+    rubric: |
+      Verify the build command uses agent profiles:
+      1. Accepts --profile flag for profile selection
+      2. Resolves profile from config via config.GetProfile
+      3. Creates agent via agent.CreateFromProfile (not CreateFromConfig)
+      4. Passes ProfileName through BuildOptions to the builder
+    severity: error
+    context_files: ["src/cmd/build.go"]
+---
+
+# CLI Validations
+
+The CLI is the user-facing surface of intentc. It must build, all tests must pass, and commands must follow the dependency injection pattern (no globals). The commit command's separation of intent and generated changes is a critical correctness requirement. The check command must perform full schema validation, and the build/validate commands must use agent profiles.

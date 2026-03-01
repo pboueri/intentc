@@ -1,0 +1,65 @@
+---
+name: graph
+version: 1
+depends_on: [core]
+tags: [foundation]
+---
+
+# Dependency Graph (DAG)
+
+The graph package implements a directed acyclic graph for managing feature dependencies. It takes a set of targets, resolves their dependency relationships, detects cycles, and produces a topological ordering for builds.
+
+## Package
+
+`github.com/pboueri/intentc/src/graph`
+
+## DAG Structure
+
+The DAG is a set of named nodes with directed edges representing "depends on" relationships.
+
+### Node
+
+Fields:
+- `Name` (string) - Target name.
+- `Target` (*core.Target) - The associated target.
+- `Dependencies` ([]*Node) - Nodes this node depends on (edges pointing "downward").
+- `Dependents` ([]*Node) - Nodes that depend on this node (reverse edges, for invalidation).
+
+### DAG
+
+Fields:
+- `nodes` (map[string]*Node) - All nodes indexed by name.
+- `roots` ([]*Node) - Nodes with no dependencies.
+
+## Functions
+
+### NewDAG() *DAG
+Create an empty DAG.
+
+### (d *DAG) AddTarget(target *core.Target) error
+Add a target as a node. Error if a node with the same name already exists.
+
+### (d *DAG) Resolve() error
+Resolve all dependency edges. For each target's DependsOn list, find the corresponding node and create the edge. Errors:
+- Unknown dependency: "graph: target 'auth' depends on unknown target 'user-model'"
+- Self-dependency: "graph: target 'auth' depends on itself"
+
+### (d *DAG) DetectCycles() error
+Run cycle detection (DFS with recursion stack). If a cycle is found, return an error that names the cycle participants: "graph: dependency cycle detected: auth -> session -> auth".
+
+### (d *DAG) TopologicalSort() ([]*core.Target, error)
+Return targets in build order (dependencies before dependents). Calls DetectCycles first. If there are cycles, return the cycle error.
+
+### (d *DAG) GetAffected(targetName string) []*core.Target
+Given a target that changed, return all targets that transitively depend on it (its dependents, and their dependents, etc). Used for invalidation when a spec changes.
+
+### (d *DAG) GetDependencyChain(targetName string) []*core.Target
+Return the target and all its transitive dependencies in topological order. Used to determine what needs building before a specific target.
+
+### (d *DAG) Visualize() string
+Return a human-readable tree representation of the DAG showing dependencies and status. Uses ASCII art (indentation and lines). Include target status symbols:
+- `[+]` built
+- `[-]` failed
+- `[ ]` pending
+- `[~]` building
+- `[!]` outdated
