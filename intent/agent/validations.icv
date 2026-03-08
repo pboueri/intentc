@@ -2,75 +2,57 @@
 target: agent
 version: 1
 validations:
-  - name: agent-package-exists
-    type: file_check
-    path: src/agent/interface.go
-    contains:
-      - "package agent"
-      - "type Agent interface"
+  - name: agent-module-exists
+    type: folder_check
+    path: src/agent
 
-  - name: cli-agent-exists
-    type: file_check
-    path: src/agent/cli.go
-    contains:
-      - "package agent"
-      - "CLIAgent"
+  - name: agent-interface-defined
+    type: llm_judge
+    rubric: |
+      Verify the agent module defines:
+      1. An Agent interface/protocol with methods: Build, Validate, GetName, GetType
+      2. A BuildContext type with: Intent, Validations, ProjectRoot, OutputDir, GenerationID, DependencyNames, ProjectIntent
+      3. A CLIAgent implementation that wraps any command-line tool
+      4. A ClaudeAgent that extends CLIAgent through composition
+      5. A CodexAgent that extends CLIAgent through composition
+      6. A CreateFromProfile factory that dispatches based on provider
+    severity: error
+    context_files: ["src/agent/**"]
 
-  - name: claude-agent-exists
-    type: file_check
-    path: src/agent/claude.go
-    contains:
-      - "package agent"
-      - "ClaudeAgent"
-
-  - name: agent-factory-from-profile
-    type: command_check
-    command: grep -c "func CreateFromProfile" src/agent/*.go
-    exit_code: 0
-
-  - name: build-context-type
-    type: command_check
-    command: grep -c "type BuildContext struct" src/agent/*.go
-    exit_code: 0
-
-  - name: prompt-templates-exist
-    type: command_check
-    command: grep -c "template" src/agent/*.go
-    exit_code: 0
-
-  - name: retry-logic-exists
-    type: command_check
-    command: grep -c "retry\|Retry\|retries\|Retries" src/agent/cli.go
-    exit_code: 0
-
-  - name: agent-uses-profile
+  - name: agent-uses-profiles
     type: llm_judge
     rubric: |
       Verify that agents are constructed from AgentProfile objects:
-      1. CLIAgent constructor accepts *core.AgentProfile (not flat config fields)
-      2. ClaudeAgent constructor accepts *core.AgentProfile
+      1. CLIAgent constructor accepts an AgentProfile (not flat config fields)
+      2. ClaudeAgent constructor accepts an AgentProfile
       3. Prompt templates from the profile are used for prompt construction
       4. Tools and Skills from the profile are translated into provider-specific args
       5. CreateFromProfile dispatches based on profile.Provider
     severity: error
-    context_files: ["src/agent/cli.go", "src/agent/claude.go", "src/agent/factory.go"]
+    context_files: ["src/agent/**"]
 
-  - name: claude-embeds-cli
+  - name: agent-composition
     type: llm_judge
     rubric: |
-      Verify that ClaudeAgent uses Go struct embedding to extend CLIAgent:
-      1. ClaudeAgent struct embeds CLIAgent (not duplicates its fields)
-      2. ClaudeAgent only overrides methods where Claude-specific behavior differs
+      Verify that ClaudeAgent extends CLIAgent through composition:
+      1. ClaudeAgent wraps/composes CLIAgent (not duplicates its fields)
+      2. ClaudeAgent only overrides behavior where Claude-specific logic differs
       3. The claude command is hardcoded to "claude" (not configurable)
       4. Default Claude CLI args include pipe mode
       5. Profile ModelID is translated to --model flag if set
     severity: error
-    context_files: ["src/agent/claude.go", "src/agent/cli.go"]
+    context_files: ["src/agent/**"]
 
-  - name: agent-tests-pass
-    type: command_check
-    command: go test ./src/agent/...
-    exit_code: 0
+  - name: agent-retry-logic
+    type: llm_judge
+    rubric: |
+      Verify the CLIAgent implements retry logic:
+      1. Retries on command failure up to profile.Retries times
+      2. Waits profile.RateLimit between retries
+      3. Logs each retry attempt
+      4. Respects timeout from the profile
+    severity: error
+    context_files: ["src/agent/**"]
 
   - name: mock-agent-exists
     type: llm_judge
@@ -79,9 +61,14 @@ validations:
       1. Implements the Agent interface
       2. Records Build and Validate calls
       3. Returns configurable responses
-      4. Is in a test file or test-only package (not compiled into binary)
+      4. Is in test-only code (not compiled into the production binary)
     severity: error
-    context_files: ["src/agent/*_test.go", "src/agent/mock*.go"]
+    context_files: ["src/agent/**"]
+
+  - name: agent-tests-pass
+    type: command_check
+    command: cd src && uv run pytest agent/ -v
+    exit_code: 0
 ---
 
 # Agent Validations

@@ -9,16 +9,12 @@ tags: [foundation]
 
 The config package manages intentc project configuration. Configuration is stored in `.intentc/config.yaml` at the project root and can be overridden via CLI flags.
 
-## Package
-
-`github.com/pboueri/intentc/src/config`
-
 ## Config Struct
 
 ```
 Config:
-  Version: int                              # Config schema version. Currently 1.
-  Profiles: map[string]*core.AgentProfile   # Named agent profiles. Must contain a "default" key.
+  Version: integer                          # Config schema version. Currently 1.
+  Profiles: map of string to AgentProfile   # Named agent profiles. Must contain a "default" key.
   Build: BuildConfig
   Logging: LoggingConfig
 
@@ -29,7 +25,7 @@ LoggingConfig:
   Level: string             # "debug", "info", "warn", "error". Default "info".
 ```
 
-The flat `AgentConfig` is replaced by `Profiles` - a map of named `AgentProfile` objects (defined in core). The `"default"` profile is used unless a target or CLI flag specifies otherwise.
+Profiles is a map of named `AgentProfile` objects (defined in core). The `"default"` profile is used unless a target or CLI flag specifies otherwise.
 
 ### Config File Schema (`.intentc/config.yaml`)
 
@@ -45,8 +41,8 @@ profiles:                          # REQUIRED. At least "default" must exist.
     rate_limit: duration           # OPTIONAL. Default "1s".
     model_id: string               # OPTIONAL. Provider-specific model identifier.
     prompt_templates:              # OPTIONAL. Override default prompt templates.
-      build: string                # Go text/template for build prompts.
-      validate: string             # Go text/template for validation prompts.
+      build: string                # Template string for build prompts (uses implementation's template engine).
+      validate: string             # Template string for validation prompts.
       system: string               # System prompt prepended to all invocations.
     tools:                         # OPTIONAL. Tool configurations.
       - name: string               # Tool identifier.
@@ -67,10 +63,10 @@ logging:
 
 ## Functions
 
-### GetDefaultConfig() *Config
+### GetDefaultConfig() -> Config
 Returns a Config with all default values filled in, including a `"default"` profile with provider "claude", 5m timeout, 3 retries, and default tools.
 
-### GetDefaultProfile() *core.AgentProfile
+### GetDefaultProfile() -> AgentProfile
 Returns the default agent profile with sensible defaults for Claude:
 ```yaml
 name: default
@@ -88,19 +84,19 @@ tools:
 skills: [code-generation]
 ```
 
-### LoadConfig(projectRoot string) (*Config, error)
+### LoadConfig(projectRoot: string) -> Config or error
 Load configuration from `{projectRoot}/.intentc/config.yaml`. If the file doesn't exist, return defaults. If the file exists but has parse errors, return an error. Validates that the config conforms to the schema (see ValidateConfig).
 
-### SaveConfig(projectRoot string, config *Config) error
+### SaveConfig(projectRoot: string, config: Config) -> error
 Write configuration to `{projectRoot}/.intentc/config.yaml`. Creates the `.intentc/` directory if it doesn't exist.
 
-### MergeConfig(base, override *Config) *Config
+### MergeConfig(base: Config, override: Config) -> Config
 Merge two configs. Non-zero-value fields in override take precedence over base. Profile merging is per-profile: if override defines profile "default", its non-zero fields override the base "default" profile's fields.
 
-### GetProfile(cfg *Config, name string) (*core.AgentProfile, error)
+### GetProfile(cfg: Config, name: string) -> AgentProfile or error
 Look up a named profile. Returns an error if the profile doesn't exist. Falls back to "default" if name is empty.
 
-### ValidateConfig(cfg *Config) []core.SchemaViolation
+### ValidateConfig(cfg: Config) -> list of SchemaViolation
 Validate the config against its schema. Checks:
 - `version` is present and is a supported version.
 - `profiles` map is present and contains a `"default"` entry.
@@ -115,6 +111,6 @@ Returns an empty slice if valid.
 
 - Config is loaded once at CLI startup and threaded through as a dependency.
 - CLI flags create an override Config that is merged on top of the file config.
-- The config file is YAML. Use `gopkg.in/yaml.v3` for parsing.
-- Duration fields should serialize as human-readable strings ("5m", "1s") not nanoseconds.
+- The config file is YAML. Use the project's declared YAML library for parsing.
+- Duration fields should serialize as human-readable strings ("5m", "1s") not raw numeric values.
 - Config validation runs on every load. Parse errors and schema violations are returned as errors, preventing the build from proceeding with invalid configuration.

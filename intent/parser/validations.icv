@@ -2,70 +2,44 @@
 target: parser
 version: 1
 validations:
-  - name: parser-package-exists
-    type: file_check
-    path: src/parser/parser.go
-    contains:
-      - "package parser"
+  - name: parser-module-exists
+    type: folder_check
+    path: src/parser
 
-  - name: frontmatter-parsing
-    type: file_check
-    path: src/parser/frontmatter.go
-    contains:
-      - "package parser"
-      - "---"
-
-  - name: intent-parser-exists
-    type: command_check
-    command: grep -c "func.*ParseIntentFile" src/parser/*.go
-    exit_code: 0
-
-  - name: validation-parser-exists
-    type: command_check
-    command: grep -c "func.*ParseValidationFile" src/parser/*.go
-    exit_code: 0
-
-  - name: target-registry-exists
-    type: command_check
-    command: grep -c "type TargetRegistry struct" src/parser/*.go
-    exit_code: 0
-
-  - name: validate-intent-schema-exists
-    type: command_check
-    command: grep -c "func ValidateIntentSchema" src/parser/*.go
-    exit_code: 0
-
-  - name: validate-project-intent-exists
-    type: command_check
-    command: grep -c "func ValidateProjectIntent" src/parser/*.go
-    exit_code: 0
-
-  - name: validate-validation-schema-exists
-    type: command_check
-    command: grep -c "func ValidateValidationSchema" src/parser/*.go
-    exit_code: 0
-
-  - name: validate-all-specs-exists
-    type: command_check
-    command: grep -c "func ValidateAllSpecs" src/parser/*.go
-    exit_code: 0
-
-  - name: parser-tests-pass
-    type: command_check
-    command: go test ./src/parser/...
-    exit_code: 0
-
-  - name: parser-handles-missing-frontmatter
+  - name: parser-functions-defined
     type: llm_judge
     rubric: |
-      Check the parser test files for test cases that verify:
+      Verify the parser module provides:
+      1. ParseIntentFile - parses .ic files, extracts YAML frontmatter and markdown body
+      2. ParseValidationFile - parses .icv files, extracts validations list
+      3. TargetRegistry - discovers all features in intent/ directory
+         - LoadTargets, GetTarget, GetAllTargets, GetProjectIntent methods
+    severity: error
+    context_files: ["src/parser/**"]
+
+  - name: schema-validation-functions
+    type: llm_judge
+    rubric: |
+      Verify the parser module provides schema validation functions:
+      1. ValidateIntentSchema - validates Intent against .ic schema rules
+      2. ValidateProjectIntent - validates project.ic with stricter rules (no depends_on)
+      3. ValidateValidationSchema - validates ValidationFile against .icv schema rules
+      4. ValidateAllSpecs - walks intent/ directory, validates all spec files, returns aggregate violations
+      All functions return a list of SchemaViolation (not a single error).
+    severity: error
+    context_files: ["src/parser/**"]
+
+  - name: parser-error-handling
+    type: llm_judge
+    rubric: |
+      Check the parser tests verify:
       1. Files with no frontmatter (no --- delimiters) produce a clear error
       2. Files with missing required fields produce errors naming the missing field
       3. Files with invalid YAML produce errors with file path context
       4. Files with empty markdown body are accepted
       5. Validation files with unknown type values produce errors
     severity: error
-    context_files: ["src/parser/*_test.go"]
+    context_files: ["src/parser/**"]
 
   - name: schema-validation-tests
     type: llm_judge
@@ -76,22 +50,26 @@ validations:
       3. ValidateValidationSchema catches missing target, invalid type, duplicate names
       4. ValidateAllSpecs walks intent/ and aggregates violations
       5. Cross-file validation catches name/directory mismatches
-      6. Functions return []core.SchemaViolation (not just error)
     severity: error
-    context_files: ["src/parser/*_test.go"]
+    context_files: ["src/parser/**"]
 
-  - name: parser-imports-only-core
+  - name: parser-dependency-isolation
     type: llm_judge
     rubric: |
-      Verify that the parser package only imports from:
-      - Standard library packages
-      - github.com/pboueri/intentc/src/core
-      - Third-party YAML libraries (gopkg.in/yaml.v3 or similar)
-      It must NOT import from other intentc packages (agent, builder, etc.)
+      Verify the parser module only depends on:
+      - Standard library modules
+      - The core module
+      - A YAML parsing library
+      It must NOT depend on other intentc modules (agent, builder, etc.)
     severity: error
-    context_files: ["src/parser/*.go"]
+    context_files: ["src/parser/**"]
+
+  - name: parser-tests-pass
+    type: command_check
+    command: cd src && uv run pytest parser/ -v
+    exit_code: 0
 ---
 
 # Parser Validations
 
-These validations ensure the parser correctly handles YAML frontmatter extraction, schema validation, and target discovery. The schema validation functions (ValidateIntentSchema, ValidateProjectIntent, ValidateValidationSchema, ValidateAllSpecs) are critical for catching malformed spec files before builds proceed. Error messages are particularly important - a user with a malformed spec file should get clear, actionable feedback.
+These validations ensure the parser correctly handles YAML frontmatter extraction, schema validation, and target discovery. The schema validation functions are critical for catching malformed spec files before builds proceed. Error messages are particularly important - a user with a malformed spec file should get clear, actionable feedback.

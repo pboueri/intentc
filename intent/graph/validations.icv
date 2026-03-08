@@ -2,31 +2,19 @@
 target: graph
 version: 1
 validations:
-  - name: graph-package-exists
-    type: file_check
-    path: src/graph/dag.go
-    contains:
-      - "package graph"
+  - name: graph-module-exists
+    type: folder_check
+    path: src/graph
 
-  - name: dag-type-defined
-    type: command_check
-    command: grep -c "type DAG struct" src/graph/dag.go
-    exit_code: 0
-
-  - name: topological-sort-exists
-    type: command_check
-    command: grep -c "func.*TopologicalSort" src/graph/dag.go
-    exit_code: 0
-
-  - name: cycle-detection-exists
-    type: command_check
-    command: grep -c "func.*DetectCycles" src/graph/dag.go
-    exit_code: 0
-
-  - name: graph-tests-pass
-    type: command_check
-    command: go test ./src/graph/...
-    exit_code: 0
+  - name: graph-structure-defined
+    type: llm_judge
+    rubric: |
+      Verify the graph module defines:
+      1. A DAG type with nodes (indexed by name) and roots (nodes with no dependencies)
+      2. A Node type with Name, Target, Dependencies, and Dependents
+      3. Functions: NewDAG, AddTarget, Resolve, DetectCycles, TopologicalSort, GetAffected, GetDependencyChain, Visualize
+    severity: error
+    context_files: ["src/graph/**"]
 
   - name: graph-test-coverage
     type: llm_judge
@@ -42,7 +30,12 @@ validations:
       8. TopologicalSort produces valid ordering (every node appears after its dependencies)
       9. GetAffected returns correct transitive dependents
     severity: error
-    context_files: ["src/graph/*_test.go"]
+    context_files: ["src/graph/**"]
+
+  - name: graph-tests-pass
+    type: command_check
+    command: cd src && uv run pytest graph/ -v
+    exit_code: 0
 ---
 
 # Graph Validations

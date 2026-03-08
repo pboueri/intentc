@@ -2,52 +2,21 @@
 target: validation
 version: 1
 validations:
-  - name: validation-package-exists
-    type: file_check
-    path: src/validation/runner.go
-    contains:
-      - "package validation"
+  - name: validation-module-exists
+    type: folder_check
+    path: src/validation
 
-  - name: validator-interface-defined
-    type: command_check
-    command: grep -c "type Validator interface" src/validation/*.go
-    exit_code: 0
-
-  - name: registry-defined
-    type: command_check
-    command: grep -c "type Registry struct" src/validation/*.go
-    exit_code: 0
-
-  - name: file-check-validator
-    type: file_check
-    path: src/validation/file_check.go
-    contains:
-      - "package validation"
-      - "FileCheck"
-
-  - name: command-check-validator
-    type: file_check
-    path: src/validation/command_check.go
-    contains:
-      - "package validation"
-      - "CommandCheck"
-
-  - name: llm-judge-validator
-    type: file_check
-    path: src/validation/llm_judge.go
-    contains:
-      - "package validation"
-      - "LLMJudge"
-
-  - name: runner-defined
-    type: command_check
-    command: grep -c "type Runner struct" src/validation/runner.go
-    exit_code: 0
-
-  - name: validation-tests-pass
-    type: command_check
-    command: go test ./src/validation/...
-    exit_code: 0
+  - name: validation-structure-defined
+    type: llm_judge
+    rubric: |
+      Verify the validation module defines:
+      1. A Validator interface/protocol with methods: Validate, Type
+      2. A Registry type that maps ValidationType to Validator implementations
+      3. Built-in validators: FileCheck, FolderCheck, CommandCheck, LLMJudge
+      4. A Runner type that orchestrates validation execution
+      5. A RunReport type with: Target, Total, Passed, Failed, Warnings, Results, Errors
+    severity: error
+    context_files: ["src/validation/**"]
 
   - name: deterministic-validators-tested
     type: llm_judge
@@ -59,30 +28,35 @@ validations:
       4. Each validator is tested with a real temporary directory containing real files
       5. The Runner correctly aggregates results and sorts deterministic before LLM checks
     severity: error
-    context_files: ["src/validation/*_test.go"]
+    context_files: ["src/validation/**"]
 
   - name: llm-judge-uses-agent
     type: llm_judge
     rubric: |
       Verify that the LLMJudge validator:
       1. Accepts an Agent in its constructor (dependency injection, not global)
-      2. Calls agent.Validate() with the rubric
+      2. Calls agent.Validate with the rubric
       3. Handles the "warning" severity correctly (doesn't fail the build)
       4. Resolves context_files globs and reads matching files
     severity: error
-    context_files: ["src/validation/llm_judge.go"]
+    context_files: ["src/validation/**"]
 
   - name: runner-resolves-judge-profile
     type: llm_judge
     rubric: |
       Verify that the validation Runner supports judge profiles:
-      1. Runner struct holds a config reference for profile resolution
+      1. Runner holds a config reference for profile resolution
       2. When a ValidationFile has JudgeProfile set, Runner creates a separate agent for that file's llm_judge validations
       3. When JudgeProfile is empty, Runner uses the default agent
       4. Profile resolution errors (unknown profile name) produce clear errors
       5. Different ValidationFiles on the same target can use different judge profiles
     severity: error
-    context_files: ["src/validation/runner.go"]
+    context_files: ["src/validation/**"]
+
+  - name: validation-tests-pass
+    type: command_check
+    command: cd src && uv run pytest validation/ -v
+    exit_code: 0
 ---
 
 # Validation Validations

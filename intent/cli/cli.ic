@@ -7,15 +7,11 @@ tags: [interface]
 
 # Command-Line Interface
 
-The CLI is the user-facing entry point for intentc. It is built with Cobra and provides subcommands for all intentc operations. The CLI is responsible for wiring up dependencies (loading config, creating agent, initializing state) and delegating to the appropriate packages.
-
-## Package
-
-`github.com/pboueri/intentc/src/cmd`
+The CLI is the user-facing entry point for intentc. It uses a CLI framework (see project implementation notes) and provides subcommands for all intentc operations. The CLI is responsible for wiring up dependencies (loading config, creating agent, initializing state) and delegating to the appropriate packages.
 
 ## Entry Point
 
-`main.go` at the repository root. It calls `cmd.Execute()` which runs the Cobra root command.
+The main entry point at the repository root calls the CLI framework's root command execution.
 
 ## Root Command
 
@@ -35,7 +31,7 @@ Global flags:
 - `--model <id>` - Override model identifier.
 - `--log-level <level>` - Override log level.
 
-The PersistentPreRun hook loads config, validates it against its schema, applies CLI overrides, and initializes logging.
+A pre-run hook (before any command execution) loads config, validates it against its schema, applies CLI overrides, and initializes logging.
 
 ## Commands
 
@@ -177,20 +173,19 @@ List all configured agent profiles with their provider, model, timeout, and tool
 
 ## Dependency Wiring
 
-Each command that needs runtime dependencies follows this pattern:
+Each command that needs runtime dependencies follows this pattern (pseudocode):
 
-```go
-func runBuild(cmd *cobra.Command, args []string) error {
-    projectRoot, _ := os.Getwd()
-    cfg, _ := loadConfigWithOverrides(projectRoot)
-    profile, _ := config.GetProfile(cfg, profileName)
-    agnt, _ := agent.CreateFromProfile(profile)
-    stateMgr := state.NewStateManager(projectRoot)
-    gitMgr := git.NewGitManager()
+```
+function runBuild(args):
+    projectRoot = getCurrentWorkingDirectory()
+    cfg = loadConfigWithOverrides(projectRoot)
+    profile = config.GetProfile(cfg, profileName)
+    agent = agent.CreateFromProfile(profile)
+    stateMgr = state.NewStateManager(projectRoot)
+    gitMgr = git.NewGitManager()
     gitMgr.Initialize(ctx, projectRoot)
-    bldr := builder.NewBuilder(projectRoot, agnt, stateMgr, gitMgr, cfg)
-    return bldr.Build(ctx, opts)
-}
+    builder = builder.NewBuilder(projectRoot, agent, stateMgr, gitMgr, cfg)
+    return builder.Build(ctx, opts)
 ```
 
 Dependencies are created at the command level and passed down. No globals, no singletons.

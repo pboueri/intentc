@@ -8,10 +8,6 @@ tags: [foundation]
 
 The core package defines the foundational data types used throughout intentc. It is a leaf dependency with no imports from other intentc packages. All other packages depend on core.
 
-## Package
-
-`github.com/pboueri/intentc/src/core`
-
 ## Types
 
 ### Intent
@@ -20,9 +16,9 @@ Represents a parsed .ic file. Contains both the structured frontmatter metadata 
 
 Fields:
 - `Name` (string) - Feature identifier, matches directory name.
-- `Version` (int) - Schema version from frontmatter.
-- `DependsOn` ([]string) - List of feature dependency names.
-- `Tags` ([]string) - Categorization tags.
+- `Version` (integer) - Schema version from frontmatter.
+- `DependsOn` (list of strings) - List of feature dependency names.
+- `Tags` (list of strings) - Categorization tags.
 - `Profile` (string) - Optional named agent profile for building this target. Empty means use the default or CLI-specified profile.
 - `Content` (string) - The full raw markdown body (everything after the frontmatter).
 - `FilePath` (string) - Absolute path to the source .ic file.
@@ -34,8 +30,8 @@ Represents a single validation definition extracted from an .icv file's frontmat
 Fields:
 - `Name` (string) - Unique validation identifier.
 - `Type` (ValidationType) - The validation type enum.
-- `Hidden` (bool) - Whether the agent should see this validation.
-- `Parameters` (map[string]any) - Type-specific parameters (path, command, rubric, etc.).
+- `Hidden` (boolean) - Whether the agent should see this validation.
+- `Parameters` (map of string to any) - Type-specific parameters (path, command, rubric, etc.).
 
 ### ValidationType
 
@@ -51,9 +47,9 @@ Represents a parsed .icv file containing multiple validations.
 
 Fields:
 - `Target` (string) - Feature name this validates.
-- `Version` (int) - Schema version.
+- `Version` (integer) - Schema version.
 - `JudgeProfile` (string) - Optional named agent profile for llm_judge validations in this file. When set, the LLM judge uses a different agent than the one that built the target, preventing self-grading bias. Empty means use the build agent.
-- `Validations` ([]Validation) - The validation definitions.
+- `Validations` (list of Validation) - The validation definitions.
 - `FilePath` (string) - Absolute path to the source .icv file.
 
 ### Target
@@ -62,9 +58,9 @@ Represents a buildable unit: an intent paired with its validations and resolved 
 
 Fields:
 - `Name` (string) - Feature identifier.
-- `Intent` (*Intent) - The parsed intent.
-- `Validations` ([]*ValidationFile) - Associated validation files.
-- `Dependencies` ([]*Target) - Resolved dependency targets (pointers, not names).
+- `Intent` (Intent reference) - The parsed intent.
+- `Validations` (list of ValidationFile references) - Associated validation files.
+- `Dependencies` (list of Target references) - Resolved dependency targets (references, not names).
 - `Status` (TargetStatus) - Current build status.
 
 ### TargetStatus
@@ -83,10 +79,10 @@ Represents the outcome of a single target build.
 Fields:
 - `Target` (string) - Target name.
 - `GenerationID` (string) - Unique build identifier (e.g., `gen-1234567890`).
-- `Success` (bool) - Whether the build succeeded.
-- `Error` (string) - Error message if failed (not an error type - must be serializable).
-- `GeneratedAt` (time.Time) - When the build completed.
-- `Files` ([]string) - List of files created or modified.
+- `Success` (boolean) - Whether the build succeeded.
+- `Error` (string) - Error message if failed (a string, not an error object — must be serializable).
+- `GeneratedAt` (timestamp) - When the build completed.
+- `Files` (list of strings) - List of files created or modified.
 - `OutputDir` (string) - The output directory used for this build.
 
 ### ValidationResult
@@ -95,9 +91,9 @@ Represents the outcome of running a single validation.
 
 Fields:
 - `ValidationName` (string) - Which validation was run.
-- `Passed` (bool) - Whether it passed.
+- `Passed` (boolean) - Whether it passed.
 - `Message` (string) - Human-readable result message.
-- `Details` ([]string) - Additional detail lines.
+- `Details` (list of strings) - Additional detail lines.
 - `Severity` (string) - "error" or "warning".
 
 ### AgentProfile
@@ -108,18 +104,18 @@ Fields:
 - `Name` (string) - Profile identifier (e.g., "default", "fast", "review").
 - `Provider` (string) - Agent provider name: "claude", "codex", "cli". Determines which agent implementation is used.
 - `Command` (string) - For CLI provider: the shell command to invoke. Ignored for built-in providers.
-- `CLIArgs` ([]string) - Additional CLI arguments passed to the agent command.
-- `Timeout` (time.Duration) - Per-invocation timeout. Default 5m.
-- `Retries` (int) - Number of retries on failure. Default 3.
-- `RateLimit` (time.Duration) - Delay between retries. Default 1s.
+- `CLIArgs` (list of strings) - Additional CLI arguments passed to the agent command.
+- `Timeout` (duration) - Per-invocation timeout. Default 5m.
+- `Retries` (integer) - Number of retries on failure. Default 3.
+- `RateLimit` (duration) - Delay between retries. Default 1s.
 - `PromptTemplates` (PromptTemplates) - Customizable prompt templates for build and validate operations.
-- `Tools` ([]ToolConfig) - Tool configurations available to the agent during generation.
-- `Skills` ([]string) - Named skills the agent should use (e.g., "code-generation", "refactoring", "testing").
+- `Tools` (list of ToolConfig) - Tool configurations available to the agent during generation.
+- `Skills` (list of strings) - Named skills the agent should use (e.g., "code-generation", "refactoring", "testing").
 - `ModelID` (string) - Optional model identifier override (e.g., "claude-sonnet-4-6", "gpt-4o"). Provider-specific.
 
 ### PromptTemplates
 
-Customizable Go text/template strings for constructing agent prompts. Each field is optional; if empty, the default template for that operation is used.
+Customizable template strings for constructing agent prompts. Uses the project's declared template engine. Each field is optional; if empty, the default template for that operation is used.
 
 Fields:
 - `Build` (string) - Template for the build prompt. Available variables: `.ProjectIntent`, `.Intent`, `.Validations`, `.OutputDir`, `.DependencyNames`, `.GenerationID`.
@@ -132,8 +128,8 @@ Represents a tool available to the agent during generation.
 
 Fields:
 - `Name` (string) - Tool identifier (e.g., "bash", "file_read", "web_search").
-- `Enabled` (bool) - Whether the tool is available. Default true.
-- `Config` (map[string]any) - Tool-specific configuration parameters.
+- `Enabled` (boolean) - Whether the tool is available. Default true.
+- `Config` (map of string to any) - Tool-specific configuration parameters.
 
 ### SchemaVersion
 
@@ -156,6 +152,5 @@ Fields:
 
 - Core must have zero dependencies on other intentc packages.
 - All types should be serializable to JSON and YAML (for state persistence).
-- Error fields in serializable types must be strings, not error interfaces.
-- Types should use value semantics where practical, pointer semantics for large structs passed across package boundaries (Target, Intent).
+- Error fields in serializable types must be strings, not error/exception objects.
 - AgentProfile must be fully serializable to YAML for config file storage.

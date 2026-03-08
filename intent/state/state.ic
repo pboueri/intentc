@@ -9,22 +9,17 @@ tags: [foundation]
 
 The state package tracks build state: which targets have been built, their generation IDs, and build results. State is persisted to disk in `.intentc/state/` as JSON files and is designed to work alongside git.
 
-## Package
-
-`github.com/pboueri/intentc/src/state`
-
 ## Interface
 
 ```
-type StateManager interface {
-    Initialize(ctx context.Context) error
-    SaveBuildResult(ctx context.Context, result *core.BuildResult) error
-    GetLatestBuildResult(ctx context.Context, targetName string) (*core.BuildResult, error)
-    GetBuildResult(ctx context.Context, targetName string, generationID string) (*core.BuildResult, error)
-    GetTargetStatus(ctx context.Context, targetName string) (core.TargetStatus, error)
-    UpdateTargetStatus(ctx context.Context, targetName string, status core.TargetStatus) error
-    ListBuildResults(ctx context.Context, targetName string) ([]*core.BuildResult, error)
-}
+interface StateManager:
+    Initialize(ctx) -> error
+    SaveBuildResult(ctx, result: BuildResult) -> error
+    GetLatestBuildResult(ctx, targetName: string) -> BuildResult or error
+    GetBuildResult(ctx, targetName: string, generationID: string) -> BuildResult or error
+    GetTargetStatus(ctx, targetName: string) -> TargetStatus or error
+    UpdateTargetStatus(ctx, targetName: string, status: TargetStatus) -> error
+    ListBuildResults(ctx, targetName: string) -> list of BuildResult or error
 ```
 
 ## State Directory Structure
@@ -90,11 +85,11 @@ Fields:
 Behavior:
 - Deserialization must tolerate unknown fields (forward compatibility with future schema versions).
 - If `version` is higher than the current supported version, log a warning and parse known fields.
-- Timestamps must use RFC3339 format for portability (Go's `time.RFC3339`).
+- Timestamps must use RFC3339 format for portability.
 
 ## Implementation
 
-`NewStateManager(projectRoot string) StateManager`
+`NewStateManager(projectRoot: string) -> StateManager`
 
 ### Initialize
 Create the `.intentc/state/` directory structure if it doesn't exist.

@@ -9,17 +9,12 @@ tags: [core]
 
 The validation package executes validations defined in .icv files against generated code. It supports both deterministic checks (file existence, command execution) and LLM-as-judge evaluations. Validations are the mechanism by which intentc constrains and verifies AI-generated output.
 
-## Package
-
-`github.com/pboueri/intentc/src/validation`
-
 ## Validator Interface
 
 ```
-type Validator interface {
-    Validate(ctx context.Context, v *core.Validation, outputDir string) (*core.ValidationResult, error)
-    Type() core.ValidationType
-}
+interface Validator:
+    Validate(ctx, v: Validation, outputDir: string) -> ValidationResult or error
+    Type() -> ValidationType
 ```
 
 Each validation type has a concrete implementation of this interface.
@@ -27,15 +22,14 @@ Each validation type has a concrete implementation of this interface.
 ## Validator Registry
 
 ```
-type Registry struct {
-    validators map[core.ValidationType]Validator
-}
+Registry:
+    validators: map of ValidationType to Validator
 ```
 
 Methods:
-- `NewRegistry() *Registry` - Create a registry with all built-in validators registered.
-- `Register(v Validator)` - Add a validator (for future extensibility).
-- `Get(t core.ValidationType) (Validator, error)` - Look up by type.
+- `NewRegistry() -> Registry` - Create a registry with all built-in validators registered.
+- `Register(v: Validator)` - Add a validator (for future extensibility).
+- `Get(t: ValidationType) -> Validator or error` - Look up by type.
 
 The registry is populated at construction time with all built-in validators. No lazy initialization.
 
@@ -47,7 +41,7 @@ Checks that a file exists and optionally contains specified strings.
 
 Parameters (from `v.Parameters`):
 - `path` (string, required) - File path relative to outputDir.
-- `contains` ([]string, optional) - Strings the file must contain.
+- `contains` (list of strings, optional) - Strings the file must contain.
 
 Logic:
 1. Resolve path relative to outputDir.
@@ -60,7 +54,7 @@ Checks that a directory exists and optionally contains expected children.
 
 Parameters:
 - `path` (string, required) - Directory path relative to outputDir.
-- `children` ([]string, optional) - Expected child names.
+- `children` (list of strings, optional) - Expected child names.
 
 Logic:
 1. Resolve path relative to outputDir.
@@ -74,9 +68,9 @@ Runs a shell command and checks exit code and output.
 Parameters:
 - `command` (string, required) - Shell command to execute.
 - `working_dir` (string, optional) - Working directory. Defaults to outputDir.
-- `exit_code` (int, optional) - Expected exit code. Default 0.
-- `stdout_contains` ([]string, optional) - Strings stdout must contain.
-- `stderr_contains` ([]string, optional) - Strings stderr must contain.
+- `exit_code` (integer, optional) - Expected exit code. Default 0.
+- `stdout_contains` (list of strings, optional) - Strings stdout must contain.
+- `stderr_contains` (list of strings, optional) - Strings stderr must contain.
 
 Logic:
 1. Execute command via `sh -c` in the working directory.
@@ -94,7 +88,7 @@ Uses an AI agent to evaluate generated code against a natural language rubric.
 Parameters:
 - `rubric` (string, required) - The evaluation rubric.
 - `severity` (string, optional) - "error" (default) or "warning".
-- `context_files` ([]string, optional) - Glob patterns for files to include as context.
+- `context_files` (list of strings, optional) - Glob patterns for files to include as context.
 
 Logic:
 1. Resolve context_files globs relative to outputDir. Read matching files.
@@ -102,27 +96,26 @@ Logic:
 3. Parse the agent's response as pass/fail.
 4. If severity is "warning", a failure produces a warning result (Passed=true but with a warning message) instead of a hard failure.
 
-The LLMJudge validator requires an Agent instance. It is constructed with one: `NewLLMJudgeValidator(agent agent.Agent) *LLMJudgeValidator`.
+The LLMJudge validator requires an Agent instance. It is constructed with one: `NewLLMJudgeValidator(agent: Agent) -> LLMJudgeValidator`.
 
 ## Validation Runner
 
 ```
-type Runner struct {
-    registry     *Registry
-    defaultAgent agent.Agent   // Default agent for LLM judge validations
-    config       *config.Config // For resolving judge profiles
-}
+Runner:
+    registry: Registry
+    defaultAgent: Agent         # Default agent for LLM judge validations
+    config: Config              # For resolving judge profiles
 ```
 
-Constructor: `NewRunner(registry *Registry, defaultAgent agent.Agent, cfg *config.Config) *Runner`
+Constructor: `NewRunner(registry: Registry, defaultAgent: Agent, cfg: Config) -> Runner`
 
 ### RunTargetValidations
 
-`(r *Runner) RunTargetValidations(ctx context.Context, target *core.Target, outputDir string, opts RunOptions) (*RunReport, error)`
+`Runner.RunTargetValidations(ctx, target: Target, outputDir: string, opts: RunOptions) -> RunReport or error`
 
 Options:
-- `Parallel` (bool) - Run validations concurrently. Default false.
-- `Timeout` (time.Duration) - Per-validation timeout.
+- `Parallel` (boolean) - Run validations concurrently. Default false.
+- `Timeout` (duration) - Per-validation timeout.
 
 Logic:
 1. Collect all validations from all ValidationFiles on the target.
@@ -137,13 +130,13 @@ Logic:
 
 Fields:
 - `Target` (string) - Target name.
-- `Total` (int) - Total validation count.
-- `Passed` (int) - Pass count.
-- `Failed` (int) - Fail count.
-- `Warnings` (int) - Warning count.
-- `Results` (map[string]*core.ValidationResult) - Results indexed by validation name.
-- `Errors` (map[string]error) - Errors indexed by validation name.
+- `Total` (integer) - Total validation count.
+- `Passed` (integer) - Pass count.
+- `Failed` (integer) - Fail count.
+- `Warnings` (integer) - Warning count.
+- `Results` (map of string to ValidationResult) - Results indexed by validation name.
+- `Errors` (map of string to error) - Errors indexed by validation name.
 
-### GenerateReport(report *RunReport) string
+### GenerateReport(report: RunReport) -> string
 
 Produce a human-readable text report with pass/fail indicators, messages, and a summary line.

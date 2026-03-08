@@ -16,9 +16,44 @@ intentc transforms loosely-specified intents into precise, working code using AI
 - **Agents are pluggable.** intentc ships with Claude Code support but any CLI tool that accepts prompts can be used as a code generation agent. The agent interface is minimal and explicit.
 - **Build outputs are independent.** Each build run targets an output directory specified at invocation time. Builds can be independent or layer on top of existing output.
 
-## Language and Tooling
+## Implementation
 
-intentc is written in Go. It uses Cobra for CLI, standard library for most operations, and YAML for structured configuration. It ships as a single binary with no runtime dependencies beyond git and a configured agent.
+Implementation choices are project-level decisions that inform code generation but are separate from feature intent. They are declared here in `project.ic` and apply globally. Intent files should describe *what* and *why* in language-neutral terms; the implementation section tells the agent *with what*.
+
+### Implementation Notes
+
+```yaml
+language: Python 3.11+
+packaging: uv
+cli_framework: typer
+data_modeling: pydantic
+yaml_library: PyYAML
+template_engine: Python str.format or Jinja2
+serialization: JSON (stdlib json), YAML (PyYAML)
+infrastructure:
+  version_control: git (required, shells out to git CLI)
+  database: none
+  runtime_dependencies: [git, Python 3.11+, uv, configured AI agent]
+```
+
+### How Implementation Notes Work
+
+- The `language` field determines generated file extensions, package structure, idioms, and test commands.
+- The `cli_framework` field tells the agent which CLI library to use for argument parsing and subcommand routing.
+- Library fields (`yaml_library`, `template_engine`, `serialization`) specify concrete dependencies for generated code.
+- `infrastructure` captures external system requirements.
+- Feature intent files should be written without assuming a specific language where possible. When a feature intent must reference implementation-specific details, it should do so in a clearly marked section.
+- A project-level schema validation checks that feature intents do not contradict implementation notes (e.g., referencing a library not listed here, or assuming a different language's idioms without acknowledgment).
+
+### Implementation Conflict Validation
+
+The `check` command includes a project-level validation that scans all feature intents for potential conflicts with the implementation notes:
+
+1. **Language mismatch** - Feature intents that reference language-specific constructs (e.g., "Go struct embedding", "Java interface") inconsistent with the declared language.
+2. **Unlisted dependencies** - Feature intents that reference libraries or frameworks not declared in implementation notes. This is a warning, not an error — intents may suggest new dependencies.
+3. **Infrastructure assumptions** - Feature intents that assume infrastructure not declared (e.g., referencing a database when none is configured).
+
+Conflict validation produces warnings, not errors, since intents are intentionally looser than implementation. The warnings help authors tighten their specs.
 
 ## Spec File Formats
 
@@ -123,8 +158,8 @@ profiles:
     model_id: string         # Optional model identifier (e.g., "claude-sonnet-4-6").
     cli_args: string[]       # Additional CLI arguments passed to the agent.
     prompt_templates:        # Optional prompt template overrides.
-      build: string          # Go text/template for build prompts.
-      validate: string       # Go text/template for validation prompts.
+      build: string          # Template string for build prompts (uses implementation's template engine).
+      validate: string       # Template string for validation prompts.
       system: string         # System prompt for all invocations.
     tools:                   # Tool configurations for the agent.
       - name: string
@@ -164,6 +199,7 @@ Schema validation checks:
 4. **Value constraints** - Enum fields contain valid values (e.g., validation `type` is one of the known types).
 5. **Cross-file consistency** - Feature directory names match their .ic `name` field; .icv `target` fields match their parent directory.
 6. **Project.ic constraints** - project.ic must not have `depends_on`.
+7. **Implementation conflict detection** - Feature intents are scanned for potential conflicts with the project-level implementation notes (see Implementation section). Produces warnings for language mismatches, unlisted dependencies, and infrastructure assumption conflicts.
 
 If schema validation fails, the operation is aborted with a clear error listing all violations. The `intentc check` command runs schema validation explicitly and reports results.
 

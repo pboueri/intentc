@@ -9,23 +9,19 @@ tags: [orchestration]
 
 The builder package is the heart of intentc. It orchestrates the full build pipeline: loading specs, resolving dependencies into a DAG, determining what needs building, invoking the agent for each target, and tracking results. It is the highest-level package below the CLI.
 
-## Package
-
-`github.com/pboueri/intentc/src/builder`
-
 ## Builder Struct
 
 ```
 Builder:
     projectRoot: string
-    agent: agent.Agent
-    stateManager: state.StateManager
-    parser: *parser.TargetRegistry
-    gitManager: git.GitManager
-    config: *config.Config
+    agent: Agent
+    stateManager: StateManager
+    parser: TargetRegistry
+    gitManager: GitManager
+    config: Config
 ```
 
-Constructor: `NewBuilder(projectRoot string, agent agent.Agent, state state.StateManager, git git.GitManager, cfg *config.Config) *Builder`
+Constructor: `NewBuilder(projectRoot: string, agent: Agent, state: StateManager, git: GitManager, cfg: Config) -> Builder`
 
 ## Build Options
 
@@ -40,7 +36,7 @@ BuildOptions:
 
 ## Build Pipeline
 
-`(b *Builder) Build(ctx context.Context, opts BuildOptions) error`
+`Builder.Build(ctx, opts: BuildOptions) -> error`
 
 ### Step 0: Schema Validation
 Run `parser.ValidateAllSpecs(projectRoot)` to validate all spec files against their schemas. Also run `config.ValidateConfig(cfg)` to validate the config file. If any violations with severity "error" are found, abort the build immediately and report all violations. This ensures no build ever proceeds with malformed or inconsistent spec files.
@@ -88,7 +84,7 @@ For each target in topological order:
 
 ## Clean
 
-`(b *Builder) Clean(ctx context.Context, target string, outputDir string) error`
+`Builder.Clean(ctx, target: string, outputDir: string) -> error`
 
 Remove generated files for a target (or all targets if target is empty):
 1. Get the latest build result for the target.
@@ -98,7 +94,7 @@ Remove generated files for a target (or all targets if target is empty):
 
 ## Validation
 
-`(b *Builder) Validate(ctx context.Context, target string, outputDir string, opts validation.RunOptions) (*validation.RunReport, error)`
+`Builder.Validate(ctx, target: string, outputDir: string, opts: RunOptions) -> RunReport or error`
 
 Run validations for a target:
 1. Run schema validation on all spec files (Step 0). Abort if violations found.

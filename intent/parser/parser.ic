@@ -9,10 +9,6 @@ tags: [foundation]
 
 The parser package is responsible for reading .ic and .icv files from disk, parsing YAML frontmatter, and producing core types (Intent, ValidationFile). It also provides a TargetRegistry that discovers and caches all targets in a project.
 
-## Package
-
-`github.com/pboueri/intentc/src/parser`
-
 ## YAML Frontmatter Parsing
 
 Both .ic and .icv files use YAML frontmatter delimited by `---` lines. The parser must:
@@ -29,7 +25,7 @@ Edge cases:
 
 ## Intent Parsing
 
-`ParseIntentFile(filePath string) (*core.Intent, error)`
+`ParseIntentFile(filePath: string) -> Intent or error`
 
 1. Read the file.
 2. Extract YAML frontmatter and markdown body.
@@ -40,7 +36,7 @@ Edge cases:
 
 ## Validation Parsing
 
-`ParseValidationFile(filePath string) (*core.ValidationFile, error)`
+`ParseValidationFile(filePath: string) -> ValidationFile or error`
 
 1. Read the file.
 2. Extract YAML frontmatter.
@@ -54,13 +50,13 @@ Edge cases:
 
 The TargetRegistry discovers all features in the `intent/` directory and provides lookup.
 
-`NewTargetRegistry(projectRoot string) *TargetRegistry`
+`NewTargetRegistry(projectRoot: string) -> TargetRegistry`
 
 Methods:
-- `LoadTargets() error` - Walk the intent directory, parse all .ic and .icv files, build target map.
-- `GetTarget(name string) (*core.Target, bool)` - Lookup by name.
-- `GetAllTargets() []*core.Target` - Return all discovered targets.
-- `GetProjectIntent() (*core.Intent, error)` - Return the project-level intent (intent/project.ic).
+- `LoadTargets() -> error` - Walk the intent directory, parse all .ic and .icv files, build target map.
+- `GetTarget(name: string) -> Target or not found` - Lookup by name.
+- `GetAllTargets() -> list of Target` - Return all discovered targets.
+- `GetProjectIntent() -> Intent or error` - Return the project-level intent (intent/project.ic).
 
 Discovery rules:
 - Each subdirectory of `intent/` that contains a .ic file is a feature.
@@ -73,7 +69,7 @@ Discovery rules:
 
 The parser is responsible for validating all spec files against their schemas. Schema validation goes beyond parse-ability - it ensures structural correctness, type safety, and cross-file consistency.
 
-### ValidateIntentSchema(intent *core.Intent) []core.SchemaViolation
+### ValidateIntentSchema(intent: Intent) -> list of SchemaViolation
 
 Validate a parsed intent against the .ic schema:
 - `name` is required and non-empty.
@@ -84,14 +80,14 @@ Validate a parsed intent against the .ic schema:
 - `profile`, if present, must be a non-empty string.
 - No unknown fields in the frontmatter (warn on unexpected keys).
 
-### ValidateProjectIntent(intent *core.Intent) []core.SchemaViolation
+### ValidateProjectIntent(intent: Intent) -> list of SchemaViolation
 
 Validate the project-level intent (`intent/project.ic`) against its stricter schema:
 - All checks from ValidateIntentSchema.
 - `depends_on` must be absent or empty (project intent has no dependencies).
 - `name` should match the project identifier convention.
 
-### ValidateValidationSchema(vf *core.ValidationFile) []core.SchemaViolation
+### ValidateValidationSchema(vf: ValidationFile) -> list of SchemaViolation
 
 Validate a parsed validation file against the .icv schema:
 - `target` is required and non-empty.
@@ -105,7 +101,7 @@ Validate a parsed validation file against the .icv schema:
   - `severity`, if present, must be "error" or "warning".
   - No duplicate validation names within the file.
 
-### ValidateAllSpecs(projectRoot string) ([]core.SchemaViolation, error)
+### ValidateAllSpecs(projectRoot: string) -> list of SchemaViolation or error
 
 Walk the entire `intent/` directory and validate all spec files. Returns the aggregate list of violations. This is called by the `check` command and as the first step of every build/validate operation.
 

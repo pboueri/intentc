@@ -2,33 +2,38 @@
 target: state
 version: 1
 validations:
-  - name: state-package-exists
-    type: file_check
-    path: src/state/state.go
-    contains:
-      - "package state"
+  - name: state-module-exists
+    type: folder_check
+    path: src/state
 
   - name: state-interface-defined
-    type: command_check
-    command: grep -c "type StateManager interface" src/state/*.go
-    exit_code: 0
+    type: llm_judge
+    rubric: |
+      Verify the state module defines a StateManager interface/protocol with methods:
+      1. Initialize
+      2. SaveBuildResult
+      3. GetLatestBuildResult
+      4. GetBuildResult
+      5. GetTargetStatus
+      6. UpdateTargetStatus
+      7. ListBuildResults
+    severity: error
+    context_files: ["src/state/**"]
 
-  - name: state-tests-pass
-    type: command_check
-    command: go test ./src/state/...
-    exit_code: 0
+  - name: state-file-schemas
+    type: llm_judge
+    rubric: |
+      Verify the state module uses versioned JSON schemas:
+      1. status.json includes a "version" field and writes it on every save
+      2. Build result JSON includes a "version" field
+      3. Deserialization tolerates unknown fields (ignores extras for forward compatibility)
+      4. Missing status.json returns all-pending defaults (not an error)
+      5. Timestamps use RFC3339 format
+      6. Unknown schema versions produce a warning (not an error) since state is ephemeral
+    severity: error
+    context_files: ["src/state/**"]
 
-  - name: state-uses-json
-    type: command_check
-    command: grep -c "encoding/json" src/state/*.go
-    exit_code: 0
-
-  - name: status-json-versioned
-    type: command_check
-    command: grep -c '"version"' src/state/*.go
-    exit_code: 0
-
-  - name: state-tests-use-temp-dirs
+  - name: state-tests-coverage
     type: llm_judge
     rubric: |
       Verify that state tests:
@@ -38,20 +43,12 @@ validations:
       4. Test UpdateTargetStatus persists across calls
       5. Test ListBuildResults returns results in order
     severity: error
-    context_files: ["src/state/*_test.go"]
+    context_files: ["src/state/**"]
 
-  - name: state-file-schemas
-    type: llm_judge
-    rubric: |
-      Verify the state package uses versioned JSON schemas:
-      1. status.json includes a "version" field and writes it on every save
-      2. Build result JSON includes a "version" field
-      3. Deserialization tolerates unknown fields (uses json decoder or struct tags that ignore extras)
-      4. Missing status.json returns all-pending defaults (not an error)
-      5. Timestamps use RFC3339 format
-      6. Unknown schema versions produce a warning (not an error) since state is ephemeral
-    severity: error
-    context_files: ["src/state/*.go"]
+  - name: state-tests-pass
+    type: command_check
+    command: cd src && uv run pytest state/ -v
+    exit_code: 0
 ---
 
 # State Validations
