@@ -34,6 +34,12 @@ infrastructure:
   version_control: git (required, shells out to git CLI)
   database: none
   runtime_dependencies: [git, Python 3.11+, uv, configured AI agent]
+editor:
+  web_framework: FastAPI
+  websocket: FastAPI WebSockets (built-in)
+  frontend: vanilla HTML/JS/CSS (no build step, served as static files)
+  file_watching: watchfiles (or watchdog)
+  dag_rendering: client-side JavaScript (canvas or SVG)
 ```
 
 ### How Implementation Notes Work
@@ -217,6 +223,7 @@ If schema validation fails, the operation is aborted with a clear error listing 
 - `intentc list intents` - List all intent files
 - `intentc list validations` - List validation types
 - `intentc list profiles` - List configured agent profiles
+- `intentc edit <project_path>` - Interactive browser-based project editor
 
 ## Deferred Features (Anticipated in Design)
 

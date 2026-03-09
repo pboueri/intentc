@@ -24,6 +24,8 @@ coverage.*
 .vscode/
 *.swp
 
+.DS_Store
+
 # Build directories created by intentc
 build-*
 **/.intentc/state

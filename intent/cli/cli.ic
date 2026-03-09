@@ -72,10 +72,17 @@ Logic:
 `intentc clean [target] [flags]`
 
 Flags:
-- `-o, --output <dir>` - Output directory to clean.
+- `-o, --output <dir>` - Output directory to clean. Required (or uses config default).
+- `--all` - Clean all targets (reset entire output directory state).
 - `--dry-run` - Show what would be cleaned.
 
-Logic: Delegate to `builder.Clean()`.
+Logic:
+1. Resolve the output directory (from `--output` or config default).
+2. If `--all`: call `stateManager.ResetAll()` to reset all target state for that output directory. Optionally remove generated files.
+3. If a specific target is given: call `stateManager.ResetTarget(target)` to reset that target's status to pending and remove its build results. Also delete the target's generated files from the output directory.
+4. If no target and no `--all`: print usage hint.
+
+This replaces any need for manual JSON manipulation of state files. Users should never need to edit `.intentc/state/` directly.
 
 ### validate
 
@@ -100,12 +107,14 @@ Logic:
 
 Flags:
 - `--tree` - Show dependency tree visualization.
+- `-o, --output <dir>` - Output directory to show status for. Uses config default if omitted.
 
 Logic:
 1. Load all targets via TargetRegistry.
-2. Load status from state manager.
-3. Print each target with its status.
-4. If `--tree`, build DAG and print `dag.Visualize()`.
+2. Resolve output directory, set it on the state manager.
+3. Load status from state manager (scoped to that output directory).
+4. Print each target with its status.
+5. If `--tree`, build DAG and print `dag.Visualize()`.
 
 ### commit
 

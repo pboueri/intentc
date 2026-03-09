@@ -55,6 +55,7 @@ Create a DAG from all targets. Resolve dependencies. Detect cycles. If a cycle i
 - Use `opts.OutputDir` if specified.
 - Otherwise use `config.Build.DefaultOutput`.
 - Create the directory if it doesn't exist.
+- **Set the output directory on the state manager** via `stateManager.SetOutputDir(outputDir)`. This scopes all subsequent status reads/writes to this output directory.
 
 ### Step 5: Dry Run Check
 If `opts.DryRun`, print the build set and return.
@@ -84,13 +85,15 @@ For each target in topological order:
 
 ## Clean
 
-`Builder.Clean(ctx, target: string, outputDir: string) -> error`
+`Builder.Clean(ctx, target: string, outputDir: string, all: bool) -> error`
 
-Remove generated files for a target (or all targets if target is empty):
-1. Get the latest build result for the target.
-2. Delete the files listed in the result.
-3. Update status to `pending`.
-4. If cleaning a target, also mark all its dependents as `outdated`.
+Set the output directory on the state manager first.
+
+- If `all` is true: call `stateManager.ResetAll()` to reset all state for this output directory.
+- If a specific `target` is given:
+  1. Call `stateManager.ResetTarget(target)` to reset status to `pending` and remove build results.
+  2. Delete the target's generated files from the output directory.
+  3. Mark all dependents of the target as `outdated` in the state.
 
 ## Validation
 
