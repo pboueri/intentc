@@ -1,0 +1,545 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg: #1e1e2e;
+    --surface: #282840;
+    --border: #3a3a5c;
+    --text: #cdd6f4;
+    --text-dim: #6c7086;
+    --accent: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --yellow: #f9e2af;
+    --blue: #89b4fa;
+    --pane-header-bg: #313152;
+}
+
+body {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+#project-name {
+    font-size: 12px;
+    color: var(--text-dim);
+    flex: 1;
+}
+
+.header-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    background: var(--pane-header-bg);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.header-btn:hover { border-color: var(--accent); color: var(--text); }
+
+#workspace {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.pane {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 120px;
+}
+
+#dag-pane { width: 280px; flex-shrink: 0; }
+#editor-pane { flex: 1; min-width: 200px; }
+#chat-pane { width: 320px; flex-shrink: 0; }
+
+.resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: var(--border);
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+    background: var(--accent);
+}
+
+.pane-header {
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--pane-header-bg);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+}
+
+/* DAG Pane */
+#dag-container {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+}
+
+#dag-svg {
+    display: block;
+}
+
+.dag-node {
+    cursor: pointer;
+}
+
+.dag-node rect {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: 1.5;
+    rx: 4;
+    ry: 4;
+    transition: stroke 0.15s;
+}
+
+.dag-node:hover rect {
+    stroke: var(--accent);
+}
+
+.dag-node.selected rect {
+    stroke: var(--accent);
+    stroke-width: 2;
+}
+
+.dag-node text {
+    fill: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.dag-node .status-dot {
+    r: 4;
+}
+
+.status-pending { fill: var(--text-dim); }
+.status-building { fill: var(--yellow); }
+.status-built { fill: var(--green); }
+.status-failed { fill: var(--red); }
+.status-outdated { fill: var(--yellow); }
+
+.dag-edge {
+    stroke: var(--border);
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead);
+}
+
+/* Action Bar */
+.action-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.action-btn {
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text);
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.action-btn:hover:not(:disabled) { border-color: var(--accent); }
+.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.action-build { border-color: var(--green); color: var(--green); }
+.action-build:hover:not(:disabled) { background: var(--green); color: var(--bg); }
+
+.action-clean { border-color: var(--yellow); color: var(--yellow); }
+.action-clean:hover:not(:disabled) { background: var(--yellow); color: var(--bg); }
+
+.action-validate { border-color: var(--blue); color: var(--blue); }
+.action-validate:hover:not(:disabled) { background: var(--blue); color: var(--bg); }
+
+/* Build Log */
+.build-log-entry {
+    padding: 6px 8px;
+    border-left: 2px solid var(--border);
+    margin-bottom: 6px;
+    font-size: 11px;
+}
+
+.build-log-header {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.build-log-id {
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
+.build-log-status {
+    font-weight: 600;
+}
+
+.build-log-status.status-built { color: var(--green); }
+.build-log-status.status-failed { color: var(--red); }
+
+.build-log-time {
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: auto;
+}
+
+.build-log-error {
+    color: var(--red);
+    font-size: 11px;
+    margin-top: 4px;
+    white-space: pre-wrap;
+}
+
+.build-log-files {
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+.build-log-files summary {
+    cursor: pointer;
+}
+
+.build-log-files ul {
+    margin: 4px 0 0 16px;
+    list-style: none;
+}
+
+.build-log-files li {
+    padding: 1px 0;
+}
+
+/* Editor Pane */
+#editor-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.placeholder {
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    padding-top: 40px;
+}
+
+.editor-section {
+    margin-bottom: 16px;
+}
+
+.editor-section-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.editor-section textarea {
+    width: 100%;
+    min-height: 200px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    resize: vertical;
+    tab-size: 2;
+}
+
+.editor-section textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.save-btn {
+    padding: 2px 8px;
+    font-size: 10px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+}
+
+.save-btn:hover { opacity: 0.85; }
+.save-btn.saved { background: var(--green); }
+
+.status-bar {
+    display: flex;
+    gap: 12px;
+    padding: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 8px;
+}
+
+.status-bar .label { color: var(--text-dim); }
+.status-bar .value { color: var(--text); }
+.status-bar .value.status-built { color: var(--green); }
+.status-bar .value.status-failed { color: var(--red); }
+.status-bar .value.status-pending { color: var(--text-dim); }
+.status-bar .value.status-building { color: var(--yellow); }
+.status-bar .value.status-outdated { color: var(--yellow); }
+
+/* Chat Pane */
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.chat-msg {
+    margin-bottom: 12px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.chat-msg.user {
+    background: var(--pane-header-bg);
+    border-left: 2px solid var(--accent);
+}
+
+.chat-msg.agent {
+    background: var(--bg);
+    border-left: 2px solid var(--green);
+}
+
+.chat-msg.error {
+    background: var(--bg);
+    border-left: 2px solid var(--red);
+    color: var(--red);
+}
+
+#chat-input-area {
+    padding: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+#chat-input {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    resize: none;
+}
+
+#chat-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+#chat-send {
+    align-self: flex-end;
+    padding: 4px 16px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#chat-send:hover { opacity: 0.85; }
+#chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Output Panel */
+#output-panel {
+    height: 160px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+}
+
+#output-panel .pane-header {
+    display: flex;
+    align-items: center;
+}
+
+#output-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background: var(--bg);
+    color: var(--text-dim);
+}
+
+.output-line {
+    margin: 0;
+}
+
+.output-line .ts {
+    color: var(--text-dim);
+    margin-right: 8px;
+    opacity: 0.6;
+}
+
+/* Horizontal Resize Handle (for output panel) */
+.resize-handle-h {
+    height: 4px;
+    cursor: row-resize;
+    background: var(--border);
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.resize-handle-h:hover,
+.resize-handle-h.active {
+    background: var(--accent);
+}
+
+/* Settings Modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal {
+    width: 600px;
+    max-width: 90vw;
+    max-height: 80vh;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+    flex: 1;
+    padding: 12px 16px;
+    overflow: auto;
+}
+
+.modal-body textarea {
+    width: 100%;
+    min-height: 300px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    resize: vertical;
+    tab-size: 2;
+}
+
+.modal-body textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+}

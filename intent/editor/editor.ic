@@ -22,9 +22,15 @@ Flags:
 
 The command resolves the project path, verifies it is an initialized intentc project (`.intentc/` exists), starts the server, and prints the URL (or opens the browser). The command blocks until the server is stopped (Ctrl+C).
 
+## Header
+
+The header bar displays the project name and a Settings button. Clicking Settings opens a modal overlay for editing the project configuration (`.intentc/config.yaml`). The modal displays the raw YAML in an editable text area with Save and Cancel buttons. Changes are written to disk via a PUT endpoint.
+
 ## Layout
 
-The editor presents a three-pane interface:
+The editor uses a two-row layout: the top row contains the three-pane interface, the bottom row contains a build output panel. A horizontal resize handle between them allows vertical adjustment.
+
+Panes in the top row are separated by draggable resize handles that allow the user to adjust pane widths horizontally. The DAG pane scrolls both horizontally and vertically to accommodate large graphs.
 
 ### Left Pane — DAG Visualization
 
@@ -36,15 +42,19 @@ Each node displays:
 
 Clicking a node selects it, populating the center pane with its details.
 
-### Center Pane — Spec and Validation Editor
+### Center Pane — Spec, Actions, and Build Log
 
 When a node is selected, the center pane shows:
 
-1. **Spec section** — The full content of the target's `.ic` file (frontmatter + markdown body) in an editable text area. Changes save directly to the file on disk.
+1. **Action bar** — Build, Clean, and Validate buttons for the selected target. Each triggers the corresponding operation on the server. While an operation is running, the button shows a loading state and is disabled. Results are reflected in the status section and build log.
 
-2. **Validation section** — The full content of each `.icv` file associated with the target, each in its own editable text area. Changes save directly to the file on disk.
+2. **Spec section** — The full content of the target's `.ic` file (frontmatter + markdown body) in an editable text area. Changes save directly to the file on disk.
 
-3. **Status section** — The target's build status and latest build result (timestamp, generation ID, success/failure, error message if any).
+3. **Validation section** — The full content of each `.icv` file associated with the target, each in its own editable text area. Changes save directly to the file on disk.
+
+4. **Status section** — The target's build status and latest build result (timestamp, generation ID, success/failure, error message if any).
+
+5. **Build log** — A scrollable list of all past build results for the selected target, ordered newest first. Each entry shows the generation ID, timestamp, success/failure, and error message if any. Clicking an entry expands it to show the list of generated files.
 
 ### Right Pane — Agent Chat
 
@@ -55,6 +65,16 @@ Features:
 - Streaming response display (agent output appears incrementally)
 - Conversation history within the session
 - Agent is invoked using the project's configured agent profile
+
+### Bottom Panel — Build Output
+
+A horizontally-spanning panel below the three panes that streams live output from build and validate operations. When a build or validation is triggered:
+- Builder log messages stream into the panel in real time via WebSocket
+- Each line is prefixed with a timestamp
+- The panel auto-scrolls to the bottom as new lines arrive
+- A clear button resets the panel content
+
+The panel is collapsible and resizable vertically.
 
 ## Data Flow
 
@@ -85,10 +105,16 @@ The server exposes:
 - Update a target's validation file content
 - Retrieve the project-level intent
 - Retrieve build status for all targets
+- Retrieve build history for a specific target (list of all past build results)
+- Trigger a build for a specific target (runs in a background task, pushes status via WebSocket)
+- Trigger a clean for a specific target
+- Trigger validation for a specific target (runs in a background task, pushes results via WebSocket)
+- Retrieve project configuration (raw YAML content of `.intentc/config.yaml`)
+- Update project configuration (write raw YAML content to `.intentc/config.yaml`)
 
 ### Streaming Endpoints
 
-- A channel for pushing file-change notifications to the browser
+- A channel for pushing file-change notifications and build status updates to the browser
 - A bidirectional channel for agent interaction: the client sends prompts (with the selected target name), the server invokes the agent with the target's context and streams the response back
 
 ## Agent Integration

@@ -33,7 +33,11 @@ validations:
       4. PUT endpoint that writes updated validation content to the target's .icv file on disk
       5. GET endpoint returning the project-level intent (project.ic)
       6. GET endpoint returning build status for all targets
-      7. All reads come from files on disk (no in-memory cache as source of truth)
+      7. GET endpoint returning build history for a specific target (list of past build results)
+      8. POST endpoint to trigger a build for a specific target (runs in background, pushes status via WebSocket)
+      9. POST endpoint to trigger a clean for a specific target
+      10. POST endpoint to trigger validation for a specific target (runs in background, pushes results via WebSocket)
+      11. All reads come from files on disk (no in-memory cache as source of truth)
     severity: error
     context_files: ["src/editor/**"]
 
@@ -84,6 +88,32 @@ validations:
     severity: error
     context_files: ["src/editor/static/**"]
 
+  - name: editor-build-lifecycle
+    type: llm_judge
+    rubric: |
+      Verify the frontend build lifecycle management:
+      1. Action bar with Build, Clean, and Validate buttons visible when a target is selected
+      2. Clicking Build triggers a POST to the server and shows loading state
+      3. Clicking Clean triggers a POST and refreshes status
+      4. Clicking Validate triggers a POST and shows loading state
+      5. Build log section displays past build results for the selected target
+      6. Each build log entry shows generation ID, timestamp, success/failure, and error
+      7. Status updates in real time when builds complete (via WebSocket)
+    severity: error
+    context_files: ["src/editor/static/**"]
+
+  - name: editor-build-history-api
+    type: llm_judge
+    rubric: |
+      Verify the build history and lifecycle API:
+      1. GET endpoint returns list of past build results for a target
+      2. POST build endpoint triggers a build in a background task
+      3. POST clean endpoint resets target state
+      4. POST validate endpoint triggers validation in a background task
+      5. Build/validate status updates are pushed to clients via WebSocket
+    severity: error
+    context_files: ["src/editor/**"]
+
   - name: editor-agent-chat
     type: llm_judge
     rubric: |
@@ -115,8 +145,36 @@ validations:
       2. All three panes are visible simultaneously
       3. Layout is responsive or uses reasonable fixed proportions
       4. Panes are visually distinct with clear boundaries
+      5. Panes are horizontally resizable via draggable handles between them
+      6. DAG pane scrolls both horizontally and vertically
     severity: error
     context_files: ["src/editor/static/**"]
+
+  - name: editor-build-output-panel
+    type: llm_judge
+    rubric: |
+      Verify the build output panel:
+      1. A bottom panel spans the full width below the three panes
+      2. Build/validate log messages stream into the panel in real time via WebSocket
+      3. Lines are timestamped
+      4. Panel auto-scrolls as new output arrives
+      5. A clear button resets panel content
+      6. Panel is vertically resizable via a drag handle
+    severity: error
+    context_files: ["src/editor/static/**"]
+
+  - name: editor-settings-modal
+    type: llm_judge
+    rubric: |
+      Verify the project settings feature:
+      1. A Settings button in the header opens a modal overlay
+      2. The modal displays the raw config.yaml content in an editable text area
+      3. Save button writes changes to disk via PUT /api/config
+      4. Cancel button closes the modal without saving
+      5. GET /api/config returns the raw config.yaml content
+      6. PUT /api/config writes new content to .intentc/config.yaml
+    severity: error
+    context_files: ["src/editor/**"]
 
   - name: editor-tests-pass
     type: command_check

@@ -773,3 +773,32 @@ def list_profiles() -> None:
         typer.echo(
             f"{name:<15} {profile.provider:<10} {model:<25} {timeout_str:<10} {tool_count:<8} {skill_count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# edit
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def edit(
+    project_path: str = typer.Argument(".", help="Path to intentc project"),
+    port: int = typer.Option(8080, "--port", help="Port for the editor server"),
+) -> None:
+    """Launch the interactive browser-based project editor."""
+    resolved = os.path.abspath(project_path)
+
+    if not os.path.isdir(os.path.join(resolved, ".intentc")):
+        typer.echo(
+            f"Error: '{resolved}' is not an initialized intentc project "
+            "(missing .intentc/ directory). Run 'intentc init' first.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"Starting intentc editor at http://127.0.0.1:{port}")
+    typer.echo("Press Ctrl+C to stop.")
+
+    from editor.server import start_server
+
+    start_server(resolved, port)

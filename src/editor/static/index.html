@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>intentc editor</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <header>
+        <h1>intentc editor</h1>
+        <span id="project-name"></span>
+        <button id="settings-btn" class="header-btn">Settings</button>
+    </header>
+    <div id="workspace">
+        <main>
+            <div id="dag-pane" class="pane">
+                <div class="pane-header">DAG</div>
+                <div id="dag-container">
+                    <svg id="dag-svg"></svg>
+                </div>
+            </div>
+            <div class="resize-handle" data-left="dag-pane" data-right="editor-pane"></div>
+            <div id="editor-pane" class="pane">
+                <div class="pane-header">Editor <span id="editor-target-name"></span></div>
+                <div id="editor-content">
+                    <p class="placeholder">Select a node from the DAG</p>
+                </div>
+            </div>
+            <div class="resize-handle" data-left="editor-pane" data-right="chat-pane"></div>
+            <div id="chat-pane" class="pane">
+                <div class="pane-header">Agent Chat</div>
+                <div id="chat-messages"></div>
+                <div id="chat-input-area">
+                    <textarea id="chat-input" placeholder="Ask the agent..." rows="3"></textarea>
+                    <button id="chat-send">Send</button>
+                </div>
+            </div>
+        </main>
+        <div id="output-resize-handle" class="resize-handle-h"></div>
+        <div id="output-panel">
+            <div class="pane-header">
+                Build Output
+                <button id="output-clear" class="header-btn" style="font-size:10px;padding:1px 6px;margin-left:auto;">Clear</button>
+            </div>
+            <div id="output-log"></div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-overlay" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <span>Project Settings</span>
+                <button id="settings-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="settings-editor" spellcheck="false"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="settings-cancel" class="action-btn">Cancel</button>
+                <button id="settings-save" class="action-btn action-build">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
