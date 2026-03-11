@@ -28,6 +28,24 @@ class TargetStatus(str, Enum):
     OUTDATED = "outdated"
 
 
+class BuildPhase(str, Enum):
+    """Phase of a build step."""
+
+    RESOLVE_DEPS = "resolve_deps"
+    READ_PLAN = "read_plan"
+    BUILD = "build"
+    POST_BUILD = "post_build"
+    VALIDATE = "validate"
+
+
+class StepStatus(str, Enum):
+    """Status of a build step."""
+
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class Intent(BaseModel):
     """Represents a parsed .ic file."""
 
@@ -65,6 +83,23 @@ class ValidationFile(BaseModel):
     model_config = {"extra": "ignore"}
 
 
+class BuildStep(BaseModel):
+    """Represents a single step within a build process."""
+
+    phase: BuildPhase = BuildPhase.BUILD
+    status: StepStatus = StepStatus.SUCCESS
+    started_at: datetime = Field(default_factory=datetime.now)
+    ended_at: datetime = Field(default_factory=datetime.now)
+    duration_seconds: float = 0.0
+    summary: str = ""
+    error: str = ""
+    files_changed: int = 0
+    diff_stat: str = ""
+    diff: str = ""
+
+    model_config = {"extra": "ignore"}
+
+
 class ToolConfig(BaseModel):
     """Represents a tool available to the agent."""
 
@@ -79,10 +114,10 @@ class PromptTemplates(BaseModel):
     """Customizable template strings for agent prompts."""
 
     build: str = ""
-    validate: str = ""
+    validate_prompt: str = Field(default="", alias="validate")
     system: str = ""
 
-    model_config = {"extra": "ignore"}
+    model_config = {"extra": "ignore", "populate_by_name": True}
 
 
 def _parse_duration(value: Any) -> timedelta:
@@ -173,12 +208,12 @@ class AgentProfile(BaseModel):
         d["rate_limit"] = _serialize_duration(self.rate_limit)
         if self.model_id:
             d["model_id"] = self.model_id
-        if self.prompt_templates.build or self.prompt_templates.validate or self.prompt_templates.system:
+        if self.prompt_templates.build or self.prompt_templates.validate_prompt or self.prompt_templates.system:
             pt: dict[str, str] = {}
             if self.prompt_templates.build:
                 pt["build"] = self.prompt_templates.build
-            if self.prompt_templates.validate:
-                pt["validate"] = self.prompt_templates.validate
+            if self.prompt_templates.validate_prompt:
+                pt["validate"] = self.prompt_templates.validate_prompt
             if self.prompt_templates.system:
                 pt["system"] = self.prompt_templates.system
             d["prompt_templates"] = pt
@@ -213,6 +248,8 @@ class BuildResult(BaseModel):
     error: str = ""
     generated_at: datetime = Field(default_factory=datetime.now)
     files: list[str] = Field(default_factory=list)
+    steps: list["BuildStep"] = Field(default_factory=list)
+    total_duration_seconds: float = 0.0
     output_dir: str = ""
 
     model_config = {"extra": "ignore"}

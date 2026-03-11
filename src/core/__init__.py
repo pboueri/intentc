@@ -2,10 +2,13 @@
 
 from core.types import (
     AgentProfile,
+    BuildPhase,
     BuildResult,
+    BuildStep,
     Intent,
     PromptTemplates,
     SchemaViolation,
+    StepStatus,
     Target,
     TargetStatus,
     ToolConfig,
@@ -22,6 +25,9 @@ __all__ = [
     "ValidationFile",
     "Target",
     "TargetStatus",
+    "BuildPhase",
+    "StepStatus",
+    "BuildStep",
     "BuildResult",
     "ValidationResult",
     "AgentProfile",

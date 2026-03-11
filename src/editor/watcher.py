@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 _connections: list[WebSocket] = []
 _watch_task: asyncio.Task | None = None
 _intent_dir: str = ""
+_event_loop: asyncio.AbstractEventLoop | None = None
 
 async def start_watcher(intent_dir: str) -> None:
     """Start watching the intent directory for file changes."""
-    global _watch_task, _intent_dir
+    global _watch_task, _intent_dir, _event_loop
     _intent_dir = intent_dir
+    _event_loop = asyncio.get_running_loop()
     _watch_task = asyncio.create_task(_watch_loop(intent_dir))
     logger.info("File watcher started for %s", intent_dir)
 

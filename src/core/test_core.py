@@ -7,10 +7,13 @@ import yaml
 
 from core.types import (
     AgentProfile,
+    BuildPhase,
     BuildResult,
+    BuildStep,
     Intent,
     PromptTemplates,
     SchemaViolation,
+    StepStatus,
     Target,
     TargetStatus,
     ToolConfig,
@@ -221,9 +224,118 @@ def test_all_types_json_serializable():
         AgentProfile(name="default"),
         PromptTemplates(),
         ToolConfig(name="bash"),
+        BuildStep(),
     ]
     for obj in types_to_test:
         json_str = obj.model_dump_json()
         assert json_str  # non-empty
         data = json.loads(json_str)
         assert isinstance(data, dict)
+
+
+class TestBuildPhase:
+    """Tests for BuildPhase enum."""
+
+    def test_enum_values(self):
+        assert BuildPhase.RESOLVE_DEPS == "resolve_deps"
+        assert BuildPhase.READ_PLAN == "read_plan"
+        assert BuildPhase.BUILD == "build"
+        assert BuildPhase.POST_BUILD == "post_build"
+        assert BuildPhase.VALIDATE == "validate"
+
+    def test_enum_count(self):
+        assert len(BuildPhase) == 5
+
+
+class TestStepStatus:
+    """Tests for StepStatus enum."""
+
+    def test_enum_values(self):
+        assert StepStatus.SUCCESS == "success"
+        assert StepStatus.FAILED == "failed"
+        assert StepStatus.SKIPPED == "skipped"
+
+
+class TestBuildStep:
+    """Tests for BuildStep model."""
+
+    def test_defaults(self):
+        step = BuildStep()
+        assert step.phase == BuildPhase.BUILD
+        assert step.status == StepStatus.SUCCESS
+        assert isinstance(step.started_at, datetime)
+        assert isinstance(step.ended_at, datetime)
+        assert step.duration_seconds == 0.0
+        assert step.summary == ""
+        assert step.error == ""
+        assert step.files_changed == 0
+        assert step.diff_stat == ""
+        assert step.diff == ""
+
+    def test_serialization_roundtrip(self):
+        step = BuildStep(
+            phase=BuildPhase.RESOLVE_DEPS,
+            status=StepStatus.FAILED,
+            duration_seconds=1.5,
+            summary="Resolved deps",
+            error="timeout",
+            files_changed=3,
+            diff_stat="3 files changed",
+            diff="--- a/foo\n+++ b/foo",
+        )
+        json_str = step.model_dump_json()
+        data = json.loads(json_str)
+        assert data["phase"] == "resolve_deps"
+        assert data["status"] == "failed"
+        assert data["duration_seconds"] == 1.5
+        assert data["summary"] == "Resolved deps"
+        assert data["error"] == "timeout"
+        assert data["files_changed"] == 3
+
+        # Roundtrip: parse back from JSON
+        step2 = BuildStep.model_validate_json(json_str)
+        assert step2.phase == BuildPhase.RESOLVE_DEPS
+        assert step2.status == StepStatus.FAILED
+        assert step2.duration_seconds == 1.5
+
+
+class TestBuildResultSteps:
+    """Tests for BuildResult with steps and total_duration_seconds."""
+
+    def test_default_empty_steps(self):
+        br = BuildResult(target="test", generation_id="gen-1")
+        assert br.steps == []
+        assert br.total_duration_seconds == 0.0
+
+    def test_with_steps_populated(self):
+        steps = [
+            BuildStep(phase=BuildPhase.RESOLVE_DEPS, duration_seconds=0.5),
+            BuildStep(phase=BuildPhase.BUILD, duration_seconds=2.0, files_changed=5),
+        ]
+        br = BuildResult(
+            target="auth",
+            generation_id="gen-2",
+            success=True,
+            steps=steps,
+            total_duration_seconds=2.5,
+        )
+        assert len(br.steps) == 2
+        assert br.steps[0].phase == BuildPhase.RESOLVE_DEPS
+        assert br.steps[1].files_changed == 5
+        assert br.total_duration_seconds == 2.5
+
+    def test_backward_compatible_deserialization(self):
+        """Old JSON without steps/total_duration_seconds still parses."""
+        old_json = json.dumps({
+            "target": "auth",
+            "generation_id": "gen-old",
+            "success": True,
+            "error": "",
+            "generated_at": "2024-01-01T00:00:00",
+            "files": ["src/auth.py"],
+            "output_dir": "/tmp/out",
+        })
+        br = BuildResult.model_validate_json(old_json)
+        assert br.target == "auth"
+        assert br.steps == []
+        assert br.total_duration_seconds == 0.0
