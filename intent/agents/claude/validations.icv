@@ -1,0 +1,11 @@
+---
+target: agents/claude
+version: 1
+validations:
+  - name: claude-agent-defined
+    type: llm_judge
+    rubric: |
+      Verify ClaudeAgent extends CLIAgent through composition and configures Claude-specific CLI args.
+    severity: error
+    context_files: ["src/agent/**"]
+---

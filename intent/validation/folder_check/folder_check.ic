@@ -1,0 +1,14 @@
+---
+name: validation/folder_check
+version: 1
+depends_on: [validation/types]
+tags: [validation]
+---
+
+# FolderCheck Validator
+
+Checks that a directory exists and optionally contains expected children.
+
+Parameters:
+- `path` (string, required) - Directory path relative to outputDir.
+- `children` (list of strings, optional) - Expected child names.

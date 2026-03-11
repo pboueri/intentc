@@ -1,0 +1,14 @@
+---
+name: validation/file_check
+version: 1
+depends_on: [validation/types]
+tags: [validation]
+---
+
+# FileCheck Validator
+
+Checks that a file exists and optionally contains specified strings.
+
+Parameters:
+- `path` (string, required) - File path relative to outputDir.
+- `contains` (list of strings, optional) - Strings the file must contain.

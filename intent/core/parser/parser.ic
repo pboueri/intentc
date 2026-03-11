@@ -1,0 +1,124 @@
+---
+name: core/parser
+version: 1
+depends_on: [core/intent, core/target, core/schema]
+tags: [foundation]
+---
+
+# Spec File Parser
+
+The parser package is responsible for reading .ic and .icv files from disk, parsing YAML frontmatter, and producing core types (Intent, ValidationFile). It also provides a TargetRegistry that discovers and caches all targets in a project.
+
+## YAML Frontmatter Parsing
+
+Both .ic and .icv files use YAML frontmatter delimited by `---` lines. The parser must:
+
+1. Split the file at the first two `---` lines to extract the YAML block and the markdown body.
+2. Unmarshal the YAML into the appropriate struct.
+3. Validate required fields are present.
+4. Return an error with file path and line number context if parsing fails.
+
+Edge cases:
+- Files with no frontmatter (no `---` at all) are an error.
+- Files with only frontmatter and no body are valid (empty body).
+- YAML parsing errors should include the source file path for debugging.
+
+## Intent Parsing
+
+`ParseIntentFile(filePath: string) -> Intent or error`
+
+1. Read the file.
+2. Extract YAML frontmatter and markdown body.
+3. Unmarshal frontmatter into Intent struct fields (name, version, depends_on, tags, profile).
+4. Set Content to the markdown body.
+5. Set FilePath to the absolute path of the source file.
+6. Validate: `name` and `version` are required. Return a clear error if missing.
+
+## Validation Parsing
+
+`ParseValidationFile(filePath: string) -> ValidationFile or error`
+
+1. Read the file.
+2. Extract YAML frontmatter.
+3. Unmarshal into ValidationFile struct, including the `validations` list and optional `judge_profile`.
+4. For each validation entry, validate that `name` and `type` are present.
+5. Validate that `type` is one of the known ValidationType values.
+6. Store type-specific fields in the Parameters map.
+7. Set FilePath to the absolute path.
+
+## Target Registry
+
+The TargetRegistry discovers all features in the `intent/` directory and provides lookup.
+
+`NewTargetRegistry(projectRoot: string) -> TargetRegistry`
+
+Methods:
+- `LoadTargets() -> error` - Walk the intent directory, parse all .ic and .icv files, build target map.
+- `GetTarget(name: string) -> Target or not found` - Lookup by name.
+- `GetAllTargets() -> list of Target` - Return all discovered targets.
+- `GetProjectIntent() -> Intent or error` - Return the project-level intent (intent/project.ic).
+
+Discovery rules:
+- Each subdirectory of `intent/` that contains a .ic file is a feature.
+- The feature name is the directory name.
+- The .ic file inside must have a `name` field matching the directory name.
+- All .icv files in the same directory are associated with that feature.
+- `intent/project.ic` is special: it's the project-level intent, not a feature.
+
+## Schema Validation
+
+The parser is responsible for validating all spec files against their schemas. Schema validation goes beyond parse-ability - it ensures structural correctness, type safety, and cross-file consistency.
+
+### ValidateIntentSchema(intent: Intent) -> list of SchemaViolation
+
+Validate a parsed intent against the .ic schema:
+- `name` is required and non-empty.
+- `version` is required and must be a positive integer.
+- `version` must be a supported schema version (currently only 1).
+- `depends_on` entries, if present, must be non-empty strings.
+- `tags` entries, if present, must be non-empty strings.
+- `profile`, if present, must be a non-empty string.
+- No unknown fields in the frontmatter (warn on unexpected keys).
+
+### ValidateProjectIntent(intent: Intent) -> list of SchemaViolation
+
+Validate the project-level intent (`intent/project.ic`) against its stricter schema:
+- All checks from ValidateIntentSchema.
+- `depends_on` must be absent or empty (project intent has no dependencies).
+- `name` should match the project identifier convention.
+
+### ValidateValidationSchema(vf: ValidationFile) -> list of SchemaViolation
+
+Validate a parsed validation file against the .icv schema:
+- `target` is required and non-empty.
+- `version` is required and must be a positive integer.
+- `judge_profile`, if present, must be a non-empty string.
+- `validations` list is required and non-empty.
+- Each validation entry:
+  - `name` is required and non-empty.
+  - `type` is required and must be a known ValidationType.
+  - Type-specific required fields are present (e.g., `path` for file_check, `command` for command_check, `rubric` for llm_judge).
+  - `severity`, if present, must be "error" or "warning".
+  - No duplicate validation names within the file.
+
+### ValidateAllSpecs(projectRoot: string) -> list of SchemaViolation or error
+
+Walk the entire `intent/` directory and validate all spec files. Returns the aggregate list of violations. This is called by the `check` command and as the first step of every build/validate operation.
+
+### Cross-File Validation
+
+Beyond individual file schemas, the parser validates consistency across files:
+- Each feature directory's .ic file has a `name` matching the directory name.
+- Each .icv file's `target` matches its parent directory name.
+- `depends_on` references in .ic files refer to existing feature directories.
+- No duplicate feature names across the project.
+
+Note: Profile name references (`profile` in .ic, `judge_profile` in .icv) are validated at runtime against `config.Profiles`, not at parse time. The parser only checks that the values are syntactically valid (non-empty strings if present). This keeps the parser independent of the config package.
+
+### Error Reporting
+
+Return clear, actionable error messages with file path, field path, and violation description:
+- `"parser: intent/auth/auth.ic: missing required field 'name' in frontmatter"`
+- `"parser: intent/auth/validations.icv: validation[0]: unknown type 'regex_check'"`
+- `"parser: intent/auth/auth.ic: name 'authentication' does not match directory name 'auth'"`
+- `"parser: intent/project.ic: project intent must not have 'depends_on'"`

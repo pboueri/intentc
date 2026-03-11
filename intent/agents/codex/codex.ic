@@ -1,0 +1,12 @@
+---
+name: agents/codex
+version: 1
+depends_on: [agents/base, agents/config]
+tags: [agents]
+---
+
+# Codex Agent
+
+Specialization for OpenAI Codex CLI. Extends CLIAgent through composition. Sets command to `codex`.
+
+Constructor: `NewCodexAgent(profile: AgentProfile) -> CodexAgent`

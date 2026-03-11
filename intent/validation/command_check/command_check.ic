@@ -1,0 +1,17 @@
+---
+name: validation/command_check
+version: 1
+depends_on: [validation/types]
+tags: [validation]
+---
+
+# CommandCheck Validator
+
+Runs a shell command and checks exit code and output.
+
+Parameters:
+- `command` (string, required) - Shell command to execute.
+- `working_dir` (string, optional) - Working directory.
+- `exit_code` (integer, optional) - Expected exit code. Default 0.
+- `stdout_contains` (list of strings, optional)
+- `stderr_contains` (list of strings, optional)

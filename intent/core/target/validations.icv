@@ -1,0 +1,11 @@
+---
+target: core/target
+version: 1
+validations:
+  - name: target-types-defined
+    type: llm_judge
+    rubric: |
+      Verify the core module defines Target and TargetStatus types with all specified fields.
+    severity: error
+    context_files: ["src/core/**"]
+---

@@ -1,0 +1,11 @@
+---
+target: core/schema
+version: 1
+validations:
+  - name: schema-types-defined
+    type: llm_judge
+    rubric: |
+      Verify the core module defines SchemaViolation type with all specified fields.
+    severity: error
+    context_files: ["src/core/**"]
+---

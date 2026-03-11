@@ -1,0 +1,56 @@
+---
+target: build/state
+version: 1
+validations:
+  - name: state-module-exists
+    type: folder_check
+    path: src/state
+
+  - name: state-interface-defined
+    type: llm_judge
+    rubric: |
+      Verify the state module defines a StateManager interface/protocol with methods:
+      1. Initialize
+      2. SaveBuildResult
+      3. GetLatestBuildResult
+      4. GetBuildResult
+      5. GetTargetStatus
+      6. UpdateTargetStatus
+      7. ListBuildResults
+    severity: error
+    context_files: ["src/state/**"]
+
+  - name: state-file-schemas
+    type: llm_judge
+    rubric: |
+      Verify the state module uses versioned JSON schemas:
+      1. status.json includes a "version" field and writes it on every save
+      2. Build result JSON includes a "version" field
+      3. Deserialization tolerates unknown fields (ignores extras for forward compatibility)
+      4. Missing status.json returns all-pending defaults (not an error)
+      5. Timestamps use RFC3339 format
+      6. Unknown schema versions produce a warning (not an error) since state is ephemeral
+    severity: error
+    context_files: ["src/state/**"]
+
+  - name: state-tests-coverage
+    type: llm_judge
+    rubric: |
+      Verify that state tests:
+      1. Create temporary directories (not using the project's .intentc/)
+      2. Test SaveBuildResult followed by GetLatestBuildResult roundtrip
+      3. Test GetTargetStatus returns "pending" for unknown targets
+      4. Test UpdateTargetStatus persists across calls
+      5. Test ListBuildResults returns results in order
+    severity: error
+    context_files: ["src/state/**"]
+
+  - name: state-tests-pass
+    type: command_check
+    command: cd src && uv run pytest state/ -v
+    exit_code: 0
+---
+
+# State Validations
+
+State management must be robust against missing files, concurrent access, and schema evolution. State files use versioned JSON schemas with forward-compatible parsing. Tests must use temporary directories to avoid polluting the project's own state.

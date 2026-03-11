@@ -1,0 +1,17 @@
+---
+name: validation/llm_judge
+version: 1
+depends_on: [validation/types, agents/base]
+tags: [validation]
+---
+
+# LLMJudge Validator
+
+Uses an AI agent to evaluate generated code against a natural language rubric.
+
+Parameters:
+- `rubric` (string, required)
+- `severity` (string, optional) - "error" or "warning".
+- `context_files` (list of strings, optional) - Glob patterns for context.
+
+Requires an Agent instance via constructor: `NewLLMJudgeValidator(agent: Agent)`.

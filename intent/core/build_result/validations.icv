@@ -1,0 +1,11 @@
+---
+target: core/build_result
+version: 1
+validations:
+  - name: build-result-types-defined
+    type: llm_judge
+    rubric: |
+      Verify the core module defines BuildResult and ValidationResult types with all specified fields.
+    severity: error
+    context_files: ["src/core/**"]
+---

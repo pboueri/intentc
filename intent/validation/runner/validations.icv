@@ -1,0 +1,16 @@
+---
+target: validation/runner
+version: 1
+validations:
+  - name: runner-tested
+    type: llm_judge
+    rubric: |
+      Verify Runner correctly aggregates results, sorts deterministic before LLM, and resolves judge profiles.
+    severity: error
+    context_files: ["src/validation/**"]
+
+  - name: validation-tests-pass
+    type: command_check
+    command: cd src && uv run pytest validation/ -v
+    exit_code: 0
+---

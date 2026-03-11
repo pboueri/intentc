@@ -1,0 +1,15 @@
+---
+target: validation/types
+version: 1
+validations:
+  - name: validation-module-exists
+    type: folder_check
+    path: src/validation
+
+  - name: validation-interfaces-defined
+    type: llm_judge
+    rubric: |
+      Verify the validation module defines a Validator interface/protocol and Registry type.
+    severity: error
+    context_files: ["src/validation/**"]
+---

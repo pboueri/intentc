@@ -1,0 +1,30 @@
+---
+name: validation/types
+version: 1
+depends_on: [core/intent]
+tags: [validation]
+---
+
+# Validation Types
+
+Defines the core validation interfaces and types used across the validation system.
+
+## Validator Interface
+
+```
+interface Validator:
+    Validate(ctx, v: Validation, outputDir: string) -> ValidationResult or error
+    Type() -> ValidationType
+```
+
+## Validator Registry
+
+```
+Registry:
+    validators: map of ValidationType to Validator
+```
+
+Methods:
+- `NewRegistry() -> Registry`
+- `Register(v: Validator)`
+- `Get(t: ValidationType) -> Validator or error`

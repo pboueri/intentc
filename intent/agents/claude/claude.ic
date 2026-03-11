@@ -1,0 +1,12 @@
+---
+name: agents/claude
+version: 1
+depends_on: [agents/base, agents/config]
+tags: [agents]
+---
+
+# Claude Agent
+
+Specialization for Claude Code. Extends CLIAgent through composition. Sets command to `claude`, adds `-p` and `--output-format text` flags, translates Tools into `--allowedTools`, ModelID into `--model`.
+
+Constructor: `NewClaudeAgent(profile: AgentProfile) -> ClaudeAgent`

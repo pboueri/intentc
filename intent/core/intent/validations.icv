@@ -1,0 +1,20 @@
+---
+target: core/intent
+version: 1
+validations:
+  - name: core-module-exists
+    type: folder_check
+    path: src/core
+
+  - name: intent-types-defined
+    type: llm_judge
+    rubric: |
+      Verify the core module defines Intent, Validation, ValidationType, and ValidationFile types with all specified fields.
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: core-tests-pass
+    type: command_check
+    command: cd src && uv run pytest core/ -v
+    exit_code: 0
+---

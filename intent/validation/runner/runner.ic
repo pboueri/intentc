@@ -1,0 +1,22 @@
+---
+name: validation/runner
+version: 1
+depends_on: [validation/types, agents/base]
+tags: [validation]
+---
+
+# Validation Runner
+
+Orchestrates validation execution for a target.
+
+## Runner
+
+Constructor: `NewRunner(registry: Registry, defaultAgent: Agent, cfg: Config) -> Runner`
+
+### RunTargetValidations
+
+Sorts: deterministic checks first, then llm_judge. Resolves judge profiles per-ValidationFile. Collects into RunReport.
+
+### RunReport
+
+Fields: Target, Total, Passed, Failed, Warnings, Results, Errors

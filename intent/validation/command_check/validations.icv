@@ -1,0 +1,11 @@
+---
+target: validation/command_check
+version: 1
+validations:
+  - name: command-check-tested
+    type: llm_judge
+    rubric: |
+      Verify CommandCheck validator is tested: pass, fail, timeout, stdout checking.
+    severity: error
+    context_files: ["src/validation/**"]
+---

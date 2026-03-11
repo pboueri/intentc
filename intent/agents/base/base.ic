@@ -1,0 +1,41 @@
+---
+name: agents/base
+version: 1
+depends_on: [core/intent, core/target]
+tags: [agents]
+---
+
+# Agent Interface
+
+Defines the Agent interface and BuildContext for code generation agents.
+
+## Agent Interface
+
+```
+interface Agent:
+    Build(ctx, buildCtx: BuildContext) -> list of strings, error
+    Validate(ctx, validation: Validation, generatedFiles: list of strings) -> boolean, string, error
+    GetName() -> string
+    GetType() -> string
+```
+
+### BuildContext
+
+```
+BuildContext:
+    Intent: Intent
+    Validations: list of ValidationFile
+    ProjectRoot: string
+    OutputDir: string
+    GenerationID: string
+    DependencyNames: list of strings
+    ProjectIntent: Intent
+```
+
+## CLIAgent (Base Implementation)
+
+Generic CLI agent wrapping any command-line tool. Constructs prompts, pipes to command, detects files.
+
+## MockAgent
+
+Mock implementation for testing. Records calls, returns configurable responses.

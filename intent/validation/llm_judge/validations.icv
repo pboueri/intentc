@@ -1,0 +1,11 @@
+---
+target: validation/llm_judge
+version: 1
+validations:
+  - name: llm-judge-uses-agent
+    type: llm_judge
+    rubric: |
+      Verify LLMJudge validator accepts an Agent, calls agent.Validate, handles severity, resolves context_files.
+    severity: error
+    context_files: ["src/validation/**"]
+---

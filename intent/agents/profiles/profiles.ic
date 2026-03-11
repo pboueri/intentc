@@ -1,0 +1,22 @@
+---
+name: agents/profiles
+version: 1
+depends_on: [core/intent]
+tags: [agents]
+---
+
+# Agent Profiles
+
+Defines AgentProfile, PromptTemplates, and ToolConfig types for configuring agents.
+
+## AgentProfile
+
+Named, reusable agent configuration. Fields: Name, Provider, Command, CLIArgs, Timeout, Retries, RateLimit, PromptTemplates, Tools, Skills, ModelID.
+
+## PromptTemplates
+
+Customizable template strings. Fields: Build, Validate, System.
+
+## ToolConfig
+
+Tool available to agent. Fields: Name, Enabled, Config.

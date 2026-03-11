@@ -1,0 +1,11 @@
+---
+target: agents/profiles
+version: 1
+validations:
+  - name: profile-types-defined
+    type: llm_judge
+    rubric: |
+      Verify AgentProfile, PromptTemplates, and ToolConfig types are defined with all fields.
+    severity: error
+    context_files: ["src/core/**"]
+---

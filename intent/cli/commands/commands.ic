@@ -1,0 +1,206 @@
+---
+name: cli/commands
+version: 1
+depends_on: [core/*, validation/*, agents/*, build/*, editor/ui]
+tags: [interface]
+---
+
+# Command-Line Interface
+
+The CLI is the user-facing entry point for intentc. It uses a CLI framework (see project implementation notes) and provides subcommands for all intentc operations. The CLI is responsible for wiring up dependencies (loading config, creating agent, initializing state) and delegating to the appropriate packages.
+
+## Entry Point
+
+The main entry point at the repository root calls the CLI framework's root command execution.
+
+## Root Command
+
+```
+intentc [global-flags] <command> [command-flags] [args]
+```
+
+Global flags:
+- `-v, --verbose` (count) - Increase verbosity. `-v` = info, `-vv` = debug.
+- `--config <file>` - Override config file path.
+- `--profile <name>` - Agent profile to use (from config). Default "default".
+- `--agent-provider <name>` - Override agent provider (applied on top of profile).
+- `--agent-command <cmd>` - Override agent command.
+- `--agent-timeout <duration>` - Override agent timeout.
+- `--agent-retries <n>` - Override agent retries.
+- `--agent-cli-args <args>` - Override agent CLI args.
+- `--model <id>` - Override model identifier.
+- `--log-level <level>` - Override log level.
+
+A pre-run hook (before any command execution) loads config, validates it against its schema, applies CLI overrides, and initializes logging.
+
+## Commands
+
+### init
+
+`intentc init`
+
+Initialize an intentc project:
+1. Verify current directory is a git repository.
+2. Create `.intentc/` directory with default `config.yaml`.
+3. Create `intent/` directory.
+4. Create a template `intent/project.ic` with YAML frontmatter.
+5. Add `.intentc/state/` to `.gitignore`.
+6. Print success message with next steps.
+
+Error if `.intentc/` already exists: "project already initialized".
+
+### build
+
+`intentc build [target] [flags]`
+
+Flags:
+- `-f, --force` - Force rebuild even if up to date.
+- `--dry-run` - Show what would be built.
+- `-o, --output <dir>` - Output directory for generated code.
+- `-p, --profile <name>` - Agent profile to use. Overrides global `--profile`.
+
+Logic:
+1. Load config with CLI overrides.
+2. Resolve agent profile (from `--profile` flag or "default").
+3. Create agent from profile via `agent.CreateFromProfile(profile)`.
+4. Initialize state manager.
+5. Create builder.
+6. Call `builder.Build()` with options (schema validation runs as Step 0 inside builder).
+
+### clean
+
+`intentc clean [target] [flags]`
+
+Flags:
+- `-o, --output <dir>` - Output directory to clean. Required (or uses config default).
+- `--all` - Clean all targets (reset entire output directory state).
+- `--dry-run` - Show what would be cleaned.
+
+Logic:
+1. Resolve the output directory (from `--output` or config default).
+2. If `--all`: call `stateManager.ResetAll()` to reset all target state for that output directory. Optionally remove generated files.
+3. If a specific target is given: call `stateManager.ResetTarget(target)` to reset that target's status to pending and remove its build results. Also delete the target's generated files from the output directory.
+4. If no target and no `--all`: print usage hint.
+
+This replaces any need for manual JSON manipulation of state files. Users should never need to edit `.intentc/state/` directly.
+
+### validate
+
+`intentc validate [target] [flags]`
+
+Flags:
+- `-o, --output <dir>` - Output directory to validate against.
+- `-p, --profile <name>` - Agent profile for LLM judge validations.
+- `--parallel` - Run validations in parallel.
+- `--timeout <duration>` - Per-validation timeout.
+
+Logic:
+1. Resolve agent profile. Create agent from profile (needed for LLM judge).
+2. Create builder.
+3. Call `builder.Validate()` (schema validation runs as Step 0 inside builder).
+4. Print the validation report.
+5. Exit with code 1 if any validations failed.
+
+### status
+
+`intentc status [flags]`
+
+Flags:
+- `--tree` - Show dependency tree visualization.
+- `-o, --output <dir>` - Output directory to show status for. Uses config default if omitted.
+
+Logic:
+1. Load all targets via TargetRegistry.
+2. Resolve output directory, set it on the state manager.
+3. Load status from state manager (scoped to that output directory).
+4. Print each target with its status.
+5. If `--tree`, build DAG and print `dag.Visualize()`.
+
+### commit
+
+`intentc commit [flags]`
+
+Flags:
+- `-m, --message <msg>` - Commit message.
+- `--all` - Commit all changes (intent + generated).
+
+Logic:
+1. Get git status.
+2. Separate files into intent files (in `intent/`) and generated files (everything else).
+3. If intent files changed, stage them and commit with prefix `intent: <message>`.
+4. If generated files changed, stage them and commit with prefix `generated: <message>`.
+5. Print summary of commits created.
+
+### check
+
+`intentc check [target]`
+
+Verify spec files parse and validate against schemas:
+1. If target specified, parse and validate that target's .ic and .icv files.
+2. If no target, parse and validate all spec files (calls `parser.ValidateAllSpecs`).
+3. Also validate the config file against its schema (calls `config.ValidateConfig`).
+4. Report any parse errors or schema violations with file, field, and description.
+5. Separate errors from warnings in the output.
+6. If all files are valid, print "All spec files are valid."
+7. Exit with code 1 if any error-severity violations are found.
+
+### add intent
+
+`intentc add intent <name>`
+
+Create a new feature scaffold:
+1. Create `intent/<name>/` directory.
+2. Create `intent/<name>/<name>.ic` with template frontmatter.
+3. Print the path to the new file.
+
+### add validation
+
+`intentc add validation <target> <type>`
+
+Add a validation to an existing target:
+1. Verify the target directory exists.
+2. Create or append to `intent/<target>/validations.icv`.
+3. Add a template validation entry of the specified type.
+
+### list intents
+
+`intentc list intents`
+
+List all discovered features with their dependency count and validation count.
+
+### list validations
+
+`intentc list validations`
+
+List the available validation types with descriptions and example parameters.
+
+### list profiles
+
+`intentc list profiles`
+
+List all configured agent profiles with their provider, model, timeout, and tool/skill counts.
+
+## Dependency Wiring
+
+Each command that needs runtime dependencies follows this pattern (pseudocode):
+
+```
+function runBuild(args):
+    projectRoot = getCurrentWorkingDirectory()
+    cfg = loadConfigWithOverrides(projectRoot)
+    profile = config.GetProfile(cfg, profileName)
+    agent = agent.CreateFromProfile(profile)
+    stateMgr = state.NewStateManager(projectRoot)
+    gitMgr = git.NewGitManager()
+    gitMgr.Initialize(ctx, projectRoot)
+    builder = builder.NewBuilder(projectRoot, agent, stateMgr, gitMgr, cfg)
+    return builder.Build(ctx, opts)
+```
+
+Dependencies are created at the command level and passed down. No globals, no singletons.
+
+## Exit Codes
+
+- 0: Success
+- 1: Validation failures, build failures, or user errors
+- 2: Internal errors (bugs)

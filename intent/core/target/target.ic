@@ -1,0 +1,27 @@
+---
+name: core/target
+version: 1
+depends_on: [core/intent]
+tags: [foundation]
+---
+
+# Target Types
+
+Defines the buildable unit types: Target and TargetStatus.
+
+## Types
+
+### Target
+
+Represents a buildable unit: an intent paired with its validations and resolved dependencies.
+
+Fields:
+- `Name` (string) - Feature identifier.
+- `Intent` (Intent reference) - The parsed intent.
+- `Validations` (list of ValidationFile references) - Associated validation files.
+- `Dependencies` (list of Target references) - Resolved dependency targets.
+- `Status` (TargetStatus) - Current build status.
+
+### TargetStatus
+
+A string enum with values: `pending`, `building`, `built`, `failed`, `outdated`

@@ -1,0 +1,40 @@
+---
+target: build/git
+version: 1
+validations:
+  - name: git-module-exists
+    type: folder_check
+    path: src/git
+
+  - name: git-interface-defined
+    type: llm_judge
+    rubric: |
+      Verify the git module defines:
+      1. A GitManager interface/protocol with methods: Initialize, IsGitRepo, Add, Commit, GetStatus, GetCurrentBranch, GetCommitHash
+      2. A GitStatus type with: Branch, Clean, ModifiedFiles, UntrackedFiles, StagedFiles
+      3. Commit prefix constants: "intent:", "generated:", "refine:"
+      4. A concrete implementation that shells out to the git CLI
+    severity: error
+    context_files: ["src/git/**"]
+
+  - name: git-tests-isolation
+    type: llm_judge
+    rubric: |
+      Verify that git tests:
+      1. Create temporary directories for test repos (using the language's temp dir facilities)
+      2. Run git init in those temp directories
+      3. Never reference or modify the project's own .git directory
+      4. Clean up temp directories after tests
+      5. Test actual git operations (add, commit, status) not just mocks
+    severity: error
+    context_files: ["src/git/**"]
+
+  - name: git-tests-pass
+    type: command_check
+    command: cd src && uv run pytest git/ -v
+    exit_code: 0
+---
+
+# Git Validations
+
+Git integration must be thoroughly tested with real temporary repositories. The most critical invariant is test isolation - tests must never touch the project's own git state.

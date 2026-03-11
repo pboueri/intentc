@@ -1,0 +1,54 @@
+---
+name: core/intent
+version: 1
+tags: [foundation]
+---
+
+# Intent Types
+
+The core intent types are the foundational data types for intentc's spec system. This module defines the types that represent parsed .ic and .icv files.
+
+## Types
+
+### Intent
+
+Represents a parsed .ic file. Contains both the structured frontmatter metadata and the raw markdown body.
+
+Fields:
+- `Name` (string) - Feature identifier, matches directory path.
+- `Version` (integer) - Schema version from frontmatter.
+- `DependsOn` (list of strings) - List of feature dependency names/paths.
+- `Tags` (list of strings) - Categorization tags.
+- `Profile` (string) - Optional named agent profile.
+- `Content` (string) - The full raw markdown body.
+- `FilePath` (string) - Absolute path to the source .ic file.
+
+### Validation
+
+Represents a single validation definition extracted from an .icv file.
+
+Fields:
+- `Name` (string) - Unique validation identifier.
+- `Type` (ValidationType) - The validation type enum.
+- `Hidden` (boolean) - Whether the agent should see this validation.
+- `Parameters` (map of string to any) - Type-specific parameters.
+
+### ValidationType
+
+A string enum with values: `file_check`, `folder_check`, `command_check`, `llm_judge`
+
+### ValidationFile
+
+Represents a parsed .icv file containing multiple validations.
+
+Fields:
+- `Target` (string) - Feature path this validates.
+- `Version` (integer) - Schema version.
+- `JudgeProfile` (string) - Optional agent profile for llm_judge.
+- `Validations` (list of Validation) - The validation definitions.
+- `FilePath` (string) - Absolute path to the source .icv file.
+
+## Constraints
+
+- Core intent types must have zero dependencies on other intentc packages.
+- All types should be serializable to JSON and YAML.

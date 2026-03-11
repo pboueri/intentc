@@ -1,0 +1,32 @@
+---
+name: core/build_result
+version: 1
+depends_on: [core/target]
+tags: [foundation]
+---
+
+# Build Result Types
+
+Defines types for tracking build and validation outcomes.
+
+## Types
+
+### BuildResult
+
+Fields:
+- `Target` (string) - Target name.
+- `GenerationID` (string) - Unique build identifier.
+- `Success` (boolean) - Whether the build succeeded.
+- `Error` (string) - Error message if failed.
+- `GeneratedAt` (timestamp) - When the build completed.
+- `Files` (list of strings) - Files created or modified.
+- `OutputDir` (string) - The output directory used.
+
+### ValidationResult
+
+Fields:
+- `ValidationName` (string) - Which validation was run.
+- `Passed` (boolean) - Whether it passed.
+- `Message` (string) - Human-readable result message.
+- `Details` (list of strings) - Additional detail lines.
+- `Severity` (string) - "error" or "warning".

@@ -1,0 +1,11 @@
+---
+target: agents/codex
+version: 1
+validations:
+  - name: codex-agent-defined
+    type: llm_judge
+    rubric: |
+      Verify CodexAgent extends CLIAgent and configures Codex-specific CLI args.
+    severity: error
+    context_files: ["src/agent/**"]
+---

@@ -1,0 +1,11 @@
+---
+target: validation/folder_check
+version: 1
+validations:
+  - name: folder-check-tested
+    type: llm_judge
+    rubric: |
+      Verify FolderCheck validator is tested: folder exists, folder missing, missing children.
+    severity: error
+    context_files: ["src/validation/**"]
+---

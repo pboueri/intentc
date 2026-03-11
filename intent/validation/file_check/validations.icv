@@ -1,0 +1,11 @@
+---
+target: validation/file_check
+version: 1
+validations:
+  - name: file-check-tested
+    type: llm_judge
+    rubric: |
+      Verify FileCheck validator is tested: file exists, file missing, missing content.
+    severity: error
+    context_files: ["src/validation/**"]
+---

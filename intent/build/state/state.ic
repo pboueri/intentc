@@ -1,0 +1,144 @@
+---
+name: build/state
+version: 1
+depends_on: [core/target, core/build_result, build/git]
+tags: [foundation]
+---
+
+# State Management
+
+The state package tracks build state: which targets have been built, their generation IDs, and build results. State is persisted to disk in `.intentc/state/` as JSON files and is designed to work alongside git.
+
+## Interface
+
+```
+interface StateManager:
+    Initialize(ctx) -> error
+    SetOutputDir(ctx, outputDir: string) -> error   # Set the active output directory for state scoping
+    SaveBuildResult(ctx, result: BuildResult) -> error
+    GetLatestBuildResult(ctx, targetName: string) -> BuildResult or error
+    GetBuildResult(ctx, targetName: string, generationID: string) -> BuildResult or error
+    GetTargetStatus(ctx, targetName: string) -> TargetStatus or error
+    UpdateTargetStatus(ctx, targetName: string, status: TargetStatus) -> error
+    ListBuildResults(ctx, targetName: string) -> list of BuildResult or error
+    ResetTarget(ctx, targetName: string) -> error    # Reset a target's status to pending and remove its build results
+    ResetAll(ctx) -> error                           # Reset all targets for the current output directory
+```
+
+`SetOutputDir` must be called before any status or build result operations. It determines which state subdirectory is used. All subsequent operations read/write from `.intentc/state/{output-dir-key}/`.
+
+`ResetTarget` sets the target's status back to "pending" and optionally removes its build result files. This replaces manual JSON manipulation — users should use `intentc clean <target>` instead.
+
+`ResetAll` resets all targets for the current output directory to "pending". Used by `intentc clean --all`.
+
+## State Directory Structure
+
+State is **scoped by output directory**. Each output directory gets its own status tracking, so building into `src2/` and `src3/` are fully independent. The output directory path is normalized to a filesystem-safe key (e.g., by replacing path separators and using the absolute path hash or sanitized name).
+
+```
+.intentc/state/
+    {output-dir-key}/
+        status.json                      # Map of target name -> TargetStatus for this output
+        builds/
+            {target-name}/
+                latest.json              # Symlink or copy of most recent build result
+                {generation-id}.json     # Individual build results
+```
+
+The `output-dir-key` is derived from the absolute path of the output directory. For example, output dir `/home/user/project/src2` might become `src2` (if relative to project root) or a sanitized form of the absolute path. The key must be deterministic so the same output directory always maps to the same state.
+
+## State File Schemas
+
+State files are JSON. Each has a defined schema to ensure consistent serialization/deserialization, safe migration, and debuggability.
+
+### status.json Schema
+
+```json
+{
+  "version": 1,
+  "targets": {
+    "<target-name>": "<TargetStatus>"
+  }
+}
+```
+
+Fields:
+- `version` (int, required) - State schema version. Currently 1. Used for forward-compatible migration.
+- `targets` (map[string]string, required) - Map of target name to TargetStatus value. Valid status values: "pending", "building", "built", "failed", "outdated".
+
+Behavior:
+- If `status.json` does not exist, treat all targets as "pending".
+- If `version` is unrecognized, log a warning and attempt best-effort parsing. Do not error — state is ephemeral and should not block builds.
+- On write, always include the `version` field.
+
+### Build Result JSON Schema ({generation-id}.json / latest.json)
+
+```json
+{
+  "version": 1,
+  "target": "<string>",
+  "generation_id": "<string>",
+  "success": true,
+  "error": "<string>",
+  "generated_at": "<RFC3339 timestamp>",
+  "files": ["<string>"],
+  "output_dir": "<string>"
+}
+```
+
+Fields:
+- `version` (int, required) - State schema version. Currently 1.
+- `target` (string, required) - Target name.
+- `generation_id` (string, required) - Build identifier (e.g., "gen-1234567890").
+- `success` (bool, required) - Whether the build succeeded.
+- `error` (string, optional) - Error message if failed. Empty on success.
+- `generated_at` (string, required) - RFC3339 timestamp of build completion.
+- `files` ([]string, required) - List of files created or modified. Empty array if none.
+- `output_dir` (string, required) - Absolute path to the output directory used.
+
+Behavior:
+- Deserialization must tolerate unknown fields (forward compatibility with future schema versions).
+- If `version` is higher than the current supported version, log a warning and parse known fields.
+- Timestamps must use RFC3339 format for portability.
+
+## Implementation
+
+`NewStateManager(projectRoot: string) -> StateManager`
+
+### Initialize
+Create the `.intentc/state/` directory structure if it doesn't exist.
+
+### SetOutputDir
+Derive the output-dir-key from the output directory path and ensure `.intentc/state/{output-dir-key}/` exists. All subsequent operations use this scoped path.
+
+### SaveBuildResult
+1. Serialize the BuildResult to JSON.
+2. Write to `.intentc/state/{output-dir-key}/builds/{target}/{generation-id}.json`.
+3. Update `.intentc/state/{output-dir-key}/builds/{target}/latest.json` with the same content.
+4. Update the target's status in the scoped `status.json`.
+
+### GetLatestBuildResult
+Read and deserialize `.intentc/state/{output-dir-key}/builds/{target}/latest.json`. Return an error if no builds exist for this target.
+
+### GetTargetStatus
+Read the scoped `status.json`, look up the target. If the target is not in the map, return `pending`.
+
+### UpdateTargetStatus
+Read the scoped `status.json`, update the target's status, write back. Use file locking or atomic writes to avoid corruption.
+
+### ResetTarget
+Set the named target's status to `pending` in the scoped `status.json`. Remove the target's build result directory (`.intentc/state/{output-dir-key}/builds/{target}/`).
+
+### ResetAll
+Remove the entire scoped state directory (`.intentc/state/{output-dir-key}/`) and recreate it empty. This resets all targets to `pending`.
+
+## Generation IDs
+
+Format: `gen-{unix-timestamp}` (e.g., `gen-1234567890`). Generated by the builder, not the state manager. The state manager just stores whatever ID it receives.
+
+## Constraints
+
+- State files are JSON for easy debugging and inspection.
+- The state directory is gitignored (`.intentc/state/` should be in `.gitignore`). State is local, not shared. Build results are ephemeral.
+- State must handle concurrent reads gracefully (multiple `intentc status` calls).
+- Missing state files should not be errors - return sensible defaults (pending status, empty build lists).
