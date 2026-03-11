@@ -165,6 +165,7 @@ main {
     cursor: pointer;
     border-radius: 4px;
     font-size: 12px;
+    border-left: 2px solid transparent;
     transition: background 0.15s;
 }
 

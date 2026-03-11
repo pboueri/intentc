@@ -167,9 +167,9 @@ function renderEditor(target, upstream) {
 
     // Action bar
     html += `<div class="action-bar">
-        <button class="action-btn action-build" onclick="triggerAction('build', '${target.name}', this)">Build</button>
-        <button class="action-btn action-clean" onclick="triggerAction('clean', '${target.name}', this)">Clean</button>
-        <button class="action-btn action-validate" onclick="triggerAction('validate', '${target.name}', this)">Validate</button>
+        <button class="action-btn action-build" data-action="build" data-target="${escapeHtml(target.name)}">Build</button>
+        <button class="action-btn action-clean" data-action="clean" data-target="${escapeHtml(target.name)}">Clean</button>
+        <button class="action-btn action-validate" data-action="validate" data-target="${escapeHtml(target.name)}">Validate</button>
     </div>`;
 
     // Upstream dependencies section
@@ -178,7 +178,7 @@ function renderEditor(target, upstream) {
             <div class="upstream-header">Upstream Dependencies</div>
             <div class="upstream-chain">`;
         upstream.forEach((dep, i) => {
-            html += `<span class="upstream-dep" onclick="selectTarget('${dep}')">${dep}</span>`;
+            html += `<span class="upstream-dep" data-dep="${escapeHtml(dep)}">${escapeHtml(dep)}</span>`;
             if (i < upstream.length - 1) html += `<span class="upstream-arrow">\u2192</span>`;
         });
         html += `</div></div>`;
@@ -201,7 +201,7 @@ function renderEditor(target, upstream) {
     html += `<div class="editor-section">
         <div class="editor-section-header">
             <span>Spec — ${target.spec_path}</span>
-            <button class="save-btn" onclick="saveSpec('${target.name}')">Save</button>
+            <button class="save-btn" data-save="spec" data-target="${escapeHtml(target.name)}">Save</button>
         </div>
         <textarea id="spec-editor" spellcheck="false">${escapeHtml(target.spec_content)}</textarea>
     </div>`;
@@ -212,7 +212,7 @@ function renderEditor(target, upstream) {
             html += `<div class="editor-section">
                 <div class="editor-section-header">
                     <span>Validation — ${v.file_path}</span>
-                    <button class="save-btn" onclick="saveValidation('${target.name}', '${v.file_path}', ${i})">Save</button>
+                    <button class="save-btn" data-save="validation" data-target="${escapeHtml(target.name)}" data-filepath="${escapeHtml(v.file_path)}" data-index="${i}">Save</button>
                 </div>
                 <textarea id="val-editor-${i}" spellcheck="false">${escapeHtml(v.content)}</textarea>
             </div>`;
@@ -226,6 +226,21 @@ function renderEditor(target, upstream) {
     </div>`;
 
     container.innerHTML = html;
+
+    // Attach event listeners via delegation (avoids inline onclick XSS risk)
+    container.querySelectorAll(".action-btn[data-action]").forEach(btn => {
+        btn.addEventListener("click", () => triggerAction(btn.dataset.action, btn.dataset.target, btn));
+    });
+    container.querySelectorAll(".upstream-dep[data-dep]").forEach(el => {
+        el.addEventListener("click", () => selectTarget(el.dataset.dep));
+    });
+    container.querySelectorAll(".save-btn[data-save]").forEach(btn => {
+        if (btn.dataset.save === "spec") {
+            btn.addEventListener("click", () => saveSpec(btn.dataset.target));
+        } else if (btn.dataset.save === "validation") {
+            btn.addEventListener("click", () => saveValidation(btn.dataset.target, btn.dataset.filepath, parseInt(btn.dataset.index)));
+        }
+    });
 
     // Load build log asynchronously
     loadBuildLog(target.name);
