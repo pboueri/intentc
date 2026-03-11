@@ -54,143 +54,80 @@ async function loadDag() {
 }
 
 function renderDag(data) {
-    const svg = document.getElementById("dag-svg");
-    svg.innerHTML = "";
+    const container = document.getElementById("module-tree");
+    container.innerHTML = "";
 
-    if (!data.nodes || data.nodes.length === 0) return;
+    if (!data.tree || !data.tree.children) return;
 
-    // Create arrowhead marker
-    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-    defs.innerHTML = `
-        <marker id="arrowhead" viewBox="0 0 10 7" refX="10" refY="3.5"
-                markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#3a3a5c"/>
-        </marker>
-    `;
-    svg.appendChild(defs);
+    // Store flat node data for upstream lookups
+    dagData = data;
 
-    // Layout: assign layers by longest path from root
-    const nodeMap = {};
-    data.nodes.forEach(n => { nodeMap[n.name] = { ...n, layer: 0, x: 0, y: 0 }; });
+    function createTreeNode(node, depth) {
+        const div = document.createElement("div");
+        div.className = "tree-item";
+        div.style.paddingLeft = (depth * 16) + "px";
 
-    // Build adjacency (depends_on means an edge FROM dependency TO this node)
-    const dependents = {};  // name -> list of names that depend on it
-    data.edges.forEach(e => {
-        if (!dependents[e.to]) dependents[e.to] = [];
-        dependents[e.to].push(e.from);
-    });
+        if (node.type === "module") {
+            // Module: collapsible header
+            const header = document.createElement("div");
+            header.className = "tree-module";
 
-    // Compute layers using BFS from roots
-    const roots = data.nodes.filter(n => !n.depends_on || n.depends_on.length === 0 || (n.depends_on.length === 1 && n.depends_on[0] === ""));
-    const queue = roots.map(n => n.name);
-    const visited = new Set(queue);
-    roots.forEach(n => { nodeMap[n.name].layer = 0; });
+            const toggle = document.createElement("span");
+            toggle.className = "tree-toggle";
+            toggle.textContent = "\u25BC"; // ▼
+            header.appendChild(toggle);
 
-    while (queue.length > 0) {
-        const name = queue.shift();
-        const layer = nodeMap[name].layer;
-        const deps = dependents[name] || [];
-        deps.forEach(dep => {
-            nodeMap[dep].layer = Math.max(nodeMap[dep].layer, layer + 1);
-            if (!visited.has(dep)) {
-                visited.add(dep);
-                queue.push(dep);
+            const label = document.createElement("span");
+            label.className = "tree-module-label";
+            label.textContent = node.name;
+            header.appendChild(label);
+
+            div.appendChild(header);
+
+            const childContainer = document.createElement("div");
+            childContainer.className = "tree-children";
+
+            if (node.children) {
+                node.children.forEach(child => {
+                    childContainer.appendChild(createTreeNode(child, depth + 1));
+                });
             }
-        });
-    }
+            div.appendChild(childContainer);
 
-    // Ensure unvisited nodes get placed
-    data.nodes.forEach(n => {
-        if (!visited.has(n.name)) {
-            nodeMap[n.name].layer = 0;
+            // Toggle collapse
+            header.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const isCollapsed = childContainer.classList.toggle("collapsed");
+                toggle.textContent = isCollapsed ? "\u25B6" : "\u25BC"; // ▶ or ▼
+            });
+        } else {
+            // Feature: clickable leaf node
+            const leaf = document.createElement("div");
+            leaf.className = "tree-feature" + (selectedTarget === node.path ? " selected" : "");
+            leaf.setAttribute("data-path", node.path);
+
+            const dot = document.createElement("span");
+            dot.className = "tree-status status-" + (node.status || "pending");
+            leaf.appendChild(dot);
+
+            const label = document.createElement("span");
+            label.className = "tree-feature-label";
+            label.textContent = node.name;
+            leaf.appendChild(label);
+
+            leaf.addEventListener("click", (e) => {
+                e.stopPropagation();
+                selectTarget(node.path);
+            });
+
+            div.appendChild(leaf);
         }
-    });
 
-    // Group by layer
-    const layers = {};
-    Object.values(nodeMap).forEach(n => {
-        if (!layers[n.layer]) layers[n.layer] = [];
-        layers[n.layer].push(n);
-    });
-
-    // Sort within layers alphabetically
-    Object.values(layers).forEach(layer => layer.sort((a, b) => a.name.localeCompare(b.name)));
-
-    // Position nodes
-    const nodeW = 140;
-    const nodeH = 36;
-    const padX = 20;
-    const padY = 24;
-    const startX = 16;
-    const startY = 16;
-
-    const maxLayerIdx = Math.max(...Object.keys(layers).map(Number));
-
-    for (let i = 0; i <= maxLayerIdx; i++) {
-        const layerNodes = layers[i] || [];
-        layerNodes.forEach((n, j) => {
-            n.x = startX + j * (nodeW + padX);
-            n.y = startY + i * (nodeH + padY);
-        });
+        return div;
     }
 
-    // Compute SVG size
-    const allNodes = Object.values(nodeMap);
-    const maxX = Math.max(...allNodes.map(n => n.x + nodeW)) + startX;
-    const maxY = Math.max(...allNodes.map(n => n.y + nodeH)) + startY;
-    svg.setAttribute("viewBox", `0 0 ${maxX} ${maxY}`);
-    svg.style.width = maxX + "px";
-    svg.style.height = maxY + "px";
-
-    // Draw edges first (behind nodes)
-    data.edges.forEach(e => {
-        const fromNode = nodeMap[e.from];
-        const toNode = nodeMap[e.to];
-        if (!fromNode || !toNode) return;
-
-        // Arrow from dependency (to) to dependent (from)
-        // i.e. toNode is upstream, fromNode is downstream
-        const x1 = toNode.x + nodeW / 2;
-        const y1 = toNode.y + nodeH;
-        const x2 = fromNode.x + nodeW / 2;
-        const y2 = fromNode.y;
-
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        const midY = (y1 + y2) / 2;
-        path.setAttribute("d", `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`);
-        path.setAttribute("class", "dag-edge");
-        svg.appendChild(path);
-    });
-
-    // Draw nodes
-    allNodes.forEach(n => {
-        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        g.setAttribute("class", "dag-node" + (selectedTarget === n.name ? " selected" : ""));
-        g.setAttribute("data-name", n.name);
-
-        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", n.x);
-        rect.setAttribute("y", n.y);
-        rect.setAttribute("width", nodeW);
-        rect.setAttribute("height", nodeH);
-        g.appendChild(rect);
-
-        // Status dot
-        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        dot.setAttribute("cx", n.x + 14);
-        dot.setAttribute("cy", n.y + nodeH / 2);
-        dot.setAttribute("class", "status-dot status-" + (n.status || "pending"));
-        g.appendChild(dot);
-
-        // Name text
-        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", n.x + 26);
-        text.setAttribute("y", n.y + nodeH / 2 + 4);
-        text.textContent = n.name;
-        g.appendChild(text);
-
-        g.addEventListener("click", () => selectTarget(n.name));
-        svg.appendChild(g);
+    data.tree.children.forEach(child => {
+        container.appendChild(createTreeNode(child, 0));
     });
 }
 
@@ -199,26 +136,32 @@ async function selectTarget(name) {
     selectedTarget = name;
     document.getElementById("editor-target-name").textContent = name;
 
-    // Update DAG selection visual
-    document.querySelectorAll(".dag-node").forEach(g => {
-        g.classList.toggle("selected", g.getAttribute("data-name") === name);
+    // Update tree selection visual
+    document.querySelectorAll(".tree-feature").forEach(el => {
+        el.classList.toggle("selected", el.getAttribute("data-path") === name);
     });
 
-    // Fetch target details
+    // Fetch target details and upstream deps in parallel
     try {
-        const res = await fetch(`/api/targets/${encodeURIComponent(name)}`);
-        if (!res.ok) {
+        const [targetRes, upstreamRes] = await Promise.all([
+            fetch(`/api/targets/${encodeURIComponent(name)}`),
+            fetch(`/api/targets/${encodeURIComponent(name)}/upstream`),
+        ]);
+
+        if (!targetRes.ok) {
             document.getElementById("editor-content").innerHTML = `<p class="placeholder">Target not found</p>`;
             return;
         }
-        const target = await res.json();
-        renderEditor(target);
+
+        const target = await targetRes.json();
+        const upstream = upstreamRes.ok ? await upstreamRes.json() : { upstream: [] };
+        renderEditor(target, upstream.upstream);
     } catch (e) {
         console.error("Failed to load target:", e);
     }
 }
 
-function renderEditor(target) {
+function renderEditor(target, upstream) {
     const container = document.getElementById("editor-content");
     let html = "";
 
@@ -228,6 +171,18 @@ function renderEditor(target) {
         <button class="action-btn action-clean" onclick="triggerAction('clean', '${target.name}', this)">Clean</button>
         <button class="action-btn action-validate" onclick="triggerAction('validate', '${target.name}', this)">Validate</button>
     </div>`;
+
+    // Upstream dependencies section
+    if (upstream && upstream.length > 0) {
+        html += `<div class="upstream-deps">
+            <div class="upstream-header">Upstream Dependencies</div>
+            <div class="upstream-chain">`;
+        upstream.forEach((dep, i) => {
+            html += `<span class="upstream-dep" onclick="selectTarget('${dep}')">${dep}</span>`;
+            if (i < upstream.length - 1) html += `<span class="upstream-arrow">\u2192</span>`;
+        });
+        html += `</div></div>`;
+    }
 
     // Status section
     html += `<div class="status-bar">
@@ -391,10 +346,25 @@ function connectChangesWs() {
             appendOutputLine(msg.line);
         } else if (msg.type === "file_changed") {
             loadDag();
-            if (selectedTarget && msg.path.includes(`/${selectedTarget}/`)) {
-                selectTarget(selectedTarget);
+            if (selectedTarget && msg.path) {
+                const intentPrefix = "intent/";
+                let relPath = msg.path;
+                if (relPath.startsWith(intentPrefix)) {
+                    relPath = relPath.substring(intentPrefix.length);
+                }
+                const lastSlash = relPath.lastIndexOf("/");
+                const dirPath = lastSlash >= 0 ? relPath.substring(0, lastSlash) : relPath;
+                if (dirPath === selectedTarget) {
+                    selectTarget(selectedTarget);
+                }
             }
         } else if (msg.type === "build_complete" || msg.type === "validate_complete") {
+            // Show completion in output panel
+            if (msg.type === "build_complete") {
+                appendOutputLine(msg.success ? `Build complete: ${msg.target} succeeded` : `Build complete: ${msg.target} FAILED — ${msg.error || "unknown error"}`);
+            } else {
+                appendOutputLine(`Validation complete: ${msg.target} — ${msg.passed || 0}/${msg.total || 0} passed`);
+            }
             // Refresh DAG and editor to show updated status
             loadDag();
             if (selectedTarget === msg.target) {
