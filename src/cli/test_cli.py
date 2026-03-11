@@ -530,3 +530,191 @@ def test_commit_separates_intent_and_generated():
             assert "2 commit(s)" in result.output
         finally:
             os.chdir(old_cwd)
+
+
+# ---------------------------------------------------------------------------
+# log
+# ---------------------------------------------------------------------------
+
+
+class TestLogCommand:
+    """Tests for the 'intentc log' command."""
+
+    def test_log_no_builds(self):
+        """Log with no build history shows message."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _init_project(tmp)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                result = runner.invoke(app, ["log", "nonexistent"])
+                assert "No builds found" in result.output
+            finally:
+                os.chdir(old_cwd)
+
+    def test_log_list_all(self):
+        """Log with no target lists all targets with builds."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _init_project(tmp)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                from state.manager import new_state_manager
+                from core.types import BuildResult, BuildStep, BuildPhase, StepStatus
+                from datetime import datetime
+                sm = new_state_manager(tmp)
+                sm.initialize()
+                output_dir = os.path.join(tmp, "build-default")
+                os.makedirs(output_dir, exist_ok=True)
+                sm.set_output_dir(output_dir)
+                sm.save_build_result(BuildResult(
+                    target="auth",
+                    generation_id="gen-123",
+                    success=True,
+                    generated_at=datetime(2026, 3, 11, 14, 0),
+                    files=["auth.py"],
+                    output_dir=output_dir,
+                    steps=[BuildStep(
+                        phase=BuildPhase.BUILD,
+                        status=StepStatus.SUCCESS,
+                        started_at=datetime(2026, 3, 11, 14, 0),
+                        ended_at=datetime(2026, 3, 11, 14, 0, 5),
+                        duration_seconds=5.0,
+                        summary="Agent generated 1 file",
+                    )],
+                    total_duration_seconds=5.0,
+                ))
+
+                # We need an intent file for the target to show up
+                intent_dir = os.path.join(tmp, "intent", "auth")
+                os.makedirs(intent_dir, exist_ok=True)
+                with open(os.path.join(intent_dir, "auth.ic"), "w") as f:
+                    f.write("---\nname: auth\nversion: 1\n---\nAuth module.\n")
+
+                result = runner.invoke(app, ["log"])
+                assert result.exit_code == 0
+                assert "auth" in result.output
+                assert "gen-123" in result.output
+            finally:
+                os.chdir(old_cwd)
+
+    def test_log_target_summary(self):
+        """Log for a specific target shows step details."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _init_project(tmp)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                from state.manager import new_state_manager
+                from core.types import BuildResult, BuildStep, BuildPhase, StepStatus
+                from datetime import datetime
+                sm = new_state_manager(tmp)
+                sm.initialize()
+                output_dir = os.path.join(tmp, "build-default")
+                os.makedirs(output_dir, exist_ok=True)
+                sm.set_output_dir(output_dir)
+                sm.save_build_result(BuildResult(
+                    target="auth",
+                    generation_id="gen-456",
+                    success=True,
+                    generated_at=datetime(2026, 3, 11, 14, 0),
+                    files=["auth.py"],
+                    output_dir=output_dir,
+                    steps=[
+                        BuildStep(
+                            phase=BuildPhase.RESOLVE_DEPS,
+                            status=StepStatus.SUCCESS,
+                            started_at=datetime(2026, 3, 11, 14, 0),
+                            ended_at=datetime(2026, 3, 11, 14, 0, 1),
+                            duration_seconds=0.1,
+                            summary="Resolved 0 dependencies",
+                        ),
+                        BuildStep(
+                            phase=BuildPhase.BUILD,
+                            status=StepStatus.SUCCESS,
+                            started_at=datetime(2026, 3, 11, 14, 0, 1),
+                            ended_at=datetime(2026, 3, 11, 14, 0, 6),
+                            duration_seconds=5.0,
+                            summary="Agent generated 1 file",
+                        ),
+                    ],
+                    total_duration_seconds=5.1,
+                ))
+                result = runner.invoke(app, ["log", "auth"])
+                assert result.exit_code == 0
+                assert "Build Log: auth" in result.output
+                assert "gen-456" in result.output
+                assert "resolve_deps" in result.output
+                assert "5.1" in result.output
+            finally:
+                os.chdir(old_cwd)
+
+    def test_log_diff_flag(self):
+        """Log --diff appends the unified diff."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _init_project(tmp)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                from state.manager import new_state_manager
+                from core.types import BuildResult, BuildStep, BuildPhase, StepStatus
+                from datetime import datetime
+                sm = new_state_manager(tmp)
+                sm.initialize()
+                output_dir = os.path.join(tmp, "build-default")
+                os.makedirs(output_dir, exist_ok=True)
+                sm.set_output_dir(output_dir)
+                sm.save_build_result(BuildResult(
+                    target="auth",
+                    generation_id="gen-789",
+                    success=True,
+                    generated_at=datetime(2026, 3, 11, 14, 0),
+                    files=["auth.py"],
+                    output_dir=output_dir,
+                    steps=[BuildStep(
+                        phase=BuildPhase.POST_BUILD,
+                        status=StepStatus.SUCCESS,
+                        started_at=datetime(2026, 3, 11, 14, 0),
+                        ended_at=datetime(2026, 3, 11, 14, 0, 1),
+                        duration_seconds=0.1,
+                        summary="1 file changed",
+                        diff="--- a/auth.py\n+++ b/auth.py\n+hello\n",
+                        diff_stat="1 file changed, 1 insertion(+)",
+                    )],
+                    total_duration_seconds=0.1,
+                ))
+                result = runner.invoke(app, ["log", "auth", "--diff"])
+                assert result.exit_code == 0
+                assert "--- a/auth.py" in result.output
+                assert "+hello" in result.output
+            finally:
+                os.chdir(old_cwd)
+
+    def test_log_no_steps_graceful(self):
+        """Log handles build results without step data."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _init_project(tmp)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                from state.manager import new_state_manager
+                from core.types import BuildResult
+                from datetime import datetime
+                sm = new_state_manager(tmp)
+                sm.initialize()
+                output_dir = os.path.join(tmp, "build-default")
+                os.makedirs(output_dir, exist_ok=True)
+                sm.set_output_dir(output_dir)
+                sm.save_build_result(BuildResult(
+                    target="auth",
+                    generation_id="gen-old",
+                    success=True,
+                    generated_at=datetime(2026, 3, 11, 14, 0),
+                    files=["auth.py"],
+                    output_dir=output_dir,
+                ))
+                result = runner.invoke(app, ["log", "auth"])
+                assert result.exit_code == 0
+                assert "No step data" in result.output
+            finally:
+                os.chdir(old_cwd)

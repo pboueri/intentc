@@ -427,6 +427,109 @@ def status(
 
 
 # ---------------------------------------------------------------------------
+# log
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def log(
+    target: Optional[str] = typer.Argument(None, help="Target to show log for"),
+    generation: str = typer.Option("", "--generation", help="Specific generation ID"),
+    diff: bool = typer.Option(False, "--diff", help="Show full unified diff"),
+    output: str = typer.Option("", "--output", "-o", help="Output directory"),
+) -> None:
+    """View structured build logs."""
+    project_root = os.getcwd()
+    cfg = _load_config_with_overrides(project_root)
+
+    from state.manager import new_state_manager
+
+    sm = new_state_manager(project_root)
+    sm.initialize()
+
+    output_dir = output or cfg.build.default_output
+    output_dir = os.path.abspath(os.path.join(project_root, output_dir))
+    sm.set_output_dir(output_dir)
+
+    if not target:
+        # List all targets with builds
+        from parser.parser import TargetRegistry
+
+        try:
+            registry = TargetRegistry(project_root)
+            registry.load_targets()
+            targets = registry.get_all_targets()
+            target_names = [t.name for t in targets]
+        except Exception:
+            target_names = []
+
+        found_any = False
+        lines: list[str] = []
+        for name in target_names:
+            try:
+                result = sm.get_latest_build_result(name)
+                status_str = "success" if result.success else "failed"
+                dur = f"{result.total_duration_seconds:.1f}s" if result.total_duration_seconds else "-"
+                files_count = len(result.files)
+                files_str = f"{files_count} file{'s' if files_count != 1 else ''}"
+                ts = result.generated_at.strftime("%Y-%m-%dT%H:%M")
+                lines.append(
+                    f"  {name:<20} {result.generation_id}  {status_str:<7}  {dur:>6}  {files_str:<8}  {ts}"
+                )
+                found_any = True
+            except FileNotFoundError:
+                continue
+
+        if not found_any:
+            typer.echo("No builds found.")
+            return
+
+        typer.echo("Build History:")
+        for line in lines:
+            typer.echo(line)
+        return
+
+    # Specific target
+    try:
+        if generation:
+            result = sm.get_build_result(target, generation)
+        else:
+            result = sm.get_latest_build_result(target)
+    except FileNotFoundError:
+        typer.echo(f"No builds found for target '{target}'")
+        return
+
+    status_str = "success" if result.success else "failed"
+    ts = result.generated_at.strftime("%Y-%m-%dT%H:%M:%S")
+    typer.echo(f"Build Log: {target} ({result.generation_id})")
+    typer.echo(f"Status: {status_str} | {ts}")
+    typer.echo("")
+
+    if not result.steps:
+        typer.echo("  No step data available (build predates logging)")
+        typer.echo("")
+    else:
+        for step in result.steps:
+            dur = f"{step.duration_seconds:.1f}s"
+            typer.echo(
+                f"  [{step.status.value:<7}]  {step.phase.value:<14}  {step.summary:<40}  {dur}"
+            )
+        typer.echo("")
+
+    total_dur = f"{result.total_duration_seconds:.1f}s" if result.total_duration_seconds else "-"
+    files_changed = sum(s.files_changed for s in result.steps)
+    typer.echo(f"Total: {total_dur} | Files: {files_changed} changed")
+
+    if diff:
+        typer.echo("")
+        post_build_steps = [s for s in result.steps if s.phase.value == "post_build"]
+        if post_build_steps and post_build_steps[0].diff:
+            typer.echo(post_build_steps[0].diff)
+        else:
+            typer.echo("No diff available.")
+
+
+# ---------------------------------------------------------------------------
 # commit
 # ---------------------------------------------------------------------------
 
