@@ -16,8 +16,11 @@ from agent.factory import create_from_profile as _create_from_profile
 from config.config import Config, get_profile, validate_config
 from core.types import (
     AgentProfile,
+    BuildPhase,
     BuildResult,
+    BuildStep,
     SchemaViolation,
+    StepStatus,
     Target,
     TargetStatus,
     ValidationFile,
@@ -27,6 +30,12 @@ from parser.parser import TargetRegistry, validate_all_specs
 from validation.registry import Registry as ValidatorRegistry
 
 logger = logging.getLogger("intentc.builder")
+
+
+def _print_step(target: str, phase: str, summary: str, duration: float, *, failed: bool = False) -> None:
+    """Print structured step progress to stderr."""
+    import sys
+    print(f"[{target}] {phase}... {summary} ({duration:.1f}s)", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -191,70 +200,206 @@ class Builder:
             profile = get_profile(self.config, profile_name)
             target_agent = self._agent_factory(profile)
 
-            # Update status to building
             self.state_manager.update_target_status(
                 target.name, TargetStatus.BUILDING
             )
-
-            # Generate ID
             generation_id = f"gen-{int(time.time())}"
-
             logger.info("Building target: %s", target.name)
 
-            # Build context - filter out fully-hidden validation files
+            steps: list[BuildStep] = []
+            build_failed = False
+            agent_files: list[str] = []
+
+            # Phase 1: resolve_deps
+            dep_names = target.intent.depends_on
+            t0 = time.monotonic()
+            started = datetime.now()
+            n_deps = len(dep_names)
+            deps_str = ", ".join(dep_names) if dep_names else "none"
+            resolve_summary = f"Resolved {n_deps} dependencies: [{deps_str}]"
+            elapsed = time.monotonic() - t0
+            steps.append(BuildStep(
+                phase=BuildPhase.RESOLVE_DEPS,
+                status=StepStatus.SUCCESS,
+                started_at=started,
+                ended_at=datetime.now(),
+                duration_seconds=round(elapsed, 3),
+                summary=resolve_summary,
+            ))
+            _print_step(target.name, "resolve_deps", resolve_summary, elapsed)
+
+            # Phase 2: read_plan
+            t0 = time.monotonic()
+            started = datetime.now()
             visible_validations = [
                 vf
                 for vf in target.validations
                 if not all(v.hidden for v in vf.validations)
             ]
+            val_count = sum(len(vf.validations) for vf in visible_validations)
+            read_summary = f"Read {target.name} with {val_count} validations"
+            elapsed = time.monotonic() - t0
+            steps.append(BuildStep(
+                phase=BuildPhase.READ_PLAN,
+                status=StepStatus.SUCCESS,
+                started_at=started,
+                ended_at=datetime.now(),
+                duration_seconds=round(elapsed, 3),
+                summary=read_summary,
+            ))
+            _print_step(target.name, "read_plan", read_summary, elapsed)
 
+            # Phase 3: build
             build_ctx = BuildContext(
                 intent=target.intent,
                 validations=visible_validations,
                 project_root=self.project_root,
                 output_dir=output_dir,
                 generation_id=generation_id,
-                dependency_names=target.intent.depends_on,
+                dependency_names=dep_names,
                 project_intent=project_intent,
             )
 
+            t0 = time.monotonic()
+            started = datetime.now()
             try:
-                files = target_agent.build(build_ctx)
-
-                result = BuildResult(
-                    target=target.name,
-                    generation_id=generation_id,
-                    success=True,
-                    generated_at=datetime.now(),
-                    files=files,
-                    output_dir=output_dir,
-                )
-                self.state_manager.save_build_result(result)
-                self.state_manager.update_target_status(
-                    target.name, TargetStatus.BUILT
-                )
-                logger.info(
-                    "Successfully built target: %s (%s)",
-                    target.name,
-                    generation_id,
-                )
-
+                agent_files = target_agent.build(build_ctx)
+                elapsed = time.monotonic() - t0
+                build_summary = f"Agent generated {len(agent_files)} files"
+                steps.append(BuildStep(
+                    phase=BuildPhase.BUILD,
+                    status=StepStatus.SUCCESS,
+                    started_at=started,
+                    ended_at=datetime.now(),
+                    duration_seconds=round(elapsed, 3),
+                    summary=build_summary,
+                ))
+                _print_step(target.name, "build", build_summary, elapsed)
             except Exception as e:
+                elapsed = time.monotonic() - t0
+                steps.append(BuildStep(
+                    phase=BuildPhase.BUILD,
+                    status=StepStatus.FAILED,
+                    started_at=started,
+                    ended_at=datetime.now(),
+                    duration_seconds=round(elapsed, 3),
+                    summary=f"Failed: {e}",
+                    error=str(e),
+                ))
+                _print_step(target.name, "build", f"FAILED: {e}", elapsed, failed=True)
+                build_failed = True
+
+            # Phase 4: post_build
+            if not build_failed:
+                t0 = time.monotonic()
+                started = datetime.now()
+                try:
+                    diff_stat = self.git_manager.get_diff_stat(
+                        paths=[output_dir], include_untracked=True,
+                    )
+                    diff = self.git_manager.get_diff(
+                        paths=[output_dir], include_untracked=True,
+                    )
+                    elapsed = time.monotonic() - t0
+                    files_changed = len(agent_files)
+                    summary = diff_stat.splitlines()[-1].strip() if diff_stat.strip() else f"{files_changed} files changed"
+                    steps.append(BuildStep(
+                        phase=BuildPhase.POST_BUILD,
+                        status=StepStatus.SUCCESS,
+                        started_at=started,
+                        ended_at=datetime.now(),
+                        duration_seconds=round(elapsed, 3),
+                        summary=summary,
+                        files_changed=files_changed,
+                        diff_stat=diff_stat,
+                        diff=diff,
+                    ))
+                    _print_step(target.name, "post_build", summary, elapsed)
+                except Exception as e:
+                    elapsed = time.monotonic() - t0
+                    steps.append(BuildStep(
+                        phase=BuildPhase.POST_BUILD,
+                        status=StepStatus.FAILED,
+                        started_at=started,
+                        ended_at=datetime.now(),
+                        duration_seconds=round(elapsed, 3),
+                        summary=f"Failed: {e}",
+                        error=str(e),
+                    ))
+            else:
+                steps.append(BuildStep(
+                    phase=BuildPhase.POST_BUILD,
+                    status=StepStatus.SKIPPED,
+                    started_at=datetime.now(),
+                    ended_at=datetime.now(),
+                    summary="Skipped (build failed)",
+                ))
+
+            # Phase 5: validate (always skipped during build - run via 'intentc validate')
+            if not build_failed and target.validations:
+                steps.append(BuildStep(
+                    phase=BuildPhase.VALIDATE,
+                    status=StepStatus.SKIPPED,
+                    started_at=datetime.now(),
+                    ended_at=datetime.now(),
+                    summary="Validation available via 'intentc validate'",
+                ))
+            else:
+                steps.append(BuildStep(
+                    phase=BuildPhase.VALIDATE,
+                    status=StepStatus.SKIPPED,
+                    started_at=datetime.now(),
+                    ended_at=datetime.now(),
+                    summary="Skipped" if build_failed else "No validations defined",
+                ))
+
+            # Compute totals and save result
+            total_duration = sum(s.duration_seconds for s in steps)
+
+            if build_failed:
+                build_error = steps[2].error  # build phase is always index 2
                 result = BuildResult(
                     target=target.name,
                     generation_id=generation_id,
                     success=False,
-                    error=str(e),
+                    error=build_error,
                     generated_at=datetime.now(),
                     output_dir=output_dir,
+                    steps=steps,
+                    total_duration_seconds=round(total_duration, 3),
                 )
                 self.state_manager.save_build_result(result)
                 self.state_manager.update_target_status(
                     target.name, TargetStatus.FAILED
                 )
                 raise RuntimeError(
-                    f"Failed to build target: {target.name}: {e}"
-                ) from e
+                    f"Failed to build target: {target.name}: {build_error}"
+                ) from None
+            else:
+                result = BuildResult(
+                    target=target.name,
+                    generation_id=generation_id,
+                    success=True,
+                    generated_at=datetime.now(),
+                    files=agent_files,
+                    output_dir=output_dir,
+                    steps=steps,
+                    total_duration_seconds=round(total_duration, 3),
+                )
+                self.state_manager.save_build_result(result)
+                self.state_manager.update_target_status(
+                    target.name, TargetStatus.BUILT
+                )
+                import sys
+                print(
+                    f"Built {target.name} ({generation_id}) in {total_duration:.1f}s",
+                    file=sys.stderr,
+                )
+                logger.info(
+                    "Successfully built target: %s (%s)",
+                    target.name,
+                    generation_id,
+                )
 
     # ------------------------------------------------------------------
     # clean

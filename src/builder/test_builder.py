@@ -14,7 +14,10 @@ from builder.builder import Builder, BuildOptions
 from config.config import Config, get_default_config
 from core.types import (
     AgentProfile,
+    BuildPhase,
     BuildResult,
+    BuildStep,
+    StepStatus,
     Target,
     TargetStatus,
     Validation,
@@ -100,6 +103,10 @@ class MockAgent:
 class MockGitManager:
     """Mock git manager for testing."""
 
+    def __init__(self):
+        self.diff_result = ""
+        self.diff_stat_result = ""
+
     def initialize(self, project_root: str) -> None:
         pass
 
@@ -111,6 +118,12 @@ class MockGitManager:
 
     def commit(self, message: str) -> None:
         pass
+
+    def get_diff(self, paths=None, include_untracked=False):
+        return self.diff_result
+
+    def get_diff_stat(self, paths=None, include_untracked=False):
+        return self.diff_stat_result
 
 
 def _mock_builder(
@@ -1047,3 +1060,144 @@ class TestBuildContext:
         ctx = agent.build_calls[0]
         expected = os.path.abspath(os.path.join(simple_project, "out"))
         assert ctx.output_dir == expected
+
+
+# ---------------------------------------------------------------------------
+# Tests: build steps
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSteps:
+    """Tests for structured build step emission."""
+
+    def test_build_result_has_steps(self, simple_project):
+        """A successful build produces steps with the expected phases."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        phases = [s.phase for s in result.steps]
+        assert BuildPhase.RESOLVE_DEPS in phases
+        assert BuildPhase.READ_PLAN in phases
+        assert BuildPhase.BUILD in phases
+        assert BuildPhase.POST_BUILD in phases
+
+    def test_steps_have_timing(self, simple_project):
+        """Each step has duration_seconds >= 0 and started_at/ended_at set."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        for step in result.steps:
+            assert step.duration_seconds >= 0
+            assert step.started_at is not None
+            assert step.ended_at is not None
+
+    def test_total_duration(self, simple_project):
+        """total_duration_seconds equals the sum of step durations."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        expected = round(sum(s.duration_seconds for s in result.steps), 3)
+        assert result.total_duration_seconds == expected
+
+    def test_successful_steps_have_success_status(self, simple_project):
+        """All non-validate steps in a successful build have status=success."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        for step in result.steps:
+            if step.phase != BuildPhase.VALIDATE:
+                assert step.status == StepStatus.SUCCESS
+
+    def test_build_failure_records_failed_step(self, simple_project):
+        """When agent fails, the build step has status=failed with error."""
+        state = MockStateManager()
+        agent = MockAgent(error=RuntimeError("Agent crashed"))
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+
+        with pytest.raises(RuntimeError):
+            builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        build_step = [
+            s for s in result.steps if s.phase == BuildPhase.BUILD
+        ][0]
+        assert build_step.status == StepStatus.FAILED
+        assert "Agent crashed" in build_step.error
+
+    def test_post_build_captures_diff(self, simple_project):
+        """post_build step captures diff and diff_stat from git manager."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        git.diff_result = "diff --git a/auth.py b/auth.py\n+hello"
+        git.diff_stat_result = " auth.py | 1 +\n 1 file changed, 1 insertion(+)"
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        post_step = [
+            s for s in result.steps if s.phase == BuildPhase.POST_BUILD
+        ][0]
+        assert post_step.diff == git.diff_result
+        assert post_step.diff_stat == git.diff_stat_result
+
+    def test_resolve_deps_summary(self, dep_project):
+        """For dep_project, api target has '1' in resolve summary."""
+        state = MockStateManager()
+        agent = MockAgent(files=["output.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(dep_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["api"]
+        resolve_step = [
+            s for s in result.steps if s.phase == BuildPhase.RESOLVE_DEPS
+        ][0]
+        assert "1" in resolve_step.summary
+
+    def test_read_plan_summary(self, simple_project):
+        """Summary mentions the target name 'auth'."""
+        state = MockStateManager()
+        agent = MockAgent(files=["auth.py"])
+        git = MockGitManager()
+        cfg = get_default_config()
+
+        builder = _mock_builder(simple_project, agent, state, git, cfg)
+        builder.build(BuildOptions())
+
+        result = state.results["auth"]
+        read_step = [
+            s for s in result.steps if s.phase == BuildPhase.READ_PLAN
+        ][0]
+        assert "auth" in read_step.summary
