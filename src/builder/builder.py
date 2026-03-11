@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from datetime import datetime
 from typing import Any, Protocol
@@ -34,7 +35,6 @@ logger = logging.getLogger("intentc.builder")
 
 def _print_step(target: str, phase: str, summary: str, duration: float, *, failed: bool = False) -> None:
     """Print structured step progress to stderr."""
-    import sys
     print(f"[{target}] {phase}... {summary} ({duration:.1f}s)", file=sys.stderr)
 
 
@@ -390,7 +390,6 @@ class Builder:
                 self.state_manager.update_target_status(
                     target.name, TargetStatus.BUILT
                 )
-                import sys
                 print(
                     f"Built {target.name} ({generation_id}) in {total_duration:.1f}s",
                     file=sys.stderr,
