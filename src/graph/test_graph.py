@@ -393,3 +393,39 @@ class TestVisualize:
             assert name in output
         # Tree connector characters should be present
         assert "├" in output or "└" in output
+
+
+# ---------------------------------------------------------------------------
+# DAG with glob dependencies
+# ---------------------------------------------------------------------------
+
+class TestDAGWithGlobs:
+    def test_resolve_expands_globs(self) -> None:
+        t1 = Target(name="core/parser", intent=Intent(name="core/parser", depends_on=[]))
+        t2 = Target(name="core/graph", intent=Intent(name="core/graph", depends_on=[]))
+        t3 = Target(name="build/builder", intent=Intent(name="build/builder", depends_on=["core/*"]))
+
+        dag = DAG()
+        dag.add_target(t1)
+        dag.add_target(t2)
+        dag.add_target(t3)
+        dag.resolve()
+
+        builder_node = dag.nodes["build/builder"]
+        dep_names = sorted(d.name for d in builder_node.dependencies)
+        assert dep_names == ["core/graph", "core/parser"]
+
+    def test_resolve_expands_mixed_globs_and_literals(self) -> None:
+        t1 = Target(name="core/intent", intent=Intent(name="core/intent", depends_on=[]))
+        t2 = Target(name="core/parser", intent=Intent(name="core/parser", depends_on=["core/intent"]))
+        t3 = Target(name="agents/base", intent=Intent(name="agents/base", depends_on=[]))
+        t4 = Target(name="build/builder", intent=Intent(name="build/builder", depends_on=["core/*", "agents/base"]))
+
+        dag = DAG()
+        for t in [t1, t2, t3, t4]:
+            dag.add_target(t)
+        dag.resolve()
+
+        builder_node = dag.nodes["build/builder"]
+        dep_names = sorted(d.name for d in builder_node.dependencies)
+        assert dep_names == ["agents/base", "core/intent", "core/parser"]

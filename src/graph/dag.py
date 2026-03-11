@@ -47,14 +47,20 @@ class DAG:
     def resolve(self) -> None:
         """Resolve dependency edges from each target's intent.depends_on.
 
+        Expands glob patterns (e.g., "core/*") before resolving edges.
         After resolution, updates self.roots to contain all nodes with no
         dependencies.
 
         Raises DAGError for unknown dependencies or self-dependencies.
         """
+        from parser.parser import expand_dependency_globs
+
+        known_names = set(self.nodes.keys())
+
         for node in self.nodes.values():
-            depends_on = node.target.intent.depends_on
-            for dep_name in depends_on:
+            raw_deps = node.target.intent.depends_on
+            expanded_deps = expand_dependency_globs(raw_deps, known_names)
+            for dep_name in expanded_deps:
                 if dep_name == node.name:
                     raise DAGError(
                         f"graph: target '{node.name}' depends on itself"

@@ -304,11 +304,11 @@ class Builder:
                 for t in registry.get_all_targets():
                     dag.add_target(t)
                 dag.resolve()
-                for t in dag.topological_sort():
-                    if target in t.intent.depends_on:
-                        self.state_manager.update_target_status(
-                            t.name, TargetStatus.OUTDATED
-                        )
+                affected = dag.get_affected(target)
+                for t in affected:
+                    self.state_manager.update_target_status(
+                        t.name, TargetStatus.OUTDATED
+                    )
             except Exception:
                 pass
         else:
