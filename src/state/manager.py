@@ -123,7 +123,9 @@ class FileStateManager:
         return os.path.join(self._ensure_scoped(), "builds")
 
     def _target_dir(self, target_name: str) -> str:
-        return os.path.join(self._builds_dir, target_name)
+        # Replace '/' with '--' to create flat, safe directory names
+        safe_name = target_name.replace("/", "--")
+        return os.path.join(self._builds_dir, safe_name)
 
     def _latest_path(self, target_name: str) -> str:
         return os.path.join(self._target_dir(target_name), "latest.json")

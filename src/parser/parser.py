@@ -48,6 +48,39 @@ _SUPPORTED_VERSIONS = {1}
 _VALIDATION_CORE_FIELDS = {"name", "type", "hidden"}
 
 
+def expand_dependency_globs(
+    deps: list[str], known_targets: set[str]
+) -> list[str]:
+    """Expand wildcard patterns in dependency lists.
+
+    Supports:
+      - "module/*" -> all targets whose parent module is "module"
+        (direct children only, not grandchildren)
+      - Literal names are passed through unchanged.
+
+    Returns a deduplicated list preserving order of first occurrence.
+    """
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for dep in deps:
+        if dep.endswith("/*"):
+            prefix = dep[:-2]  # e.g., "core" from "core/*"
+            for name in sorted(known_targets):
+                # Direct child: starts with prefix/ and has no further /
+                if name.startswith(prefix + "/"):
+                    remainder = name[len(prefix) + 1 :]
+                    if "/" not in remainder and name not in seen:
+                        seen.add(name)
+                        result.append(name)
+        else:
+            if dep not in seen:
+                seen.add(dep)
+                result.append(dep)
+
+    return result
+
+
 def _split_frontmatter(text: str, file_path: str) -> tuple[str, str]:
     """Split a file's text into YAML frontmatter and markdown body.
 
@@ -278,6 +311,15 @@ class TargetRegistry:
     def load_targets(self) -> None:
         """Walk the intent/ directory, parse all .ic and .icv files, build target map.
 
+        Recursively discovers targets at any nesting depth. The target name is
+        derived from the relative path from intent/ to the directory containing
+        the .ic file, using '/' as separator:
+          - intent/core/core.ic -> name "core"
+          - intent/core/parser/parser.ic -> name "core/parser"
+
+        Directories that contain no .ic file are pure module containers and
+        are skipped.
+
         Raises:
             FileNotFoundError: If intent/ directory does not exist.
             ValueError: If any spec file has parse errors.
@@ -290,45 +332,37 @@ class TargetRegistry:
         self._targets.clear()
         self._project_intent = None
 
-        # Parse project.ic if it exists.
         project_ic_path = os.path.join(self._intent_dir, "project.ic")
         if os.path.isfile(project_ic_path):
             self._project_intent = ParseIntentFile(project_ic_path)
 
-        # Walk subdirectories of intent/.
-        for entry in sorted(os.listdir(self._intent_dir)):
-            entry_path = os.path.join(self._intent_dir, entry)
-            if not os.path.isdir(entry_path):
+        for dirpath, dirnames, filenames in os.walk(self._intent_dir):
+            if os.path.abspath(dirpath) == os.path.abspath(self._intent_dir):
                 continue
 
-            # Look for a .ic file in this directory.
-            ic_files = [
-                f for f in os.listdir(entry_path) if f.endswith(".ic")
-            ]
+            ic_files = sorted(f for f in filenames if f.endswith(".ic"))
             if not ic_files:
                 continue
 
-            # Use the first .ic file found (typically {dirname}.ic).
-            ic_file = ic_files[0]
-            ic_path = os.path.join(entry_path, ic_file)
+            rel_path = os.path.relpath(dirpath, self._intent_dir)
+            target_name = rel_path.replace(os.sep, "/")
+
+            ic_path = os.path.join(dirpath, ic_files[0])
             intent = ParseIntentFile(ic_path)
 
-            # Collect all .icv files in the directory.
-            icv_files = sorted(
-                f for f in os.listdir(entry_path) if f.endswith(".icv")
-            )
+            icv_files = sorted(f for f in filenames if f.endswith(".icv"))
             validation_files: list[ValidationFile] = []
             for icv_file in icv_files:
-                icv_path = os.path.join(entry_path, icv_file)
+                icv_path = os.path.join(dirpath, icv_file)
                 vf = ParseValidationFile(icv_path)
                 validation_files.append(vf)
 
             target = Target(
-                name=entry,
+                name=target_name,
                 intent=intent,
                 validations=validation_files,
             )
-            self._targets[entry] = target
+            self._targets[target_name] = target
 
     def get_target(self, name: str) -> Target:
         """Look up a target by name.
@@ -647,6 +681,7 @@ def validate_all_specs(project_root: str) -> list[SchemaViolation]:
     """Walk the intent/ directory and validate all spec files.
 
     Performs both per-file schema validation and cross-file consistency checks.
+    Recursively discovers features at any nesting depth under intent/.
 
     Returns an aggregate list of all violations found.
     """
@@ -668,11 +703,11 @@ def validate_all_specs(project_root: str) -> list[SchemaViolation]:
 
     # Track feature names for duplicate detection.
     feature_names: set[str] = set()
-    # Track all discovered feature directory names for depends_on validation.
+    # Track all discovered feature paths for depends_on validation.
     feature_dirs: set[str] = set()
     # Collect intents for cross-file validation.
-    feature_intents: dict[str, Intent] = {}  # dir_name -> Intent
-    feature_validation_files: dict[str, list[ValidationFile]] = {}  # dir_name -> [VF]
+    feature_intents: dict[str, Intent] = {}  # feature_path -> Intent
+    feature_validation_files: dict[str, list[ValidationFile]] = {}  # feature_path -> [VF]
 
     # --- Validate project.ic ---
     project_ic_path = os.path.join(intent_dir, "project.ic")
@@ -690,41 +725,44 @@ def validate_all_specs(project_root: str) -> list[SchemaViolation]:
                 )
             )
 
-    # --- Walk feature subdirectories ---
-    for entry in sorted(os.listdir(intent_dir)):
-        entry_path = os.path.join(intent_dir, entry)
-        if not os.path.isdir(entry_path):
+    # --- Recursively walk feature subdirectories ---
+    for dirpath, dirnames, filenames in os.walk(intent_dir):
+        if os.path.abspath(dirpath) == os.path.abspath(intent_dir):
             continue
 
-        dir_name = entry
-        feature_dirs.add(dir_name)
+        # Find .ic and .icv files in this directory.
+        ic_files = sorted(f for f in filenames if f.endswith(".ic"))
+        icv_files = sorted(f for f in filenames if f.endswith(".icv"))
 
-        # Find .ic files.
-        ic_files = sorted(f for f in os.listdir(entry_path) if f.endswith(".ic"))
-        icv_files = sorted(f for f in os.listdir(entry_path) if f.endswith(".icv"))
+        # Derive feature path from relative path.
+        rel_path = os.path.relpath(dirpath, intent_dir)
+        feature_path = rel_path.replace(os.sep, "/")
 
+        # Register all walked directories (that contain .ic files) as feature dirs.
         if not ic_files:
             # Directory exists but has no .ic file -- not a feature, skip.
             continue
 
+        feature_dirs.add(feature_path)
+
         # Parse the .ic file.
-        ic_path = os.path.join(entry_path, ic_files[0])
+        ic_path = os.path.join(dirpath, ic_files[0])
         try:
             intent = ParseIntentFile(ic_path)
             intent_violations = validate_intent_schema(intent)
             violations.extend(intent_violations)
 
-            feature_intents[dir_name] = intent
+            feature_intents[feature_path] = intent
 
-            # Cross-file: name must match directory name.
-            if intent.name != dir_name:
+            # Cross-file: name must match directory path.
+            if intent.name != feature_path:
                 violations.append(
                     SchemaViolation(
                         file_path=ic_path,
                         field="name",
                         message=(
                             f"parser: {ic_path}: name '{intent.name}' does not match "
-                            f"directory name '{dir_name}'"
+                            f"directory path '{feature_path}'"
                         ),
                         severity="error",
                     )
@@ -755,22 +793,22 @@ def validate_all_specs(project_root: str) -> list[SchemaViolation]:
         # Parse .icv files.
         vf_list: list[ValidationFile] = []
         for icv_file in icv_files:
-            icv_path = os.path.join(entry_path, icv_file)
+            icv_path = os.path.join(dirpath, icv_file)
             try:
                 vf = ParseValidationFile(icv_path)
                 vf_violations = validate_validation_schema(vf)
                 violations.extend(vf_violations)
                 vf_list.append(vf)
 
-                # Cross-file: .icv target must match directory name.
-                if vf.target != dir_name:
+                # Cross-file: .icv target must match directory path.
+                if vf.target != feature_path:
                     violations.append(
                         SchemaViolation(
                             file_path=icv_path,
                             field="target",
                             message=(
                                 f"parser: {icv_path}: target '{vf.target}' does not match "
-                                f"directory name '{dir_name}'"
+                                f"directory path '{feature_path}'"
                             ),
                             severity="error",
                         )
@@ -786,11 +824,12 @@ def validate_all_specs(project_root: str) -> list[SchemaViolation]:
                     )
                 )
 
-        feature_validation_files[dir_name] = vf_list
+        feature_validation_files[feature_path] = vf_list
 
     # --- Cross-file: depends_on references must exist ---
-    for dir_name, intent in feature_intents.items():
-        for dep in intent.depends_on:
+    for feature_path, intent in feature_intents.items():
+        expanded_deps = expand_dependency_globs(intent.depends_on, feature_dirs)
+        for dep in expanded_deps:
             if dep not in feature_dirs:
                 violations.append(
                     SchemaViolation(

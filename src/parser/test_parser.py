@@ -19,6 +19,7 @@ from parser.parser import (
     ParseIntentFile,
     ParseValidationFile,
     TargetRegistry,
+    expand_dependency_globs,
     validate_all_specs,
     validate_intent_schema,
     validate_project_intent,
@@ -1084,25 +1085,25 @@ class TestValidateAllSpecs:
         assert "intent directory not found" in violations[0].message
 
     def test_name_directory_mismatch(self, tmp_path: Path) -> None:
-        """Feature name not matching directory name produces a violation."""
+        """Feature name not matching directory path produces a violation."""
         root = str(tmp_path)
         # Create auth directory but set name to "authentication"
         _make_ic(root, "auth", name="authentication")
 
         violations = validate_all_specs(root)
         assert any(
-            "does not match directory name" in v.message for v in violations
+            "does not match directory path" in v.message for v in violations
         )
 
     def test_icv_target_directory_mismatch(self, tmp_path: Path) -> None:
-        """icv target not matching directory name produces a violation."""
+        """icv target not matching directory path produces a violation."""
         root = str(tmp_path)
         _make_ic(root, "auth")
         _make_icv(root, "auth", target="wrong-target")
 
         violations = validate_all_specs(root)
         assert any(
-            "target 'wrong-target' does not match directory name 'auth'" in v.message
+            "target 'wrong-target' does not match directory path 'auth'" in v.message
             for v in violations
         )
 
@@ -1152,7 +1153,7 @@ class TestValidateAllSpecs:
         # Should flag duplicate name and/or name-directory mismatch.
         messages = [v.message for v in violations]
         assert any("duplicate feature name 'auth'" in m for m in messages) or any(
-            "does not match directory name" in m for m in messages
+            "does not match directory path" in m for m in messages
         )
 
     def test_aggregates_schema_violations(self, tmp_path: Path) -> None:
@@ -1374,3 +1375,239 @@ validations:
         assert v.parameters["exit_code"] == 0
         assert v.parameters["stdout_contains"] == ["PASS"]
         assert v.parameters["stderr_contains"] == []
+
+
+# ===========================================================================
+# Nested TargetRegistry tests
+# ===========================================================================
+
+
+def _make_nested_ic(
+    tmpdir: str,
+    feature_path: str,
+    name: str | None = None,
+    version: int = 1,
+    depends_on: list[str] | None = None,
+    tags: list[str] | None = None,
+    profile: str = "",
+    body: str = "# Description\n",
+) -> str:
+    """Create a .ic file in a (possibly nested) feature directory.
+
+    feature_path uses '/' separators, e.g. "core/parser".
+    The .ic filename is the last component of the path.
+    """
+    name = name or feature_path
+    deps = depends_on or []
+    tag_list = tags or []
+
+    lines = ["---"]
+    lines.append(f"name: {name}")
+    lines.append(f"version: {version}")
+    if deps:
+        lines.append(f"depends_on: [{', '.join(deps)}]")
+    if tag_list:
+        lines.append(f"tags: [{', '.join(tag_list)}]")
+    if profile:
+        lines.append(f"profile: {profile}")
+    lines.append("---")
+    lines.append("")
+    lines.append(body)
+
+    content = "\n".join(lines)
+    leaf = feature_path.split("/")[-1]
+    path = os.path.join(tmpdir, "intent", feature_path.replace("/", os.sep), f"{leaf}.ic")
+    return _write_file(path, content)
+
+
+def _make_nested_icv(
+    tmpdir: str,
+    feature_path: str,
+    target: str | None = None,
+    filename: str = "validations.icv",
+    version: int = 1,
+    judge_profile: str = "",
+    validations: list[dict] | None = None,
+    body: str = "# Validations\n",
+) -> str:
+    """Create a .icv file in a (possibly nested) feature directory."""
+    target = target or feature_path
+    if validations is None:
+        validations = [
+            {"name": "check-exists", "type": "file_check", "path": "src/main.py"}
+        ]
+
+    lines = ["---"]
+    lines.append(f"target: {target}")
+    lines.append(f"version: {version}")
+    if judge_profile:
+        lines.append(f"judge_profile: {judge_profile}")
+    lines.append("validations:")
+    for v in validations:
+        lines.append(f"  - name: {v['name']}")
+        lines.append(f"    type: {v['type']}")
+        for k, val in v.items():
+            if k in ("name", "type"):
+                continue
+            if isinstance(val, list):
+                lines.append(f"    {k}: [{', '.join(str(x) for x in val)}]")
+            elif isinstance(val, str) and "\n" in val:
+                lines.append(f"    {k}: |")
+                for line in val.split("\n"):
+                    lines.append(f"      {line}")
+            else:
+                lines.append(f"    {k}: {val}")
+    lines.append("---")
+    lines.append("")
+    lines.append(body)
+
+    content = "\n".join(lines)
+    path = os.path.join(tmpdir, "intent", feature_path.replace("/", os.sep), filename)
+    return _write_file(path, content)
+
+
+class TestNestedTargetRegistry:
+    """Tests for recursive target discovery in TargetRegistry."""
+
+    def test_discovers_nested_targets(self, tmp_path: Path) -> None:
+        """Registry finds targets in nested dirs (depth 2)."""
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "intent"))
+        _make_nested_ic(root, "core")
+        _make_nested_ic(root, "core/parser")
+
+        registry = TargetRegistry(root)
+        registry.load_targets()
+
+        targets = registry.get_all_targets()
+        names = [t.name for t in targets]
+        assert "core" in names
+        assert "core/parser" in names
+        assert len(targets) == 2
+
+    def test_discovers_deeply_nested_targets(self, tmp_path: Path) -> None:
+        """Registry finds targets 3+ levels deep."""
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "intent"))
+        _make_nested_ic(root, "a")
+        _make_nested_ic(root, "a/b")
+        _make_nested_ic(root, "a/b/c")
+
+        registry = TargetRegistry(root)
+        registry.load_targets()
+
+        targets = registry.get_all_targets()
+        names = [t.name for t in targets]
+        assert "a" in names
+        assert "a/b" in names
+        assert "a/b/c" in names
+        assert len(targets) == 3
+
+    def test_module_dirs_without_ic_are_skipped(self, tmp_path: Path) -> None:
+        """Pure module dirs (no .ic file) are not targets."""
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "intent"))
+        # Create core/ as a module container with no .ic
+        os.makedirs(os.path.join(root, "intent", "core"))
+        # Only core/parser has a .ic file
+        _make_nested_ic(root, "core/parser")
+
+        registry = TargetRegistry(root)
+        registry.load_targets()
+
+        targets = registry.get_all_targets()
+        names = [t.name for t in targets]
+        assert "core/parser" in names
+        assert "core" not in names
+        assert len(targets) == 1
+
+    def test_top_level_targets_still_work(self, tmp_path: Path) -> None:
+        """Backward compatibility: flat targets still discovered."""
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "intent"))
+        _make_ic(root, "auth")
+        _make_ic(root, "core")
+
+        registry = TargetRegistry(root)
+        registry.load_targets()
+
+        targets = registry.get_all_targets()
+        names = [t.name for t in targets]
+        assert "auth" in names
+        assert "core" in names
+        assert len(targets) == 2
+
+    def test_nested_validations_discovered(self, tmp_path: Path) -> None:
+        """.icv files in nested dirs are found."""
+        root = str(tmp_path)
+        os.makedirs(os.path.join(root, "intent"))
+        _make_nested_ic(root, "core/parser")
+        _make_nested_icv(root, "core/parser", validations=[
+            {"name": "parser-exists", "type": "file_check", "path": "src/parser.py"},
+        ])
+
+        registry = TargetRegistry(root)
+        registry.load_targets()
+
+        target = registry.get_target("core/parser")
+        assert target.name == "core/parser"
+        assert len(target.validations) == 1
+        assert target.validations[0].target == "core/parser"
+
+
+# ===========================================================================
+# expand_dependency_globs tests
+# ===========================================================================
+
+
+class TestExpandDependencyGlobs:
+    """Tests for expand_dependency_globs."""
+
+    def test_no_globs_passthrough(self) -> None:
+        """Literal deps pass through unchanged."""
+        known = {"core", "auth", "api"}
+        result = expand_dependency_globs(["core", "auth"], known)
+        assert result == ["core", "auth"]
+
+    def test_star_expands_direct_children(self) -> None:
+        """'module/*' expands to direct children of that module."""
+        known = {"core", "core/parser", "core/types", "auth"}
+        result = expand_dependency_globs(["core/*"], known)
+        assert "core/parser" in result
+        assert "core/types" in result
+        # The module itself should not be included
+        assert "core" not in result
+        assert "auth" not in result
+
+    def test_star_does_not_expand_grandchildren(self) -> None:
+        """'module/*' does NOT expand to grandchildren."""
+        known = {"core", "core/parser", "core/parser/lexer", "core/types"}
+        result = expand_dependency_globs(["core/*"], known)
+        assert "core/parser" in result
+        assert "core/types" in result
+        assert "core/parser/lexer" not in result
+
+    def test_mixed_globs_and_literals(self) -> None:
+        """Mix of literal names and globs works."""
+        known = {"core", "core/parser", "core/types", "auth"}
+        result = expand_dependency_globs(["auth", "core/*"], known)
+        assert result[0] == "auth"
+        assert "core/parser" in result
+        assert "core/types" in result
+
+    def test_unknown_glob_returns_empty(self) -> None:
+        """Glob for a module with no children returns nothing for that glob."""
+        known = {"core", "auth"}
+        result = expand_dependency_globs(["nonexistent/*"], known)
+        assert result == []
+
+    def test_deduplication(self) -> None:
+        """Duplicate entries are removed, preserving first occurrence order."""
+        known = {"core", "core/parser", "core/types"}
+        result = expand_dependency_globs(
+            ["core/parser", "core/*"], known
+        )
+        # core/parser appears as literal first, then glob would add it again
+        assert result.count("core/parser") == 1
+        assert result[0] == "core/parser"
+        assert "core/types" in result

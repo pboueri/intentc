@@ -455,3 +455,58 @@ def test_output_dir_key_uses_basename():
     assert _output_dir_key("/home/user/project/src") == "src"
     assert _output_dir_key("/tmp/build") == "build"
     assert _output_dir_key("relative/path/output") == "output"
+
+
+class TestPathBasedTargetNames:
+    """Test that target names containing '/' work correctly."""
+
+    def test_save_and_load_nested_target(self, tmp_path) -> None:
+        sm = FileStateManager(str(tmp_path))
+        sm.initialize()
+        sm.set_output_dir(str(tmp_path / "output"))
+
+        result = BuildResult(
+            target="core/parser",
+            generation_id="gen-123",
+            success=True,
+            files=["src/parser.py"],
+            output_dir=str(tmp_path / "output"),
+        )
+        sm.save_build_result(result)
+        loaded = sm.get_latest_build_result("core/parser")
+        assert loaded.target == "core/parser"
+        assert loaded.success is True
+
+    def test_status_with_slashes(self, tmp_path) -> None:
+        sm = FileStateManager(str(tmp_path))
+        sm.initialize()
+        sm.set_output_dir(str(tmp_path / "output"))
+
+        sm.update_target_status("core/parser", TargetStatus.BUILT)
+        assert sm.get_target_status("core/parser") == TargetStatus.BUILT
+
+    def test_reset_nested_target(self, tmp_path) -> None:
+        sm = FileStateManager(str(tmp_path))
+        sm.initialize()
+        sm.set_output_dir(str(tmp_path / "output"))
+
+        sm.update_target_status("build/state", TargetStatus.BUILT)
+        sm.reset_target("build/state")
+        assert sm.get_target_status("build/state") == TargetStatus.PENDING
+
+    def test_list_builds_nested_target(self, tmp_path) -> None:
+        sm = FileStateManager(str(tmp_path))
+        sm.initialize()
+        sm.set_output_dir(str(tmp_path / "output"))
+
+        result = BuildResult(
+            target="validation/file_check",
+            generation_id="gen-456",
+            success=True,
+            files=[],
+            output_dir=str(tmp_path / "output"),
+        )
+        sm.save_build_result(result)
+        builds = sm.list_build_results("validation/file_check")
+        assert len(builds) == 1
+        assert builds[0].target == "validation/file_check"
