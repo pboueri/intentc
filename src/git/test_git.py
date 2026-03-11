@@ -390,3 +390,106 @@ def test_full_workflow(tmp_path):
     hash2 = mgr.get_commit_hash()
     assert hash2 != hash1
     assert len(hash2) == 40
+
+
+# ---------------------------------------------------------------------------
+# get_diff / get_diff_stat
+# ---------------------------------------------------------------------------
+
+class TestGitDiff:
+    def test_get_diff_empty_on_clean_repo(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        assert mgr.get_diff() == ""
+
+    def test_get_diff_shows_changes(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        # Create and commit a file, then modify it.
+        filepath = os.path.join(repo, "hello.txt")
+        with open(filepath, "w") as f:
+            f.write("original\n")
+        mgr.add(["hello.txt"])
+        mgr.commit("add hello.txt")
+
+        with open(filepath, "w") as f:
+            f.write("modified\n")
+
+        diff = mgr.get_diff()
+        assert "hello.txt" in diff
+        assert "-original" in diff
+        assert "+modified" in diff
+
+    def test_get_diff_with_paths(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        # Create and commit two files.
+        for name in ("a.txt", "b.txt"):
+            with open(os.path.join(repo, name), "w") as f:
+                f.write("original\n")
+        mgr.add(["a.txt", "b.txt"])
+        mgr.commit("add files")
+
+        # Modify both.
+        for name in ("a.txt", "b.txt"):
+            with open(os.path.join(repo, name), "w") as f:
+                f.write("changed\n")
+
+        diff = mgr.get_diff(paths=["a.txt"])
+        assert "a.txt" in diff
+        assert "b.txt" not in diff
+
+    def test_get_diff_stat(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        filepath = os.path.join(repo, "data.txt")
+        with open(filepath, "w") as f:
+            f.write("line1\n")
+        mgr.add(["data.txt"])
+        mgr.commit("add data.txt")
+
+        with open(filepath, "w") as f:
+            f.write("line1\nline2\n")
+
+        stat = mgr.get_diff_stat()
+        assert "1 file changed" in stat
+
+    def test_get_diff_stat_empty(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        assert mgr.get_diff_stat() == ""
+
+    def test_get_diff_includes_untracked(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _init_repo(repo)
+        mgr = GitCLIManager()
+        mgr.initialize(repo)
+
+        # Create a brand-new untracked file.
+        filepath = os.path.join(repo, "new_file.txt")
+        with open(filepath, "w") as f:
+            f.write("brand new content\n")
+
+        # Without include_untracked, new file should NOT appear.
+        diff_without = mgr.get_diff()
+        assert "new_file.txt" not in diff_without
+
+        # With include_untracked and paths, it should appear.
+        diff_with = mgr.get_diff(paths=["new_file.txt"], include_untracked=True)
+        assert "new_file.txt" in diff_with
+        assert "+brand new content" in diff_with

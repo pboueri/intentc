@@ -33,6 +33,8 @@ class GitManager(Protocol):
     def get_status(self) -> GitStatus: ...
     def get_current_branch(self) -> str: ...
     def get_commit_hash(self) -> str: ...
+    def get_diff(self, paths: list[str] | None = None, include_untracked: bool = False) -> str: ...
+    def get_diff_stat(self, paths: list[str] | None = None, include_untracked: bool = False) -> str: ...
 
 
 class GitCLIManager:
@@ -146,6 +148,32 @@ class GitCLIManager:
     def get_commit_hash(self) -> str:
         """Return the full SHA of HEAD."""
         result = self._run(["rev-parse", "HEAD"])
+        return result.stdout.strip()
+
+    def get_diff(self, paths: list[str] | None = None, include_untracked: bool = False) -> str:
+        """Get unified diff of working directory changes.
+
+        If include_untracked is True, untracked files in paths are staged
+        with --intent-to-add first so they appear in the diff.
+        """
+        if include_untracked and paths:
+            self._run(["add", "--intent-to-add"] + paths, check=False)
+        args = ["diff"]
+        if paths:
+            args.append("--")
+            args.extend(paths)
+        result = self._run(args, check=False)
+        return result.stdout
+
+    def get_diff_stat(self, paths: list[str] | None = None, include_untracked: bool = False) -> str:
+        """Get diff stat summary (e.g. '3 files changed, +10 -2')."""
+        if include_untracked and paths:
+            self._run(["add", "--intent-to-add"] + paths, check=False)
+        args = ["diff", "--stat"]
+        if paths:
+            args.append("--")
+            args.extend(paths)
+        result = self._run(args, check=False)
         return result.stdout.strip()
 
 
