@@ -55,44 +55,44 @@ def project_dir():
             "A test project for editor tests.\n"
         )
 
-    # intent/core/core.ic
-    core_dir = os.path.join(intent_dir, "core")
-    os.makedirs(core_dir)
-    with open(os.path.join(core_dir, "core.ic"), "w") as f:
+    # intent/core/intent/intent.ic (nested)
+    core_intent_dir = os.path.join(intent_dir, "core", "intent")
+    os.makedirs(core_intent_dir)
+    with open(os.path.join(core_intent_dir, "intent.ic"), "w") as f:
         f.write(
             "---\n"
-            "name: core\n"
+            "name: core/intent\n"
             "version: 1\n"
             "depends_on: []\n"
             "tags: [foundation]\n"
             "---\n\n"
-            "# Core\n\n"
-            "Core types and interfaces.\n"
+            "# Intent Type\n\n"
+            "Core intent type.\n"
         )
 
-    # intent/core/validations.icv
-    with open(os.path.join(core_dir, "validations.icv"), "w") as f:
+    # intent/core/intent/validations.icv
+    with open(os.path.join(core_intent_dir, "validations.icv"), "w") as f:
         f.write(
             "---\n"
-            "target: core\n"
+            "target: core/intent\n"
             "version: 1\n"
             "validations:\n"
-            "  - name: core-exists\n"
+            "  - name: intent-exists\n"
             "    type: folder_check\n"
             "    path: src/core\n"
             "---\n\n"
-            "# Core Validations\n"
+            "# Intent Validations\n"
         )
 
-    # intent/parser/parser.ic (depends on core)
-    parser_dir = os.path.join(intent_dir, "parser")
+    # intent/core/parser/parser.ic (nested, depends on core/intent)
+    parser_dir = os.path.join(intent_dir, "core", "parser")
     os.makedirs(parser_dir)
     with open(os.path.join(parser_dir, "parser.ic"), "w") as f:
         f.write(
             "---\n"
-            "name: parser\n"
+            "name: core/parser\n"
             "version: 1\n"
-            "depends_on: [core]\n"
+            "depends_on: [core/intent]\n"
             "tags: [parsing]\n"
             "---\n\n"
             "# Parser\n\n"
@@ -124,8 +124,8 @@ class TestGetDag:
         assert "edges" in data
 
         names = [n["name"] for n in data["nodes"]]
-        assert "core" in names
-        assert "parser" in names
+        assert "core/intent" in names
+        assert "core/parser" in names
 
     def test_nodes_have_status(self, client):
         res = client.get("/api/dag")
@@ -139,36 +139,65 @@ class TestGetDag:
     def test_edges_reflect_dependencies(self, client):
         res = client.get("/api/dag")
         data = res.json()
-        # parser depends on core, so edge from parser to core
-        edge = {"from": "parser", "to": "core"}
+        # core/parser depends on core/intent, so edge from core/parser to core/intent
+        edge = {"from": "core/parser", "to": "core/intent"}
         assert edge in data["edges"]
+
+
+class TestGetDagTree:
+    def test_returns_tree_structure(self, client):
+        res = client.get("/api/dag")
+        data = res.json()
+        assert "tree" in data
+        tree = data["tree"]
+        assert tree["type"] == "module"
+        core_mod = next(c for c in tree["children"] if c["name"] == "core")
+        assert core_mod["type"] == "module"
+        child_names = [c["name"] for c in core_mod["children"]]
+        assert "intent" in child_names
+        assert "parser" in child_names
+
+
+class TestGetUpstream:
+    def test_returns_upstream_deps(self, client):
+        res = client.get("/api/targets/core/parser/upstream")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["target"] == "core/parser"
+        assert "core/intent" in data["upstream"]
+
+    def test_root_has_no_upstream(self, client):
+        res = client.get("/api/targets/core/intent/upstream")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["upstream"] == []
 
 
 class TestGetTarget:
     def test_returns_target_details(self, client):
-        res = client.get("/api/targets/core")
+        res = client.get("/api/targets/core/intent")
         assert res.status_code == 200
         data = res.json()
-        assert data["name"] == "core"
+        assert data["name"] == "core/intent"
         assert "spec_content" in data
-        assert "name: core" in data["spec_content"]
+        assert "name: core/intent" in data["spec_content"]
         assert "status" in data
 
     def test_returns_spec_path(self, client):
-        res = client.get("/api/targets/core")
+        res = client.get("/api/targets/core/intent")
         data = res.json()
         assert "spec_path" in data
-        assert data["spec_path"].endswith("core.ic")
+        assert data["spec_path"].endswith("intent.ic")
 
     def test_returns_validations(self, client):
-        res = client.get("/api/targets/core")
+        res = client.get("/api/targets/core/intent")
         data = res.json()
         assert "validations" in data
         assert len(data["validations"]) == 1
         v = data["validations"][0]
         assert "file_path" in v
         assert "content" in v
-        assert "core-exists" in v["content"]
+        assert "intent-exists" in v["content"]
 
     def test_returns_404_for_unknown_target(self, client):
         res = client.get("/api/targets/nonexistent")
@@ -177,15 +206,15 @@ class TestGetTarget:
 
 class TestUpdateSpec:
     def test_writes_spec_to_disk(self, client, project_dir):
-        new_content = "---\nname: core\nversion: 1\n---\n\n# Updated Core\n"
+        new_content = "---\nname: core/intent\nversion: 1\n---\n\n# Updated Core\n"
         res = client.put(
-            "/api/targets/core/spec",
+            "/api/targets/core/intent/spec",
             json={"content": new_content},
         )
         assert res.status_code == 200
 
         # Verify file on disk
-        ic_path = os.path.join(project_dir, "intent", "core", "core.ic")
+        ic_path = os.path.join(project_dir, "intent", "core", "intent", "intent.ic")
         with open(ic_path) as f:
             assert f.read() == new_content
 
@@ -199,10 +228,10 @@ class TestUpdateSpec:
 
 class TestUpdateValidation:
     def test_writes_validation_to_disk(self, client, project_dir):
-        new_content = "---\ntarget: core\nversion: 1\nvalidations: []\n---\n"
-        icv_path = os.path.join(project_dir, "intent", "core", "validations.icv")
+        new_content = "---\ntarget: core/intent\nversion: 1\nvalidations: []\n---\n"
+        icv_path = os.path.join(project_dir, "intent", "core", "intent", "validations.icv")
         res = client.put(
-            "/api/targets/core/validation",
+            "/api/targets/core/intent/validation",
             json={"file_path": icv_path, "content": new_content},
         )
         assert res.status_code == 200
@@ -212,7 +241,7 @@ class TestUpdateValidation:
 
     def test_rejects_path_outside_project(self, client):
         res = client.put(
-            "/api/targets/core/validation",
+            "/api/targets/core/intent/validation",
             json={"file_path": "/tmp/evil.icv", "content": "hack"},
         )
         assert res.status_code == 400
@@ -233,17 +262,17 @@ class TestGetStatus:
         res = client.get("/api/status")
         assert res.status_code == 200
         data = res.json()
-        assert "core" in data
-        assert "parser" in data
-        assert data["core"]["status"] == "pending"
+        assert "core/intent" in data
+        assert "core/parser" in data
+        assert data["core/intent"]["status"] == "pending"
 
 
 class TestGetTargetBuilds:
     def test_returns_empty_builds(self, client):
-        res = client.get("/api/targets/core/builds")
+        res = client.get("/api/targets/core/intent/builds")
         assert res.status_code == 200
         data = res.json()
-        assert data["target"] == "core"
+        assert data["target"] == "core/intent"
         assert data["builds"] == []
 
     def test_returns_404_for_unknown_target(self, client):
@@ -253,11 +282,11 @@ class TestGetTargetBuilds:
 
 class TestTriggerClean:
     def test_clean_target(self, client):
-        res = client.post("/api/targets/core/clean")
+        res = client.post("/api/targets/core/intent/clean")
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "ok"
-        assert data["target"] == "core"
+        assert data["target"] == "core/intent"
 
     def test_clean_unknown_target(self, client):
         res = client.post("/api/targets/nonexistent/clean")
@@ -266,11 +295,11 @@ class TestTriggerClean:
 
 class TestTriggerBuild:
     def test_build_returns_started(self, client):
-        res = client.post("/api/targets/core/build")
+        res = client.post("/api/targets/core/intent/build")
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "started"
-        assert data["target"] == "core"
+        assert data["target"] == "core/intent"
 
     def test_build_unknown_target(self, client):
         res = client.post("/api/targets/nonexistent/build")
@@ -279,11 +308,11 @@ class TestTriggerBuild:
 
 class TestTriggerValidate:
     def test_validate_returns_started(self, client):
-        res = client.post("/api/targets/core/validate")
+        res = client.post("/api/targets/core/intent/validate")
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "started"
-        assert data["target"] == "core"
+        assert data["target"] == "core/intent"
 
     def test_validate_unknown_target(self, client):
         res = client.post("/api/targets/nonexistent/validate")
@@ -339,7 +368,7 @@ class TestAgentWebSocket:
 
     def test_rejects_empty_prompt(self, client):
         with client.websocket_connect("/ws/agent") as ws:
-            ws.send_text(json.dumps({"prompt": "", "target": "core"}))
+            ws.send_text(json.dumps({"prompt": "", "target": "core/intent"}))
             response = ws.receive_text()
             data = json.loads(response)
             assert data["type"] == "error"
@@ -371,11 +400,11 @@ class TestBuildContext:
     def test_builds_context_with_target(self, project_dir):
         from editor.agent_bridge import _build_context
 
-        parts = _build_context(project_dir, "core", "hello")
+        parts = _build_context(project_dir, "core/intent", "hello")
         joined = "\n\n".join(parts)
         assert "<system>" in joined
         assert "<project-intent>" in joined
-        assert '<feature-intent name="core">' in joined
+        assert '<feature-intent name="core/intent">' in joined
         assert "<user-prompt>" in joined
         assert "hello" in joined
 
@@ -392,10 +421,10 @@ class TestBuildContext:
     def test_includes_validation_files(self, project_dir):
         from editor.agent_bridge import _build_context
 
-        parts = _build_context(project_dir, "core", "test")
+        parts = _build_context(project_dir, "core/intent", "test")
         joined = "\n\n".join(parts)
         assert "<validations" in joined
-        assert "core-exists" in joined
+        assert "intent-exists" in joined
 
 
 class TestResolveAgentCommand:

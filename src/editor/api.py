@@ -15,6 +15,48 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _build_tree(nodes: list[dict]) -> dict:
+    """Build a nested tree from flat node list with path-based names."""
+    root = {"name": "root", "type": "module", "children": []}
+
+    for node in nodes:
+        parts = node["name"].split("/")
+        current = root
+        # Navigate/create module nodes for each path segment except last
+        for i, part in enumerate(parts[:-1]):
+            existing = None
+            for child in current["children"]:
+                if child["name"] == part and child.get("type") == "module":
+                    existing = child
+                    break
+            if existing is None:
+                new_module = {"name": part, "type": "module", "children": []}
+                current["children"].append(new_module)
+                existing = new_module
+            current = existing
+
+        # Add the feature node as a leaf
+        leaf = {
+            "name": parts[-1],
+            "type": "feature",
+            "path": node["name"],
+            "status": node["status"],
+            "depends_on": node["depends_on"],
+            "tags": node.get("tags", []),
+        }
+        current["children"].append(leaf)
+
+    # Sort children at each level
+    def sort_tree(node):
+        if "children" in node:
+            node["children"].sort(key=lambda c: (c.get("type") != "module", c["name"]))
+            for child in node["children"]:
+                sort_tree(child)
+
+    sort_tree(root)
+    return root
+
+
 def _get_state_manager(project_path: str):
     """Helper: create a state manager scoped to the default output dir."""
     from config.config import load_config
@@ -75,68 +117,11 @@ def get_dag():
         for dep in target.intent.depends_on:
             edges.append({"from": target.name, "to": dep})
 
-    return {"nodes": nodes, "edges": edges}
+    tree = _build_tree(nodes)
+    return {"nodes": nodes, "edges": edges, "tree": tree}
 
 
-@router.get("/targets/{name}")
-def get_target(name: str):
-    """Return a specific target's spec content, validation files, status, and latest build result."""
-    from editor.server import get_project_path
-    from parser.parser import TargetRegistry
-    from state.manager import new_state_manager
-    from config.config import load_config
-
-    project_path = get_project_path()
-
-    registry = TargetRegistry(project_root=project_path)
-    registry.load_targets()
-
-    try:
-        target = registry.get_target(name)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
-
-    # Read raw spec content from disk (including frontmatter)
-    spec_content = ""
-    if target.intent.file_path and os.path.isfile(target.intent.file_path):
-        with open(target.intent.file_path, "r", encoding="utf-8") as f:
-            spec_content = f.read()
-
-    # Read raw validation file contents from disk
-    validation_files = []
-    for vf in target.validations:
-        vf_content = ""
-        if vf.file_path and os.path.isfile(vf.file_path):
-            with open(vf.file_path, "r", encoding="utf-8") as f:
-                vf_content = f.read()
-        validation_files.append({
-            "file_path": vf.file_path,
-            "content": vf_content,
-        })
-
-    # Get status
-    sm, cfg = _get_state_manager(project_path)
-    status = sm.get_target_status(name)
-
-    # Get latest build result
-    latest_build = None
-    try:
-        result = sm.get_latest_build_result(name)
-        latest_build = json.loads(result.model_dump_json())
-    except FileNotFoundError:
-        pass
-
-    return {
-        "name": name,
-        "spec_content": spec_content,
-        "spec_path": target.intent.file_path,
-        "validations": validation_files,
-        "status": status.value,
-        "latest_build": latest_build,
-    }
-
-
-@router.put("/targets/{name}/spec")
+@router.put("/targets/{name:path}/spec")
 def update_target_spec(name: str, body: SpecUpdateRequest):
     """Write new content to a target's .ic file."""
     from editor.server import get_project_path
@@ -161,7 +146,7 @@ def update_target_spec(name: str, body: SpecUpdateRequest):
     return {"status": "ok"}
 
 
-@router.put("/targets/{name}/validation")
+@router.put("/targets/{name:path}/validation")
 def update_target_validation(name: str, body: ValidationUpdateRequest):
     """Write new content to a target's validation file."""
     from editor.server import get_project_path
@@ -251,7 +236,7 @@ def get_status():
     return statuses
 
 
-@router.get("/targets/{name}/builds")
+@router.get("/targets/{name:path}/builds")
 def get_target_builds(name: str):
     """Return build history for a specific target."""
     from editor.server import get_project_path
@@ -280,11 +265,11 @@ def get_target_builds(name: str):
 def _broadcast_sync(msg: dict) -> None:
     """Push a message to WebSocket clients from a background thread."""
     import asyncio
-    from editor.watcher import _broadcast
+    from editor.watcher import _broadcast, _event_loop
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        loop = _event_loop
+        if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(_broadcast(json.dumps(msg)), loop)
     except Exception:
         pass
@@ -316,37 +301,47 @@ def _run_build(project_path: str, target_name: str) -> None:
     from git.manager import new_git_manager
     from state.manager import new_state_manager
 
-    # Attach log handler to stream build output
+    # Attach log handler to stream build output to all relevant loggers
     handler = _WsBroadcastHandler(target_name)
     handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    build_logger = logging.getLogger("intentc.builder")
-    build_logger.addHandler(handler)
-    build_logger.setLevel(logging.DEBUG)
 
-    cfg = load_config(project_path)
-    profile = get_profile(cfg, "default")
-    agent = create_from_profile(profile)
+    loggers_to_attach = [
+        logging.getLogger("intentc.builder"),
+        logging.getLogger("agent"),
+    ]
+    for lg in loggers_to_attach:
+        lg.addHandler(handler)
+        lg.setLevel(logging.DEBUG)
 
-    sm = new_state_manager(project_path)
-    sm.initialize()
-
-    gm = new_git_manager()
-    gm.initialize(project_path)
-
-    builder = Builder(project_path, agent, sm, gm, cfg)
-    opts = BuildOptions(target=target_name, force=True)
+    _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Starting build for {target_name}..."})
 
     try:
+        cfg = load_config(project_path)
+        profile = get_profile(cfg, "default")
+        agent = create_from_profile(profile)
+
+        sm = new_state_manager(project_path)
+        sm.initialize()
+
+        gm = new_git_manager()
+        gm.initialize(project_path)
+
+        builder = Builder(project_path, agent, sm, gm, cfg)
+        opts = BuildOptions(target=target_name, force=True)
+
         builder.build(opts)
+        _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Build succeeded for {target_name}"})
         status_msg = {"type": "build_complete", "target": target_name, "success": True}
     except Exception as e:
+        _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Build failed: {e}"})
         status_msg = {"type": "build_complete", "target": target_name, "success": False, "error": str(e)}
 
-    build_logger.removeHandler(handler)
+    for lg in loggers_to_attach:
+        lg.removeHandler(handler)
     _broadcast_sync(status_msg)
 
 
-@router.post("/targets/{name}/build")
+@router.post("/targets/{name:path}/build")
 def trigger_build(name: str, background_tasks: BackgroundTasks):
     """Trigger a build for a specific target in the background."""
     from editor.server import get_project_path
@@ -370,7 +365,7 @@ def trigger_build(name: str, background_tasks: BackgroundTasks):
     return {"status": "started", "target": name}
 
 
-@router.post("/targets/{name}/clean")
+@router.post("/targets/{name:path}/clean")
 def trigger_clean(name: str):
     """Clean a specific target's build state."""
     from editor.server import get_project_path
@@ -420,24 +415,32 @@ def _run_validate(project_path: str, target_name: str) -> None:
 
     handler = _WsBroadcastHandler(target_name)
     handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    build_logger = logging.getLogger("intentc.builder")
-    build_logger.addHandler(handler)
-    build_logger.setLevel(logging.DEBUG)
 
-    cfg = load_config(project_path)
-    profile = get_profile(cfg, "default")
-    agent = create_from_profile(profile)
+    loggers_to_attach = [
+        logging.getLogger("intentc.builder"),
+        logging.getLogger("agent"),
+    ]
+    for lg in loggers_to_attach:
+        lg.addHandler(handler)
+        lg.setLevel(logging.DEBUG)
 
-    sm = new_state_manager(project_path)
-    sm.initialize()
-
-    gm = new_git_manager()
-    gm.initialize(project_path)
-
-    builder = Builder(project_path, agent, sm, gm, cfg)
+    _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Starting validation for {target_name}..."})
 
     try:
+        cfg = load_config(project_path)
+        profile = get_profile(cfg, "default")
+        agent = create_from_profile(profile)
+
+        sm = new_state_manager(project_path)
+        sm.initialize()
+
+        gm = new_git_manager()
+        gm.initialize(project_path)
+
+        builder = Builder(project_path, agent, sm, gm, cfg)
+
         report = builder.validate(target=target_name, output_dir="")
+        _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Validation complete: {report.passed}/{report.total} passed"})
         status_msg = {
             "type": "validate_complete",
             "target": target_name,
@@ -446,6 +449,7 @@ def _run_validate(project_path: str, target_name: str) -> None:
             "total": report.total,
         }
     except Exception as e:
+        _broadcast_sync({"type": "build_output", "target": target_name, "line": f"Validation failed: {e}"})
         status_msg = {
             "type": "validate_complete",
             "target": target_name,
@@ -455,11 +459,12 @@ def _run_validate(project_path: str, target_name: str) -> None:
             "error": str(e),
         }
 
-    build_logger.removeHandler(handler)
+    for lg in loggers_to_attach:
+        lg.removeHandler(handler)
     _broadcast_sync(status_msg)
 
 
-@router.post("/targets/{name}/validate")
+@router.post("/targets/{name:path}/validate")
 def trigger_validate(name: str, background_tasks: BackgroundTasks):
     """Trigger validation for a specific target in the background."""
     from editor.server import get_project_path
@@ -478,6 +483,90 @@ def trigger_validate(name: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_validate, project_path, name)
 
     return {"status": "started", "target": name}
+
+
+@router.get("/targets/{name:path}/upstream")
+def get_upstream(name: str):
+    """Return all transitive upstream dependencies for a target."""
+    from editor.server import get_project_path
+    from parser.parser import TargetRegistry
+    from graph.dag import DAG
+
+    project_path = get_project_path()
+    registry = TargetRegistry(project_root=project_path)
+    registry.load_targets()
+
+    targets = registry.get_all_targets()
+    dag = DAG()
+    for t in targets:
+        dag.add_target(t)
+    dag.resolve()
+
+    try:
+        chain = dag.get_dependency_chain(name)
+        # Remove the target itself from its chain
+        upstream = [t.name for t in chain if t.name != name]
+        return {"target": name, "upstream": upstream}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/targets/{name:path}")
+def get_target(name: str):
+    """Return a specific target's spec content, validation files, status, and latest build result."""
+    from editor.server import get_project_path
+    from parser.parser import TargetRegistry
+    from state.manager import new_state_manager
+    from config.config import load_config
+
+    project_path = get_project_path()
+
+    registry = TargetRegistry(project_root=project_path)
+    registry.load_targets()
+
+    try:
+        target = registry.get_target(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Target '{name}' not found")
+
+    # Read raw spec content from disk (including frontmatter)
+    spec_content = ""
+    if target.intent.file_path and os.path.isfile(target.intent.file_path):
+        with open(target.intent.file_path, "r", encoding="utf-8") as f:
+            spec_content = f.read()
+
+    # Read raw validation file contents from disk
+    validation_files = []
+    for vf in target.validations:
+        vf_content = ""
+        if vf.file_path and os.path.isfile(vf.file_path):
+            with open(vf.file_path, "r", encoding="utf-8") as f:
+                vf_content = f.read()
+        validation_files.append({
+            "file_path": vf.file_path,
+            "content": vf_content,
+        })
+
+    # Get status
+    sm, cfg = _get_state_manager(project_path)
+    status = sm.get_target_status(name)
+
+    # Get latest build result
+    latest_build = None
+    try:
+        result = sm.get_latest_build_result(name)
+        latest_build = json.loads(result.model_dump_json())
+    except FileNotFoundError:
+        pass
+
+    return {
+        "name": name,
+        "spec_content": spec_content,
+        "spec_path": target.intent.file_path,
+        "validations": validation_files,
+        "status": status.value,
+        "latest_build": latest_build,
+    }
 
 
 @router.get("/config")

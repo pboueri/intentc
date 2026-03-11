@@ -108,8 +108,9 @@ def _build_context(project_path: str, target_name: str, user_prompt: str) -> lis
     if target_name:
         target_dir = os.path.join(project_path, "intent", target_name)
         if os.path.isdir(target_dir):
-            # Spec file
-            ic_path = os.path.join(target_dir, f"{target_name}.ic")
+            # Spec file - use last segment of path-based name
+            leaf_name = target_name.rsplit("/", 1)[-1]
+            ic_path = os.path.join(target_dir, f"{leaf_name}.ic")
             if os.path.isfile(ic_path):
                 with open(ic_path) as f:
                     content = f.read()
