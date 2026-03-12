@@ -35,7 +35,7 @@ logger = logging.getLogger("intentc.builder")
 
 def _print_step(target: str, phase: str, summary: str, duration: float, *, failed: bool = False) -> None:
     """Print structured step progress to stderr."""
-    print(f"[{target}] {phase}... {summary} ({duration:.1f}s)", file=sys.stderr)
+    print(f"[{target}] {phase}... {summary} ({duration:.1f}s)", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ class Builder:
             # Skip if already built and not force
             status = self.state_manager.get_target_status(target.name)
             if status == TargetStatus.BUILT and not opts.force:
-                logger.info("Skipping %s (already built)", target.name)
+                print(f"[{target.name}] skipped (already built)", file=sys.stderr, flush=True)
                 continue
 
             # Resolve agent profile for this target
@@ -393,6 +393,7 @@ class Builder:
                 print(
                     f"Built {target.name} ({generation_id}) in {total_duration:.1f}s",
                     file=sys.stderr,
+                    flush=True,
                 )
                 logger.info(
                     "Successfully built target: %s (%s)",
