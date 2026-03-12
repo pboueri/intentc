@@ -1,0 +1,70 @@
+---
+target: cli/log
+version: 1
+validations:
+  - name: log-command-exists
+    type: llm_judge
+    rubric: |
+      Verify that an `intentc log` CLI command is defined with:
+      1. Optional positional argument for target name
+      2. --generation flag for specific generation ID
+      3. --diff flag for showing full unified diff
+      4. -o/--output flag for output directory scope
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: log-summary-view
+    type: llm_judge
+    rubric: |
+      Verify that when a target is specified, the log command displays:
+      1. Header with target name, generation ID, status, and timestamp
+      2. A table of build steps with columns: status, phase, summary, duration
+      3. A footer with total duration and files changed count
+      4. Steps are displayed in order they were executed
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: log-diff-view
+    type: llm_judge
+    rubric: |
+      Verify that the --diff flag:
+      1. Appends the full unified diff after the summary table
+      2. Reads the diff from the post_build step's diff field
+      3. Handles missing diff gracefully with "No diff available." message
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: log-list-view
+    type: llm_judge
+    rubric: |
+      Verify that when no target is specified, the command lists all targets
+      with build results in a summary table showing:
+      1. Target name
+      2. Generation ID
+      3. Status (success/failed)
+      4. Duration
+      5. File count
+      6. Timestamp
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: log-handles-missing-steps
+    type: llm_judge
+    rubric: |
+      Verify that the log command handles edge cases:
+      1. Build results with no steps (pre-logging builds) show a note
+      2. Missing target shows "No builds found" message
+      3. Missing generation shows "Build result not found" message
+      4. The command reads from state only (no agent or builder needed)
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: log-tests-pass
+    type: command_check
+    command: cd src && uv run pytest cli/ -v -k "log"
+    exit_code: 0
+---
+
+# Log Command Validations
+
+These validations verify the `intentc log` CLI command correctly renders build logs in summary and diff views, handles the list-all-targets case, and degrades gracefully for builds that predate the logging feature.

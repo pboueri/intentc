@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -209,24 +210,31 @@ def test_cli_agent_name_and_type():
 # ---------------------------------------------------------------
 
 
+def _mock_popen(stdout="", stderr="", returncode=0):
+    """Create a mock Popen that yields stdout/stderr line by line."""
+    mock_proc = MagicMock()
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdout = io.StringIO(stdout)
+    mock_proc.stderr = io.StringIO(stderr)
+    mock_proc.returncode = returncode
+    mock_proc.wait.return_value = returncode
+    return mock_proc
+
+
 def test_cli_agent_run_command():
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = "output"
-    mock_result.stderr = ""
-    mock_result.returncode = 0
+    mock_proc = _mock_popen(stdout="output\n", stderr="")
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result) as mock_run:
+    with patch("agent.cli_agent.subprocess.Popen", return_value=mock_proc) as mock_cls:
         stdout, stderr, rc = agent._run_command("hello prompt")
 
-    assert stdout == "output"
+    assert stdout == "output\n"
     assert stderr == ""
     assert rc == 0
-    mock_run.assert_called_once()
-    call_kwargs = mock_run.call_args
-    assert call_kwargs.kwargs["input"] == "hello prompt"
+    mock_cls.assert_called_once()
+    mock_proc.stdin.write.assert_called_once_with("hello prompt")
 
 
 def test_cli_agent_run_command_no_command_raises():
@@ -245,17 +253,12 @@ def test_cli_agent_build_success(tmp_path):
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = ""
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     ctx = BuildContext(
         intent=Intent(name="test"),
         output_dir=str(tmp_path),
     )
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    with patch("agent.cli_agent.subprocess.Popen", return_value=_mock_popen()):
         files = agent.build(ctx)
 
     assert str(outfile) in files
@@ -269,17 +272,15 @@ def test_cli_agent_build_detects_files_from_stdout(tmp_path):
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = f"Created: {outfile}\n"
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     ctx = BuildContext(
         intent=Intent(name="test"),
         output_dir=str(tmp_path),
     )
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    with patch(
+        "agent.cli_agent.subprocess.Popen",
+        return_value=_mock_popen(stdout=f"Created: {outfile}\n"),
+    ):
         files = agent.build(ctx)
 
     assert str(outfile) in files
@@ -290,14 +291,12 @@ def test_cli_agent_build_retry_on_failure():
     profile = _make_profile(retries=3, rate_limit=timedelta(seconds=0))
     agent = CLIAgent(profile)
 
-    fail_result = MagicMock()
-    fail_result.stdout = ""
-    fail_result.stderr = "error"
-    fail_result.returncode = 1
-
     ctx = BuildContext(intent=Intent(name="test"), output_dir="/tmp/out")
 
-    with patch("agent.cli_agent.subprocess.run", return_value=fail_result):
+    with patch(
+        "agent.cli_agent.subprocess.Popen",
+        return_value=_mock_popen(stderr="error\n", returncode=1),
+    ):
         with pytest.raises(RuntimeError, match="All 3 build attempts failed"):
             agent.build(ctx)
 
@@ -310,20 +309,14 @@ def test_cli_agent_build_retry_succeeds_on_second_attempt(tmp_path):
     profile = _make_profile(retries=3, rate_limit=timedelta(seconds=0))
     agent = CLIAgent(profile)
 
-    fail_result = MagicMock()
-    fail_result.stdout = ""
-    fail_result.stderr = "error"
-    fail_result.returncode = 1
-
-    ok_result = MagicMock()
-    ok_result.stdout = ""
-    ok_result.stderr = ""
-    ok_result.returncode = 0
-
     ctx = BuildContext(intent=Intent(name="test"), output_dir=str(tmp_path))
 
     with patch(
-        "agent.cli_agent.subprocess.run", side_effect=[fail_result, ok_result]
+        "agent.cli_agent.subprocess.Popen",
+        side_effect=[
+            _mock_popen(stderr="error\n", returncode=1),
+            _mock_popen(),
+        ],
     ):
         files = agent.build(ctx)
 
@@ -334,14 +327,12 @@ def test_cli_agent_validate_pass():
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = "PASS\nLooks good"
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     v = Validation(name="check1", type=ValidationType.LLM_JUDGE)
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    with patch(
+        "agent.cli_agent.subprocess.Popen",
+        return_value=_mock_popen(stdout="PASS\nLooks good\n"),
+    ):
         passed, explanation = agent.validate_with_llm(v, ["/tmp/test.py"])
 
     assert passed is True
@@ -352,14 +343,12 @@ def test_cli_agent_validate_fail():
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = "FAIL\nMissing error handling"
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     v = Validation(name="check1", type=ValidationType.LLM_JUDGE)
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    with patch(
+        "agent.cli_agent.subprocess.Popen",
+        return_value=_mock_popen(stdout="FAIL\nMissing error handling\n"),
+    ):
         passed, explanation = agent.validate_with_llm(v, [])
 
     assert passed is False
@@ -370,14 +359,9 @@ def test_cli_agent_validate_empty_output():
     profile = _make_profile()
     agent = CLIAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = ""
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     v = Validation(name="check1")
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    with patch("agent.cli_agent.subprocess.Popen", return_value=_mock_popen()):
         passed, explanation = agent.validate_with_llm(v, [])
 
     assert passed is False
@@ -454,7 +438,8 @@ def test_claude_agent_sets_command():
     assert inner_profile.command == "claude"
     assert "-p" in inner_profile.cli_args
     assert "--output-format" in inner_profile.cli_args
-    assert "text" in inner_profile.cli_args
+    assert "stream-json" in inner_profile.cli_args
+    assert "--verbose" in inner_profile.cli_args
     assert "--model" in inner_profile.cli_args
     assert "claude-sonnet-4-6" in inner_profile.cli_args
     # Only enabled tools get --allowedTools
@@ -495,17 +480,60 @@ def test_claude_agent_delegates_build():
     profile = AgentProfile(name="c", provider="claude")
     agent = ClaudeAgent(profile)
 
-    mock_result = MagicMock()
-    mock_result.stdout = ""
-    mock_result.stderr = ""
-    mock_result.returncode = 0
-
     ctx = BuildContext(intent=Intent(name="test"))
 
-    with patch("agent.cli_agent.subprocess.run", return_value=mock_result):
+    stream_out = '{"type":"result","result":"done","is_error":false}\n'
+    with patch("agent.cli_agent.subprocess.Popen", return_value=_mock_popen(stdout=stream_out)):
         result = agent.build(ctx)
 
     assert isinstance(result, list)
+
+
+def test_claude_agent_build_detects_written_files(tmp_path):
+    """ClaudeAgent extracts file paths from stream-json tool_use events."""
+    profile = AgentProfile(name="c", provider="claude")
+    agent = ClaudeAgent(profile)
+
+    out_file = tmp_path / "main.py"
+    out_file.write_text("print('hi')")
+
+    ctx = BuildContext(intent=Intent(name="test"), output_dir=str(tmp_path))
+
+    import json
+    tool_use_event = json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [{
+                "type": "tool_use",
+                "name": "Write",
+                "input": {"file_path": str(out_file), "content": "print('hi')"},
+            }],
+        },
+    })
+    result_event = json.dumps({"type": "result", "result": "done", "is_error": False})
+    stream_out = tool_use_event + "\n" + result_event + "\n"
+
+    with patch("agent.cli_agent.subprocess.Popen", return_value=_mock_popen(stdout=stream_out)):
+        files = agent.build(ctx)
+
+    assert str(out_file) in files
+
+
+def test_claude_agent_build_falls_back_to_dir_walk(tmp_path):
+    """When no Write tool_use events, falls back to directory walk."""
+    profile = AgentProfile(name="c", provider="claude")
+    agent = ClaudeAgent(profile)
+
+    out_file = tmp_path / "generated.py"
+    out_file.write_text("code")
+
+    ctx = BuildContext(intent=Intent(name="test"), output_dir=str(tmp_path))
+
+    stream_out = '{"type":"result","result":"I created the file.","is_error":false}\n'
+    with patch("agent.cli_agent.subprocess.Popen", return_value=_mock_popen(stdout=stream_out)):
+        files = agent.build(ctx)
+
+    assert str(out_file) in files
 
 
 # ---------------------------------------------------------------

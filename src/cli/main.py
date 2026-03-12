@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Optional
 
 import typer
@@ -40,6 +41,7 @@ class CLIState:
     agent_cli_args: str = ""
     model: str = ""
     log_level: str = ""
+    log_file: str = ""
 
 
 state = CLIState()
@@ -61,6 +63,7 @@ def main(
     agent_cli_args: str = typer.Option("", "--agent-cli-args", help="Override CLI args"),
     model: str = typer.Option("", "--model", help="Override model ID"),
     log_level: str = typer.Option("", "--log-level", help="Override log level"),
+    log_file: str = typer.Option("", "--log-file", help="Also write logs to file"),
 ) -> None:
     """Root callback - applies global flags before any subcommand runs."""
     state.verbose = verbose
@@ -73,15 +76,9 @@ def main(
     state.agent_cli_args = agent_cli_args
     state.model = model
     state.log_level = log_level
+    state.log_file = log_file
 
-    # Set up logging based on verbosity / explicit level
-    level = log_level or (
-        "debug" if verbose >= 2 else "info" if verbose >= 1 else "warning"
-    )
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(levelname)s: %(message)s",
-    )
+    _apply_log_overrides(verbose, log_level, log_file)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +197,35 @@ def init() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _apply_log_overrides(
+    verbose: int = 0,
+    log_level: str = "",
+    log_file: str = "",
+) -> None:
+    """Apply logging overrides from subcommand flags (supplements root callback)."""
+    v = verbose or state.verbose
+    lf = log_file or state.log_file
+    ll = log_level or state.log_level
+
+    level = ll or ("debug" if v >= 1 else "info")
+    level_int = getattr(logging, level.upper(), logging.INFO)
+
+    logging.basicConfig(
+        level=level_int,
+        format="%(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+
+    if lf:
+        file_handler = logging.FileHandler(lf)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        logging.getLogger().addHandler(file_handler)
+
+
 @app.command()
 def build(
     target: Optional[str] = typer.Argument(None, help="Target to build"),
@@ -207,8 +233,12 @@ def build(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show plan only"),
     output: str = typer.Option("", "--output", "-o", help="Output directory"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
+    log_level: str = typer.Option("", "--log-level", help="Override log level"),
+    log_file: str = typer.Option("", "--log-file", help="Write logs to file"),
 ) -> None:
     """Build targets from specs."""
+    _apply_log_overrides(verbose, log_level, log_file)
     project_root = os.getcwd()
     cfg = _load_config_with_overrides(project_root)
 

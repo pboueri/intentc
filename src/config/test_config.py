@@ -703,5 +703,5 @@ def test_save_roundtrip_with_prompt_templates():
 
         pt = loaded.profiles["default"].prompt_templates
         assert pt.build == "Build {target}"
-        assert pt.validate == "Validate {target}"
+        assert pt.validate_prompt == "Validate {target}"
         assert pt.system == "You are a code generator."

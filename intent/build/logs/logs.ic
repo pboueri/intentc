@@ -1,0 +1,131 @@
+---
+name: build/logs
+version: 1
+depends_on: [build/builder, build/state, build/git]
+tags: [observability]
+---
+
+# Build Logs
+
+Structured build logging that captures discrete, timed steps during the build pipeline. Each build produces a log of what happened at each phase, how long it took, and what changed.
+
+## Types
+
+### BuildPhase
+
+Enum defining the discrete lifecycle phases of a build:
+
+- `resolve_deps` — Resolve dependency chain from the DAG
+- `read_plan` — Read the .ic spec and visible validations
+- `build` — Invoke the agent to generate code
+- `post_build` — Detect generated files and capture git diff
+- `validate` — Run validations against generated output
+
+### StepStatus
+
+Enum for per-step outcome:
+
+- `success` — Phase completed without error
+- `failed` — Phase encountered an error
+- `skipped` — Phase was not executed (e.g., no validations defined)
+
+### BuildStep
+
+Captures one discrete phase of a build:
+
+```
+BuildStep:
+    phase: BuildPhase
+    status: StepStatus
+    started_at: timestamp
+    ended_at: timestamp
+    duration_seconds: float
+    summary: string           # Brief human-readable description
+    error: string             # Error message if failed, empty on success
+    files_changed: int        # Number of files affected, 0 if not applicable
+    diff_stat: string         # e.g. "3 files changed, +45 -12"
+    diff: string              # Full unified diff, only populated on post_build
+```
+
+### BuildResult Extension
+
+Add two new fields to the existing BuildResult type:
+
+```
+BuildResult:
+    steps: list[BuildStep]          # Ordered list of build steps, default empty
+    total_duration_seconds: float   # Wall-clock time for entire build, default 0
+```
+
+The `steps` field defaults to an empty list so that existing serialized BuildResults remain forward-compatible. Deserialization must tolerate the absence of these fields.
+
+## Builder Integration
+
+The builder wraps each existing pipeline phase in timing and step-logging. Use a monotonic clock for duration measurements.
+
+### Phase: resolve_deps
+
+Wraps DAG resolution and dependency chain lookup.
+
+- Summary: "Resolved N dependencies: [dep1, dep2]"
+- On failure: status `failed` with error from DAG resolution
+
+### Phase: read_plan
+
+Wraps reading the target's .ic spec and filtering visible validations.
+
+- Summary: "Read {name}.ic with N validations"
+- On failure: status `failed` with parse error
+
+### Phase: build
+
+Wraps the `agent.build()` call.
+
+- Summary on success: "Agent generated N files"
+- Summary on failure: "Agent build failed: {error}"
+- This is typically the longest-running step
+
+### Phase: post_build
+
+After a successful build, detect generated files and capture changes using git diff on the output directory.
+
+- Run `git diff --stat` on the output directory to get a summary of changes
+- Run `git diff` on the output directory to capture the full unified diff
+- Summary: "N files changed (+X -Y)" derived from diff stat
+- Store `files_changed`, `diff_stat`, and `diff` on this step
+
+### Phase: validate
+
+After post_build, optionally run validations for the target.
+
+- If the target has no .icv files: status `skipped`, summary "No validations defined"
+- On success: summary "N/M validations passed"
+- On failure: summary "N/M validations passed, K failed", status `failed`
+
+### Step Collection
+
+Collect all steps into a list as they complete. After the final step:
+
+1. Compute `total_duration_seconds` as the sum of all step durations
+2. Attach `steps` and `total_duration_seconds` to the BuildResult
+3. Save via the state manager as usual
+
+If a step fails (except validate), subsequent steps should be set to status `skipped` with an appropriate summary. The build still halts on build-phase failure as it does today.
+
+## Real-time Output
+
+During the build, emit structured progress lines to stderr for each step as it starts and completes:
+
+```
+[target-name] phase... done (duration)
+[target-name] phase... FAILED: error (duration)
+[target-name] phase... skipped
+```
+
+After all steps for a target complete, emit a summary line:
+
+```
+Built target-name (generation-id) in total-duration
+```
+
+This replaces the current sparse INFO-level log lines with structured, consistent output. Output should be emitted regardless of log level — it is user-facing progress, not debug logging.

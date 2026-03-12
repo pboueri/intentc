@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import time
 from datetime import datetime
 from typing import Any, Protocol
@@ -33,9 +32,8 @@ from validation.registry import Registry as ValidatorRegistry
 logger = logging.getLogger("intentc.builder")
 
 
-def _print_step(target: str, phase: str, summary: str, duration: float, *, failed: bool = False) -> None:
-    """Print structured step progress to stderr."""
-    print(f"[{target}] {phase}... {summary} ({duration:.1f}s)", file=sys.stderr, flush=True)
+def _log_step(target: str, phase: str, summary: str, duration: float, *, failed: bool = False) -> None:
+    logger.info(f"[{target}] {phase}... {summary} ({duration:.1f}s)")
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +178,7 @@ class Builder:
                 "Dry run - would build: %s", [t.name for t in build_set]
             )
             for t in build_set:
-                print(f"  Would build: {t.name}")
+                logger.info("  Would build: %s", t.name)
             return
 
         # Step 6: Build each target ----------------------------------------
@@ -190,7 +188,7 @@ class Builder:
             # Skip if already built and not force
             status = self.state_manager.get_target_status(target.name)
             if status == TargetStatus.BUILT and not opts.force:
-                print(f"[{target.name}] skipped (already built)", file=sys.stderr, flush=True)
+                logger.info("[%s] skipped (already built)", target.name)
                 continue
 
             # Resolve agent profile for this target
@@ -226,7 +224,7 @@ class Builder:
                 duration_seconds=round(elapsed, 3),
                 summary=resolve_summary,
             ))
-            _print_step(target.name, "resolve_deps", resolve_summary, elapsed)
+            _log_step(target.name, "resolve_deps", resolve_summary, elapsed)
 
             # Phase 2: read_plan
             t0 = time.monotonic()
@@ -247,7 +245,7 @@ class Builder:
                 duration_seconds=round(elapsed, 3),
                 summary=read_summary,
             ))
-            _print_step(target.name, "read_plan", read_summary, elapsed)
+            _log_step(target.name, "read_plan", read_summary, elapsed)
 
             # Phase 3: build
             build_ctx = BuildContext(
@@ -274,7 +272,7 @@ class Builder:
                     duration_seconds=round(elapsed, 3),
                     summary=build_summary,
                 ))
-                _print_step(target.name, "build", build_summary, elapsed)
+                _log_step(target.name, "build", build_summary, elapsed)
             except Exception as e:
                 elapsed = time.monotonic() - t0
                 steps.append(BuildStep(
@@ -286,7 +284,7 @@ class Builder:
                     summary=f"Failed: {e}",
                     error=str(e),
                 ))
-                _print_step(target.name, "build", f"FAILED: {e}", elapsed, failed=True)
+                _log_step(target.name, "build", f"FAILED: {e}", elapsed, failed=True)
                 build_failed = True
 
             # Phase 4: post_build
@@ -314,7 +312,7 @@ class Builder:
                         diff_stat=diff_stat,
                         diff=diff,
                     ))
-                    _print_step(target.name, "post_build", summary, elapsed)
+                    _log_step(target.name, "post_build", summary, elapsed)
                 except Exception as e:
                     elapsed = time.monotonic() - t0
                     steps.append(BuildStep(
@@ -390,15 +388,11 @@ class Builder:
                 self.state_manager.update_target_status(
                     target.name, TargetStatus.BUILT
                 )
-                print(
-                    f"Built {target.name} ({generation_id}) in {total_duration:.1f}s",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 logger.info(
-                    "Successfully built target: %s (%s)",
+                    "Built %s (%s) in %.1fs",
                     target.name,
                     generation_id,
+                    total_duration,
                 )
 
     # ------------------------------------------------------------------

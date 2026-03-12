@@ -1,0 +1,95 @@
+---
+name: cli/log
+version: 1
+depends_on: [build/logs, cli/commands]
+tags: [interface]
+---
+
+# Log Command
+
+A CLI command for viewing structured build logs. Displays step-by-step build history for targets, including timing, summaries, and optional diffs.
+
+## Command
+
+```
+intentc log [target] [flags]
+```
+
+Flags:
+- `--generation <id>` — View a specific generation instead of the latest
+- `--diff` — Include full unified diff output after the summary
+- `-o, --output <dir>` — Output directory scope (uses config default if omitted)
+
+## Behavior
+
+### With Target Specified
+
+Display the build log for the specified target. Load the build result (latest or specified generation) from the state manager and render its steps.
+
+#### Summary View (default)
+
+```
+Build Log: {target} ({generation_id})
+Status: {success|failed} | {generated_at}
+
+  [{status}]  {phase:<14}  {summary:<40}  {duration}
+  [{status}]  {phase:<14}  {summary:<40}  {duration}
+  ...
+
+Total: {total_duration} | Files: {files_changed} changed
+```
+
+Example:
+
+```
+Build Log: core/intent (gen-1773256586)
+Status: success | 2026-03-11T14:18:30
+
+  [success]  resolve_deps   Resolved 3 dependencies           0.1s
+  [success]  read_plan      Read core/intent.ic, 5 validations 0.0s
+  [success]  build          Agent generated 2 files           45.2s
+  [success]  post_build     3 files changed (+45 -12)          0.3s
+  [success]  validate       5/5 validations passed             1.2s
+
+Total: 46.8s | Files: 3 changed
+```
+
+#### Diff View (`--diff`)
+
+Append the full unified diff after the summary table. The diff is read from the post_build step's `diff` field. If no diff is available, print "No diff available."
+
+### Without Target Specified
+
+List all targets that have build results, showing a one-line summary per target from the latest build:
+
+```
+Build History:
+  {target:<20}  {generation_id}  {status:<7}  {duration:>6}  {files_changed} files  {generated_at}
+```
+
+Example:
+
+```
+Build History:
+  core/intent      gen-1773256586  success  46.8s  3 files  2026-03-11T14:18
+  core/schema      gen-1773256590  success  12.3s  1 file   2026-03-11T14:19
+  agents/claude    gen-1773256600  failed    8.1s  0 files  2026-03-11T14:20
+```
+
+### Error Cases
+
+- If the target has no build results: print "No builds found for target '{target}'"
+- If the specified generation does not exist: print "Build result not found for generation '{id}'"
+- If the build result has no steps (pre-logging builds): print the existing BuildResult fields and note "No step data available (build predates logging)"
+
+## Dependency Wiring
+
+The log command follows the same dependency injection pattern as other commands:
+
+1. Load config with CLI overrides
+2. Resolve output directory
+3. Create state manager, set output directory
+4. Read build results from state manager
+5. Render output
+
+No agent or builder instance is needed — this command only reads state.

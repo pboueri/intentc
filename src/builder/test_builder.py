@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import textwrap
 from datetime import datetime
@@ -441,18 +442,18 @@ class TestBuildDryRun:
         assert state.statuses == {}
         assert state.results == {}
 
-    def test_dry_run_output(self, simple_project, capsys):
-        """Dry run prints the target names to stdout."""
+    def test_dry_run_output(self, simple_project, caplog):
+        """Dry run logs the target names."""
         state = MockStateManager()
         agent = MockAgent(files=[])
         git = MockGitManager()
         cfg = get_default_config()
 
         builder = _mock_builder(simple_project, agent, state, git, cfg)
-        builder.build(BuildOptions(dry_run=True))
+        with caplog.at_level(logging.INFO, logger="intentc.builder"):
+            builder.build(BuildOptions(dry_run=True))
 
-        captured = capsys.readouterr()
-        assert "auth" in captured.out
+        assert any("auth" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,101 @@
+---
+target: build/logs
+version: 1
+validations:
+  - name: build-phase-enum-exists
+    type: llm_judge
+    rubric: |
+      Verify that a BuildPhase enum is defined with exactly these values:
+      1. resolve_deps
+      2. read_plan
+      3. build
+      4. post_build
+      5. validate
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: step-status-enum-exists
+    type: llm_judge
+    rubric: |
+      Verify that a StepStatus enum is defined with exactly these values:
+      1. success
+      2. failed
+      3. skipped
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: build-step-type-exists
+    type: llm_judge
+    rubric: |
+      Verify that a BuildStep type is defined with these fields:
+      1. phase (BuildPhase)
+      2. status (StepStatus)
+      3. started_at (datetime/timestamp)
+      4. ended_at (datetime/timestamp)
+      5. duration_seconds (float)
+      6. summary (string)
+      7. error (string, default empty)
+      8. files_changed (int, default 0)
+      9. diff_stat (string, default empty)
+      10. diff (string, default empty)
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: build-result-has-steps
+    type: llm_judge
+    rubric: |
+      Verify that BuildResult has been extended with:
+      1. A 'steps' field that is a list of BuildStep, defaulting to empty list
+      2. A 'total_duration_seconds' field that is a float, defaulting to 0
+      3. Existing BuildResult fields are unchanged
+      4. Deserialization tolerates missing steps/total_duration_seconds fields (forward compatibility)
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: builder-emits-steps
+    type: llm_judge
+    rubric: |
+      Verify that the builder emits BuildStep entries for each phase:
+      1. resolve_deps step wraps DAG resolution
+      2. read_plan step wraps spec reading
+      3. build step wraps agent.build() call
+      4. post_build step captures git diff information
+      5. validate step runs target validations (or marks skipped)
+      6. Each step has timing via monotonic clock
+      7. Steps are collected and attached to BuildResult before saving
+      8. total_duration_seconds is computed as sum of step durations
+    severity: error
+    context_files: ["src/builder/**"]
+
+  - name: post-build-captures-diff
+    type: llm_judge
+    rubric: |
+      Verify that the post_build phase:
+      1. Runs git diff --stat on the output directory to capture change summary
+      2. Runs git diff on the output directory to capture full unified diff
+      3. Stores files_changed count, diff_stat, and diff on the BuildStep
+      4. Handles the case where no files changed (files_changed=0, empty diff)
+    severity: error
+    context_files: ["src/builder/**", "src/git/**"]
+
+  - name: builder-real-time-output
+    type: llm_judge
+    rubric: |
+      Verify that during a build, structured progress is emitted to stderr:
+      1. Each step prints "[target-name] phase... done (duration)" on success
+      2. Failed steps print "[target-name] phase... FAILED: error (duration)"
+      3. Skipped steps print "[target-name] phase... skipped"
+      4. After all steps, prints "Built target-name (generation-id) in total-duration"
+      5. Output is emitted regardless of log level (not gated behind verbose flag)
+    severity: error
+    context_files: ["src/builder/**"]
+
+  - name: build-logs-tests-pass
+    type: command_check
+    command: cd src && uv run pytest builder/ -v -k "log or step"
+    exit_code: 0
+---
+
+# Build Logs Validations
+
+These validations verify that the build logging infrastructure is correctly implemented: types are defined in core, the builder emits structured steps with timing and diff capture, and real-time progress is printed during builds.
