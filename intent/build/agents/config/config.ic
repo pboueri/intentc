@@ -1,0 +1,61 @@
+---
+name: config
+version: 1
+depends_on: [core]
+tags: [foundation]
+---
+
+# Configuration
+
+Manages project configuration stored in `.intentc/config.yaml`. Includes agent profile types, config loading/saving, merging with CLI overrides, and schema validation.
+
+## Agent Profile Types
+
+### AgentProfile
+
+Named, reusable agent configuration.
+
+- `Name` (string) - Profile identifier.
+- `Provider` (string) - `"claude"`, `"codex"`, or `"cli"`.
+- `Command` (string) - Shell command for CLI provider.
+- `CLIArgs` (list of strings) - Additional CLI arguments.
+- `Timeout` (duration) - Agent invocation timeout. Default 5m.
+- `Retries` (integer) - Retry count. Default 3.
+- `RateLimit` (duration) - Delay between retries. Default 1s.
+- `ModelID` (string, optional) - Provider-specific model identifier.
+- `PromptTemplates` (PromptTemplates, optional) - Template overrides.
+- `Tools` (list of ToolConfig, optional) - Tool configurations.
+- `Skills` (list of strings, optional) - Named skills.
+
+### PromptTemplates
+
+- `Build` (string) - Template for build prompts.
+- `Validate` (string) - Template for validation prompts.
+- `System` (string) - System prompt for all invocations.
+
+### ToolConfig
+
+- `Name` (string) - Tool identifier.
+- `Enabled` (boolean) - Default true.
+- `Config` (map) - Tool-specific configuration.
+
+## Config
+
+```
+Config:
+  Version: integer
+  Profiles: map of string to AgentProfile  # Must contain "default"
+  Build:
+    DefaultOutput: string                   # Default "build-default"
+  Logging:
+    Level: string                           # debug, info, warn, error. Default "info"
+```
+
+## Functions
+
+- `GetDefaultConfig()` - Returns config with sensible defaults (Claude provider, 5m timeout, 3 retries).
+- `LoadConfig(projectRoot)` - Load from `.intentc/config.yaml`. Return defaults if file missing.
+- `SaveConfig(projectRoot, config)` - Write config to disk.
+- `MergeConfig(base, override)` - Non-zero override fields win. Per-profile merging.
+- `GetProfile(cfg, name)` - Look up profile by name. Empty name falls back to "default".
+- `ValidateConfig(cfg)` - Returns list of SchemaViolation. Checks: version present, "default" profile exists, valid provider values, CLI profiles have command.

@@ -1,0 +1,25 @@
+---
+target: parser
+version: 1
+validations:
+  - name: parser-module-exists
+    type: folder_check
+    path: src/parser
+
+  - name: parser-functions-defined
+    type: llm_judge
+    rubric: |
+      Verify the parser module provides:
+      1. ParseIntentFile - parses .ic files, extracts YAML frontmatter and markdown body
+      2. ParseValidationFile - parses .icv files, extracts validations list
+      3. TargetRegistry with LoadTargets, GetTarget, GetAllTargets, GetProjectIntent
+      4. Schema validation: ValidateIntentSchema, ValidateProjectIntent, ValidateValidationSchema, ValidateAllSpecs
+      5. Clear error messages with file paths and field names
+    severity: error
+    context_files: ["src/parser/**"]
+
+  - name: parser-tests-pass
+    type: command_check
+    command: cd src && uv run pytest parser/ -v
+    exit_code: 0
+---

@@ -1,0 +1,60 @@
+---
+name: parser
+version: 1
+depends_on: [core]
+tags: [foundation]
+---
+
+# Parser
+
+Reads .ic and .icv files from disk, parses YAML frontmatter, produces core types, and validates them against schemas. Also provides a TargetRegistry for discovering all targets in a project.
+
+## Frontmatter Parsing
+
+Both .ic and .icv files use YAML frontmatter delimited by `---` lines.
+
+1. Split at the first two `---` lines to extract YAML block and markdown body.
+2. Unmarshal YAML into the appropriate type.
+3. Validate required fields.
+4. Return errors with file path context.
+
+Edge cases: no frontmatter is an error. Empty body is valid.
+
+## Functions
+
+### ParseIntentFile(filePath) -> Intent
+
+Parse a .ic file. Extract frontmatter into Intent fields, set Content to markdown body, set FilePath. `name` and `version` are required.
+
+### ParseValidationFile(filePath) -> ValidationFile
+
+Parse a .icv file. Unmarshal frontmatter including the `validations` list. Validate each entry has `name` and a known `type`. Store type-specific fields in Parameters map.
+
+## Target Registry
+
+Discovers all features in the `intent/` directory and provides lookup.
+
+- `LoadTargets()` - Walk intent/, parse all .ic and .icv files, build target map.
+- `GetTarget(name)` - Lookup by name.
+- `GetAllTargets()` - Return all discovered targets.
+- `GetProjectIntent()` - Return the project-level intent (intent/project.ic).
+
+Discovery: each subdirectory of `intent/` with a .ic file is a feature. Name must match directory name. All .icv files in the same directory are associated. `intent/project.ic` and `intent/implementation.ic` are special root files.
+
+## Schema Validation
+
+### ValidateIntentSchema(intent) -> list of SchemaViolation
+
+Checks: name required and non-empty, version required and positive, supported version, depends_on entries non-empty, no unknown frontmatter fields.
+
+### ValidateProjectIntent(intent) -> list of SchemaViolation
+
+All intent checks plus: depends_on must be absent or empty.
+
+### ValidateValidationSchema(vf) -> list of SchemaViolation
+
+Checks: target required, version required, validations list non-empty, each entry has name and known type, type-specific required fields present (path for file_check, command for command_check, rubric for llm_judge), no duplicate names.
+
+### ValidateAllSpecs(projectRoot) -> list of SchemaViolation
+
+Walk intent/, validate every file, return aggregate violations. Also performs cross-file validation: directory names match .ic name fields, .icv target fields match parent directory, depends_on references exist.

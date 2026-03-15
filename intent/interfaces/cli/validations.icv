@@ -1,0 +1,36 @@
+target: cli
+version: 1
+validations:
+  - name: cli-module-exists
+    type: folder_check
+    path: src/cli
+
+  - name: cli-commands-defined
+    type: llm_judge
+    rubric: |
+      Verify the CLI defines all commands:
+      1. init - creates project structure with config, project.ic, implementation.ic
+      2. build - with force, dry-run, output, profile flags
+      3. clean - with output, all flags
+      4. validate - with output, profile flags
+      5. status - with tree, output flags
+      6. check - schema validation
+      7. commit - separates intent and generated changes with prefixes
+      8. add intent / add validation - scaffolding
+      9. list intents / validations / profiles
+      10. edit - starts editor server
+      11. Each command creates its own dependencies (no globals)
+    severity: error
+    context_files: ["src/cli/**"]
+
+  - name: packaging-valid
+    type: file_check
+    path: pyproject.toml
+    contains:
+      - "typer"
+      - "pydantic"
+
+  - name: all-tests-pass
+    type: command_check
+    command: uv run pytest -v
+    exit_code: 0

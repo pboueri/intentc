@@ -1,0 +1,67 @@
+---
+name: builder
+version: 1
+depends_on: [core, parser, graph, agent, config, state, git, validation]
+tags: [orchestration]
+---
+
+# Builder
+
+Orchestrates the full build pipeline: load specs, resolve dependencies into a DAG, determine what needs building, invoke the agent for each target, collect structured build steps with timing, and track results.
+
+## Builder
+
+```
+Builder:
+    projectRoot: string
+    agent: Agent
+    stateManager: StateManager
+    parser: TargetRegistry
+    gitManager: GitManager
+    config: Config
+```
+
+## BuildOptions
+
+- `Target` (string) - Specific target, or empty for all unbuilt.
+- `Force` (bool) - Rebuild even if already built.
+- `DryRun` (bool) - Print plan without executing.
+- `OutputDir` (string) - Output directory. Overrides config default.
+- `ProfileName` (string) - Agent profile override.
+
+## Build Pipeline
+
+`Build(ctx, opts)`:
+
+1. **Schema validation** - Run ValidateAllSpecs and ValidateConfig. Abort on any error-severity violations.
+2. **Load targets** - Discover and parse all intent/validation files.
+3. **Build DAG** - Resolve dependencies, detect cycles.
+4. **Determine build set** - If target specified, get its dependency chain. Otherwise get all unbuilt (or all if Force).
+5. **Resolve output directory** - From opts, then config default. Create if needed. Set on state manager.
+6. **Dry run check** - If DryRun, print build set and return.
+7. **Build each target** in topological order:
+   - Skip if built and not Force.
+   - Resolve agent profile: CLI --profile > target's .ic profile field > "default".
+   - Emit build steps with timing for each phase:
+     - `resolve_deps` - DAG resolution
+     - `read_plan` - Read .ic and visible validations
+     - `build` - Invoke agent
+     - `post_build` - Detect generated files, capture git diff
+     - `validate` - Run validations (or skip if none defined)
+   - Collect steps into BuildResult. Compute total duration.
+   - Save result via state manager.
+   - On failure: stop the entire build.
+
+## Clean
+
+`Clean(ctx, target, outputDir, all)`:
+- If all: reset all state for the output directory.
+- If specific target: reset status to pending, remove build results, delete generated files, mark dependents as outdated.
+
+## Validate
+
+`Validate(ctx, target, outputDir, opts)`:
+1. Run schema validation. Abort on violations.
+2. Load target and validations.
+3. Run validations against output directory.
+4. Return report.

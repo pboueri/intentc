@@ -1,0 +1,32 @@
+---
+target: core
+version: 1
+validations:
+  - name: core-module-exists
+    type: folder_check
+    path: src/core
+
+  - name: core-types-defined
+    type: llm_judge
+    rubric: |
+      Verify the core module defines all foundational types:
+      1. Intent with fields: Name, Version, DependsOn, Tags, Profile, Content, FilePath
+      2. ValidationFile with fields: Target, Version, JudgeProfile, Validations, FilePath
+      3. Validation with fields: Name, Type, Hidden, Parameters
+      4. ValidationType enum: file_check, folder_check, command_check, llm_judge
+      5. Target with fields: Name, Intent, Validations, Dependencies, Status
+      6. TargetStatus enum: pending, building, built, failed, outdated
+      7. SchemaViolation with fields: FilePath, Field, Message, Severity
+      8. BuildResult with fields including Steps and TotalDurationSeconds
+      9. BuildStep with fields: Phase, Status, StartedAt, EndedAt, DurationSeconds, Summary, Error, FilesChanged, DiffStat, Diff
+      10. BuildPhase enum: resolve_deps, read_plan, build, post_build, validate
+      11. StepStatus enum: success, failed, skipped
+      12. ValidationResult with fields: ValidationName, Passed, Message, Details, Severity
+    severity: error
+    context_files: ["src/core/**"]
+
+  - name: core-tests-pass
+    type: command_check
+    command: cd src && uv run pytest core/ -v
+    exit_code: 0
+---

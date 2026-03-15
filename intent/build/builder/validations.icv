@@ -1,0 +1,29 @@
+---
+target: builder
+version: 1
+validations:
+  - name: builder-module-exists
+    type: folder_check
+    path: src/builder
+
+  - name: builder-pipeline-defined
+    type: llm_judge
+    rubric: |
+      Verify the builder module:
+      1. Builder type with injected dependencies (agent, state, parser, git, config)
+      2. Build method follows the pipeline: schema validation -> load -> DAG -> build set -> build each
+      3. Emits BuildStep entries with timing for each phase (resolve_deps, read_plan, build, post_build, validate)
+      4. Collects steps into BuildResult with total duration
+      5. Post-build phase captures git diff
+      6. Resolves agent profiles per-target (CLI flag > .ic field > default)
+      7. Stops on first failure
+      8. Supports dry run mode
+      9. Tests use mock agent and verify pipeline ordering
+    severity: error
+    context_files: ["src/builder/**"]
+
+  - name: builder-tests-pass
+    type: command_check
+    command: cd src && uv run pytest builder/ -v
+    exit_code: 0
+---

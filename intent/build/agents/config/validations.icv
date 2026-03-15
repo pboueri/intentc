@@ -1,0 +1,25 @@
+---
+target: config
+version: 1
+validations:
+  - name: config-module-exists
+    type: folder_check
+    path: src/config
+
+  - name: config-defined
+    type: llm_judge
+    rubric: |
+      Verify the config module defines:
+      1. AgentProfile, PromptTemplates, ToolConfig types with all fields
+      2. Config type with Version, Profiles, Build, Logging
+      3. Functions: GetDefaultConfig, LoadConfig, SaveConfig, MergeConfig, GetProfile, ValidateConfig
+      4. Default config uses Claude provider with 5m timeout, 3 retries
+      5. ValidateConfig returns list of SchemaViolation
+    severity: error
+    context_files: ["src/config/**"]
+
+  - name: config-tests-pass
+    type: command_check
+    command: cd src && uv run pytest config/ -v
+    exit_code: 0
+---
