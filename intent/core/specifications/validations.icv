@@ -1,0 +1,14 @@
+target: core
+validations:
+  - name: core-types-defined
+    type: llm_judge
+    args:
+      rubric: |
+        Verify the core modules have been created with the key types and there are no dependencies.
+    severity: error
+  - name: file-io
+    type: llm_judge
+    args:
+      rubric: |
+        Validate the tests cases cover reading and writing to disk and that they pass
+    severity: error
