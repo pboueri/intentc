@@ -1,0 +1,121 @@
+---
+name: agent
+version: 1
+depends_on:
+    - core/*
+tags: [agents]
+---
+
+# Agent
+
+IntentC runs on Agents which are defined for a given project. These agents can come from many different providers such as Claude or Codex and each provider has particular specialization around model types and capabilities. Each agent is specialized with a particular prompt set which indicates how to take a particular action.
+
+Because the success of agents is so tied to their context and how they are managed, it is imperative that this is set up with intention in an extensible manner. This project is only successful if the same intent can be built by multiple different types of agents.
+
+## Agent Interface
+
+```
+interface Agent:
+    Build(ctx: BuildContext) -> BuildResponse, error
+    Validate(ctx: BuildContext, validation: Validation) -> ValidationResponse, error
+    Plan(ctx: BuildContext) -> interactive session
+    GetName() -> string
+    GetType() -> string
+```
+
+### Permissionless Execution
+
+Agents must run non-interactively during builds and validations. They should never prompt for confirmation or approval. For Claude Code this means `--dangerously-skip-permissions`. For generic CLI agents, the command is assumed to run without interaction by default.
+
+### Plan as Interactive REPL
+
+Plan is the exception to permissionless execution. When the agent supports it, Plan drops the user into a live interactive session with the agent, seeded with the planning prompt and the feature's context. The user converses with the agent to refine the .ic and .icv files. If the agent does not support interactive mode, Plan falls back to a single-shot invocation that outputs suggestions.
+
+## Structured Agent Responses
+
+The system needs structured data back from agents after builds and validations. Since agents are CLI tools that may not support structured output natively, the canonical mechanism is a **response file**: a known path the system provides to the agent via the BuildContext and the prompt template. The agent writes structured JSON to this path before exiting. The system reads the file after the agent process terminates.
+
+If the response file is missing or contains invalid JSON, the invocation is treated as a failure with a generic error message.
+
+For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
+
+### BuildResponse
+
+Written by the agent after a build invocation.
+
+- `status` (string) — `"success"` or `"failure"`
+- `summary` (string) — human-readable description of what was done or what went wrong
+- `files_created` (list of strings) — paths of new files relative to the output directory
+- `files_modified` (list of strings) — paths of modified files relative to the output directory
+
+### ValidationResponse
+
+Written after a single validation is evaluated. The agent's Validate method is called once per validation item — the builder owns the loop over all validations for a target.
+
+Not all validation types require an agent. The system runs `folder_check`, `file_check`, and `command_check` validations directly. Only `llm_judge` and `agent_validation` types invoke the agent. Regardless of who runs the validation, the result uses the same schema.
+
+- `name` (string) — the validation name
+- `status` (string) — `"pass"` or `"fail"`
+- `reason` (string) — explanation of the result
+
+## BuildContext
+
+Everything the agent needs to act on a target:
+
+- `Intent` (Intent) — the target's parsed intent
+- `Validations` (list of ValidationFile) — associated validations
+- `OutputDir` (string) — where generated code lives
+- `GenerationID` (string) — unique identifier for this build run
+- `DependencyNames` (list of strings) — names of dependency targets
+- `ProjectIntent` (Intent) — the project-level intent (project.ic + implementation.ic context)
+- `ResponseFilePath` (string) — path where the agent must write its structured response
+
+## CLIAgent
+
+Generic base that wraps any command-line tool. Constructs a prompt from BuildContext using the prompt templates, passes it to the command, then reads the response file after the process exits.
+
+## ClaudeAgent
+
+Specialization for Claude Code. Extends CLIAgent via composition. Sets command to `claude`, adds `-p`, `--output-format json`, `--dangerously-skip-permissions`, and `--model` flags from the agent profile.
+
+For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode.
+
+## CreateFromProfile(profile: AgentProfile) -> Agent
+
+Factory function. Reads the profile's `provider` field and returns the appropriate agent:
+- `"claude"` -> ClaudeAgent
+- `"cli"` -> CLIAgent with the profile's command
+- Unknown provider -> error
+
+## MockAgent
+
+For testing intentc itself. Records all calls, returns configurable BuildResponse and ValidationResponse values.
+
+## AgentProfile
+
+Named, reusable agent configuration. Captures provider selection and model version. Profiles are referenced by name via the `agent_profile` field in intents, validations, and config. A default profile is generated when a project is initialized.
+
+- `Name` (string) — profile identifier
+- `Provider` (string) — `"claude"`, `"codex"`, or `"cli"`
+- `Command` (string) — shell command for the CLI provider
+- `CLIArgs` (list of strings) — additional CLI arguments
+- `Timeout` (duration) — agent invocation timeout, default 5m
+- `Retries` (integer) — number of retries on error (timeout, crash, malformed response), default 3
+- `ModelID` (string, optional) — provider-specific model identifier
+- `PromptTemplates` (PromptTemplates, optional) — template overrides
+
+## PromptTemplates
+
+All default prompts are stored in [prompts/](prompts/).
+
+- `Build` — template for build prompts — [file](prompts/build.prompt)
+- `Validate` — template for validation prompts — [file](prompts/validate.prompt)
+- `Plan` — template for planning/refining a feature — [file](prompts/plan.prompt)
+
+Templates reference variables from the BuildContext:
+- `{project}` — the project-level intent
+- `{implementation}` — the implementation-level intent
+- `{feature}` — the target feature intent
+- `{validations}` — all validation text for the target (used by build and plan prompts)
+- `{validation}` — the single validation being evaluated (used by validate prompt)
+- `{response_file}` — path to the response file the agent must write to
