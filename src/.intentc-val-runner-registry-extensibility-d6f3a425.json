@@ -1,0 +1,5 @@
+{
+  "name": "runner-registry-extensibility",
+  "status": "pass",
+  "reason": "All three rubric requirements are fully implemented and tested. (1) AgentValidationRunner is registered by default for type 'agent_validation' during ValidationSuite construction (validations.py lines 166-169), verified by test_agent_runner_registered_by_default. (2) Custom runners can be registered both via the constructor's runner_registry parameter and post-construction via register_runner(), and are correctly dispatched when a validation entry has a matching type — verified by test_custom_runner_dispatched and test_register_runner_method, both using a _MockRunner. (3) A validation entry with an unknown/unregistered type returns a failed ValidationResponse with a descriptive message including the type name and list of registered types — verified by test_unknown_type_fails_with_descriptive_error. All 5 tests in TestRunnerRegistryExtensibility pass."
+}
