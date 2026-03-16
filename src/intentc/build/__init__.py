@@ -1,3 +1,16 @@
+from intentc.build.agents import (
+    Agent,
+    AgentError,
+    AgentProfile,
+    BuildContext,
+    BuildResponse,
+    CLIAgent,
+    ClaudeAgent,
+    MockAgent,
+    PromptTemplates,
+    ValidationResponse,
+    create_from_profile,
+)
 from intentc.build.state import (
     BuildResult,
     BuildStep,
@@ -8,10 +21,21 @@ from intentc.build.state import (
 )
 
 __all__ = [
+    "Agent",
+    "AgentError",
+    "AgentProfile",
+    "BuildContext",
+    "BuildResponse",
     "BuildResult",
     "BuildStep",
+    "CLIAgent",
+    "ClaudeAgent",
     "GitVersionControl",
+    "MockAgent",
+    "PromptTemplates",
     "StateManager",
     "TargetStatus",
+    "ValidationResponse",
     "VersionControl",
+    "create_from_profile",
 ]
