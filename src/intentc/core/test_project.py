@@ -234,6 +234,34 @@ class TestLoadProject:
 
         assert "mod/sub/feat" in project.features
 
+    def test_wildcard_dependency(self, tmp_path: Path):
+        intent = _make_project(
+            tmp_path,
+            {"core/a": [], "core/b": [], "top": ["core/*"]},
+        )
+        project = load_project(intent)
+
+        parents = sorted(project.parents("top"))
+        assert parents == ["core/a", "core/b"]
+
+    def test_wildcard_no_match_errors(self, tmp_path: Path):
+        intent = _make_project(
+            tmp_path,
+            {"alpha": [], "beta": ["missing/*"]},
+        )
+        with pytest.raises(ParseErrors):
+            load_project(intent)
+
+    def test_wildcard_mixed_with_literal(self, tmp_path: Path):
+        intent = _make_project(
+            tmp_path,
+            {"core/a": [], "core/b": [], "extra": [], "top": ["core/*", "extra"]},
+        )
+        project = load_project(intent)
+
+        parents = sorted(project.parents("top"))
+        assert parents == ["core/a", "core/b", "extra"]
+
 
 # ---------------------------------------------------------------------------
 # write_project

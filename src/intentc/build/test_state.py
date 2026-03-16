@@ -1,0 +1,479 @@
+"""Tests for build state management."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from intentc.build.state import (
+    BuildResult,
+    BuildStep,
+    GitVersionControl,
+    StateManager,
+    TargetStatus,
+    VersionControl,
+)
+from intentc.core.project import FeatureNode, Project
+from intentc.core.types import IntentFile, ProjectIntent
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_result(
+    target: str = "feat/a",
+    *,
+    generation_id: str = "gen-1",
+    status: TargetStatus = TargetStatus.BUILT,
+    commit_id: str = "abc123",
+) -> BuildResult:
+    return BuildResult(
+        target=target,
+        generation_id=generation_id,
+        status=status,
+        steps=[
+            BuildStep(
+                phase="resolve_deps",
+                status="success",
+                duration=timedelta(seconds=0.5),
+                summary="Resolved 2 dependencies",
+            ),
+            BuildStep(
+                phase="build",
+                status="success",
+                duration=timedelta(seconds=3.2),
+                summary="Agent generated 4 files",
+            ),
+        ],
+        commit_id=commit_id,
+        total_duration=timedelta(seconds=3.7),
+        timestamp=datetime(2026, 3, 16, 12, 0, 0),
+    )
+
+
+def _diamond_project() -> Project:
+    """A -> B,C -> D diamond graph."""
+    return Project(
+        project_intent=ProjectIntent(name="test"),
+        features={
+            "a": FeatureNode(path="a", intents=[IntentFile(name="a")]),
+            "b": FeatureNode(path="b", intents=[IntentFile(name="b", depends_on=["a"])]),
+            "c": FeatureNode(path="c", intents=[IntentFile(name="c", depends_on=["a"])]),
+            "d": FeatureNode(path="d", intents=[IntentFile(name="d", depends_on=["b", "c"])]),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# TargetStatus
+# ---------------------------------------------------------------------------
+
+
+class TestTargetStatus:
+    def test_values(self):
+        assert TargetStatus.PENDING == "pending"
+        assert TargetStatus.BUILT == "built"
+        assert TargetStatus.FAILED == "failed"
+        assert TargetStatus.OUTDATED == "outdated"
+
+
+# ---------------------------------------------------------------------------
+# BuildStep / BuildResult
+# ---------------------------------------------------------------------------
+
+
+class TestBuildStep:
+    def test_construction(self):
+        step = BuildStep(
+            phase="build",
+            status="success",
+            duration=timedelta(seconds=1.5),
+            summary="Done",
+        )
+        assert step.phase == "build"
+        assert step.status == "success"
+        assert step.duration == timedelta(seconds=1.5)
+        assert step.summary == "Done"
+
+    def test_extra_fields_ignored(self):
+        step = BuildStep(
+            phase="build",
+            status="success",
+            duration=timedelta(seconds=1),
+            summary="ok",
+            unknown_field="ignored",  # type: ignore[call-arg]
+        )
+        assert not hasattr(step, "unknown_field")
+
+
+class TestBuildResult:
+    def test_all_fields(self):
+        result = _make_result()
+        assert result.target == "feat/a"
+        assert result.generation_id == "gen-1"
+        assert result.status == TargetStatus.BUILT
+        assert len(result.steps) == 2
+        assert result.commit_id == "abc123"
+        assert result.total_duration == timedelta(seconds=3.7)
+        assert result.timestamp == datetime(2026, 3, 16, 12, 0, 0)
+
+    def test_defaults(self):
+        result = BuildResult(
+            target="x",
+            generation_id="g",
+            status=TargetStatus.PENDING,
+            timestamp=datetime.now(),
+        )
+        assert result.steps == []
+        assert result.commit_id == ""
+        assert result.total_duration == timedelta()
+
+
+# ---------------------------------------------------------------------------
+# StateManager — basic operations
+# ---------------------------------------------------------------------------
+
+
+class TestStateManager:
+    def test_unknown_target_is_pending(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        assert sm.get_status("nonexistent") == TargetStatus.PENDING
+
+    def test_unknown_target_result_is_none(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        assert sm.get_build_result("nonexistent") is None
+
+    def test_save_and_get(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        result = _make_result()
+        sm.save_build_result("feat/a", result)
+
+        assert sm.get_status("feat/a") == TargetStatus.BUILT
+        loaded = sm.get_build_result("feat/a")
+        assert loaded is not None
+        assert loaded.target == "feat/a"
+        assert loaded.commit_id == "abc123"
+
+    def test_set_status(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        sm.set_status("feat/a", TargetStatus.OUTDATED)
+        assert sm.get_status("feat/a") == TargetStatus.OUTDATED
+
+    def test_list_targets(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        sm.save_build_result("b", _make_result("b"))
+        sm.save_build_result("a", _make_result("a"))
+        targets = sm.list_targets()
+        assert targets == [("a", TargetStatus.BUILT), ("b", TargetStatus.BUILT)]
+
+    def test_reset_target(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        sm.save_build_result("feat/a", _make_result())
+        sm.save_build_result("feat/b", _make_result("feat/b"))
+        sm.reset("feat/a")
+
+        assert sm.get_status("feat/a") == TargetStatus.PENDING
+        assert sm.get_build_result("feat/a") is None
+        # Other target unaffected
+        assert sm.get_status("feat/b") == TargetStatus.BUILT
+
+    def test_reset_all(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        sm.save_build_result("feat/a", _make_result())
+        sm.save_build_result("feat/b", _make_result("feat/b"))
+        sm.reset_all()
+
+        assert sm.list_targets() == []
+        assert sm.get_status("feat/a") == TargetStatus.PENDING
+
+
+# ---------------------------------------------------------------------------
+# State roundtrip — save, reload from disk, verify
+# ---------------------------------------------------------------------------
+
+
+class TestStateRoundtrip:
+    def test_full_roundtrip(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        original = _make_result()
+        sm.save_build_result("feat/a", original)
+
+        # Reload from disk
+        sm2 = StateManager(tmp_path, "out")
+        assert sm2.get_status("feat/a") == TargetStatus.BUILT
+
+        loaded = sm2.get_build_result("feat/a")
+        assert loaded is not None
+        assert loaded.target == original.target
+        assert loaded.generation_id == original.generation_id
+        assert loaded.status == original.status
+        assert loaded.commit_id == original.commit_id
+        assert loaded.total_duration == original.total_duration
+        assert loaded.timestamp == original.timestamp
+        assert len(loaded.steps) == len(original.steps)
+        for orig_step, loaded_step in zip(original.steps, loaded.steps):
+            assert loaded_step.phase == orig_step.phase
+            assert loaded_step.status == orig_step.status
+            assert loaded_step.duration == orig_step.duration
+            assert loaded_step.summary == orig_step.summary
+
+    def test_missing_state_file_returns_defaults(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        assert sm.get_status("anything") == TargetStatus.PENDING
+        assert sm.get_build_result("anything") is None
+        assert sm.list_targets() == []
+
+    def test_corrupt_state_file_returns_defaults(self, tmp_path: Path):
+        state_dir = tmp_path / ".intentc" / "state" / "out"
+        state_dir.mkdir(parents=True)
+        (state_dir / "state.json").write_text("NOT VALID JSON")
+
+        sm = StateManager(tmp_path, "out")
+        assert sm.get_status("x") == TargetStatus.PENDING
+
+    def test_unknown_fields_tolerated(self, tmp_path: Path):
+        """Forward compatibility — extra fields in JSON are ignored."""
+        state_dir = tmp_path / ".intentc" / "state" / "out"
+        state_dir.mkdir(parents=True)
+        data = {
+            "version": 1,
+            "future_field": "ignored",
+            "targets": {
+                "feat/a": {
+                    "status": "built",
+                    "build_result": {
+                        "target": "feat/a",
+                        "generation_id": "g1",
+                        "status": "built",
+                        "steps": [],
+                        "commit_id": "sha1",
+                        "total_duration": 1.0,
+                        "timestamp": "2026-01-01T00:00:00",
+                        "new_field": "also_ignored",
+                    },
+                    "extra_entry_field": True,
+                },
+            },
+        }
+        (state_dir / "state.json").write_text(json.dumps(data))
+
+        sm = StateManager(tmp_path, "out")
+        assert sm.get_status("feat/a") == TargetStatus.BUILT
+        loaded = sm.get_build_result("feat/a")
+        assert loaded is not None
+        assert loaded.commit_id == "sha1"
+
+
+# ---------------------------------------------------------------------------
+# DAG-aware operations
+# ---------------------------------------------------------------------------
+
+
+class TestDAGOperations:
+    def test_mark_dependents_outdated(self, tmp_path: Path):
+        project = _diamond_project()
+        sm = StateManager(tmp_path, "out")
+
+        # Build all targets
+        for name in ["a", "b", "c", "d"]:
+            sm.save_build_result(name, _make_result(name))
+
+        # Mark dependents of "a" as outdated
+        sm.mark_dependents_outdated("a", project)
+
+        assert sm.get_status("a") == TargetStatus.BUILT  # unchanged
+        assert sm.get_status("b") == TargetStatus.OUTDATED
+        assert sm.get_status("c") == TargetStatus.OUTDATED
+        assert sm.get_status("d") == TargetStatus.OUTDATED
+
+    def test_mark_dependents_partial_graph(self, tmp_path: Path):
+        project = _diamond_project()
+        sm = StateManager(tmp_path, "out")
+
+        for name in ["a", "b", "c", "d"]:
+            sm.save_build_result(name, _make_result(name))
+
+        # Mark dependents of "b" — only "d" depends on "b"
+        sm.mark_dependents_outdated("b", project)
+
+        assert sm.get_status("a") == TargetStatus.BUILT
+        assert sm.get_status("b") == TargetStatus.BUILT  # unchanged
+        assert sm.get_status("c") == TargetStatus.BUILT
+        assert sm.get_status("d") == TargetStatus.OUTDATED
+
+    def test_reset_does_not_affect_others(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        sm.save_build_result("a", _make_result("a"))
+        sm.save_build_result("b", _make_result("b"))
+
+        sm.reset("a")
+
+        assert sm.get_status("a") == TargetStatus.PENDING
+        assert sm.get_status("b") == TargetStatus.BUILT
+        assert sm.get_build_result("b") is not None
+
+
+# ---------------------------------------------------------------------------
+# Build log — append-only
+# ---------------------------------------------------------------------------
+
+
+class TestBuildLog:
+    def test_append_only(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+
+        r1 = _make_result("feat/a", generation_id="gen-1")
+        r2 = _make_result("feat/b", generation_id="gen-2")
+        r3 = _make_result("feat/a", generation_id="gen-3")
+
+        sm.save_build_result("feat/a", r1)
+        sm.save_build_result("feat/b", r2)
+        sm.save_build_result("feat/a", r3)
+
+        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
+        assert log_path.exists()
+
+        lines = log_path.read_text().strip().splitlines()
+        assert len(lines) == 3
+
+        entries = [json.loads(line) for line in lines]
+        assert entries[0]["target"] == "feat/a"
+        assert entries[0]["generation_id"] == "gen-1"
+        assert entries[1]["target"] == "feat/b"
+        assert entries[1]["generation_id"] == "gen-2"
+        assert entries[2]["target"] == "feat/a"
+        assert entries[2]["generation_id"] == "gen-3"
+
+    def test_each_entry_is_valid_json(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "out")
+        for i in range(5):
+            sm.save_build_result(f"t{i}", _make_result(f"t{i}", generation_id=f"g{i}"))
+
+        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
+        lines = log_path.read_text().strip().splitlines()
+        assert len(lines) == 5
+        for line in lines:
+            entry = json.loads(line)
+            assert "target" in entry
+            assert "generation_id" in entry
+            assert "status" in entry
+            assert "steps" in entry
+            assert "commit_id" in entry
+            assert "total_duration" in entry
+            assert "timestamp" in entry
+
+    def test_log_survives_reload(self, tmp_path: Path):
+        """Reloading StateManager doesn't truncate the log."""
+        sm = StateManager(tmp_path, "out")
+        sm.save_build_result("a", _make_result("a", generation_id="g1"))
+
+        # Reload and write more
+        sm2 = StateManager(tmp_path, "out")
+        sm2.save_build_result("b", _make_result("b", generation_id="g2"))
+
+        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
+        lines = log_path.read_text().strip().splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[0])["generation_id"] == "g1"
+        assert json.loads(lines[1])["generation_id"] == "g2"
+
+
+# ---------------------------------------------------------------------------
+# VersionControl interface
+# ---------------------------------------------------------------------------
+
+
+class TestVersionControlInterface:
+    def test_is_abstract(self):
+        with pytest.raises(TypeError):
+            VersionControl()  # type: ignore[abstract]
+
+    def test_git_version_control_is_concrete(self, tmp_path: Path):
+        gvc = GitVersionControl(tmp_path)
+        assert isinstance(gvc, VersionControl)
+
+
+class TestGitVersionControl:
+    def _init_repo(self, tmp_path: Path) -> Path:
+        """Initialize a git repo with an initial commit."""
+        import subprocess
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path, capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path, capture_output=True, check=True,
+        )
+        (tmp_path / "README.md").write_text("init")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path, capture_output=True, check=True,
+        )
+        return tmp_path
+
+    def test_checkpoint_returns_sha(self, tmp_path: Path):
+        repo = self._init_repo(tmp_path)
+        gvc = GitVersionControl(repo)
+
+        (repo / "file.txt").write_text("hello")
+        sha = gvc.checkpoint("add file")
+
+        assert len(sha) == 40
+        assert all(c in "0123456789abcdef" for c in sha)
+
+    def test_diff_shows_changes(self, tmp_path: Path):
+        repo = self._init_repo(tmp_path)
+        gvc = GitVersionControl(repo)
+
+        sha1 = gvc.checkpoint("empty checkpoint")
+
+        (repo / "file.txt").write_text("content")
+        sha2 = gvc.checkpoint("add file")
+
+        diff = gvc.diff(sha1, sha2)
+        assert "file.txt" in diff
+        assert "content" in diff
+
+    def test_log_returns_shas(self, tmp_path: Path):
+        repo = self._init_repo(tmp_path)
+        gvc = GitVersionControl(repo)
+
+        gvc.checkpoint("first")
+        gvc.checkpoint("second")
+
+        shas = gvc.log()
+        # At least initial + 2 checkpoints
+        assert len(shas) >= 3
+        assert all(len(s) == 40 for s in shas)
+
+    def test_log_filters_by_target(self, tmp_path: Path):
+        repo = self._init_repo(tmp_path)
+        gvc = GitVersionControl(repo)
+
+        gvc.checkpoint("build feat/a")
+        gvc.checkpoint("build feat/b")
+
+        shas = gvc.log(target="feat/a")
+        assert len(shas) == 1
+
+    def test_restore(self, tmp_path: Path):
+        repo = self._init_repo(tmp_path)
+        gvc = GitVersionControl(repo)
+
+        (repo / "file.txt").write_text("v1")
+        sha1 = gvc.checkpoint("v1")
+
+        (repo / "file.txt").write_text("v2")
+        gvc.checkpoint("v2")
+
+        gvc.restore(sha1)
+        assert (repo / "file.txt").read_text() == "v1"

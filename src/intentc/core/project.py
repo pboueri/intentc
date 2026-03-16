@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import shutil
 from collections import deque
 from pathlib import Path
@@ -241,6 +242,28 @@ def load_project(intent_dir: Path) -> Project:
             features[feature_path].validations.append(vf)
         except ParseErrors as exc:
             errors.extend(exc.errors)
+
+    # --- Expand wildcard dependencies ---
+    all_feature_paths = sorted(features)
+    for fp, node in features.items():
+        for intent in node.intents:
+            expanded: list[str] = []
+            for dep in intent.depends_on:
+                if any(c in dep for c in "*?["):
+                    matches = fnmatch.filter(all_feature_paths, dep)
+                    if not matches:
+                        errors.append(
+                            ParseError(
+                                path=intent.source_path or Path(fp),
+                                field="depends_on",
+                                message=f"Wildcard '{dep}' matched no features. "
+                                f"Available features: {', '.join(all_feature_paths)}",
+                            )
+                        )
+                    expanded.extend(matches)
+                else:
+                    expanded.append(dep)
+            intent.depends_on = expanded
 
     # --- Validate dependency references ---
     for fp, node in features.items():
