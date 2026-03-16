@@ -375,5 +375,5 @@ class TestParseRealFiles:
         if not path.exists():
             pytest.skip("validations.icv not found")
         vf = parse_validation_file(path)
-        assert vf.target == "core"
+        assert vf.target == "core/specifications"
         assert len(vf.validations) == 2
