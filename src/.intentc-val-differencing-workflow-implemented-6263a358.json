@@ -1,0 +1,5 @@
+{
+  "name": "differencing-workflow-implemented",
+  "status": "pass",
+  "reason": "All 7 rubric criteria are satisfied: (1) run_differencing() accepts output_dir_a, output_dir_b, a Project, and an AgentProfile. (2) It constructs a DifferencingContext with both paths, the project intent, optional implementation, and a temporary response file path. (3) It creates an agent via create_from_profile(profile) and calls agent.difference(ctx). (4) It reads the response file, parses JSON, and validates the structure via Pydantic into a DifferencingResponse. (5) It returns the parsed DifferencingResponse. (6) Missing, unreadable, empty, malformed JSON, and structurally invalid response files all raise AgentError with descriptive messages. (7) No build state is modified — the function uses only temporary files and does not interact with StateManager, git, or any persistent state, confirmed by a dedicated test."
+}

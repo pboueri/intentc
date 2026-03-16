@@ -17,11 +17,15 @@ from intentc.build.agents import (
     BuildResponse,
     CLIAgent,
     ClaudeAgent,
+    DifferencingContext,
+    DifferencingResponse,
+    DimensionResult,
     MockAgent,
     PromptTemplates,
     ValidationResponse,
     create_from_profile,
     load_default_prompts,
+    render_differencing_prompt,
     render_prompt,
 )
 from intentc.core.types import (
@@ -407,10 +411,9 @@ class TestCLIAgent:
         profile = _make_profile(command="bash", timeout=0.1)
         profile.cli_args = ["-c", "sleep 10"]
         agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
 
         with pytest.raises(AgentError, match="timed out"):
-            agent._run("", ctx)
+            agent._run("", str(tmp_path))
 
     def test_build_command_includes_cli_args(self):
         profile = _make_profile(command="my-tool", cli_args=["--verbose", "--format=json"])
@@ -601,3 +604,202 @@ class TestCreateFromProfile:
             agent = create_from_profile(profile)
             assert isinstance(agent, Agent)
             assert agent.get_name() == "test-agent"
+
+
+# ---------------------------------------------------------------------------
+# Differencing types
+# ---------------------------------------------------------------------------
+
+
+def _make_differencing_context(tmp_path: Path, **overrides) -> DifferencingContext:
+    """Create a minimal DifferencingContext for testing."""
+    response_file = tmp_path / "diff_response.json"
+    defaults = dict(
+        output_dir_a=str(tmp_path / "a"),
+        output_dir_b=str(tmp_path / "b"),
+        project_intent=ProjectIntent(name="test-project", body="# Test Project"),
+        response_file_path=str(response_file),
+        implementation=Implementation(name="impl", body="# Implementation\nPython 3.11"),
+    )
+    defaults.update(overrides)
+    return DifferencingContext(**defaults)
+
+
+def _write_differencing_response(path: str, **overrides) -> None:
+    """Write a valid DifferencingResponse JSON file."""
+    data = {
+        "status": "equivalent",
+        "dimensions": [
+            {"name": "public_api", "status": "pass", "rationale": "Same API surface"},
+        ],
+        "summary": "Builds are equivalent",
+    }
+    data.update(overrides)
+    Path(path).write_text(json.dumps(data))
+
+
+class TestDimensionResult:
+    def test_construction(self):
+        dr = DimensionResult(name="public_api", status="pass", rationale="Same surface")
+        assert dr.name == "public_api"
+        assert dr.status == "pass"
+        assert dr.rationale == "Same surface"
+
+    def test_extra_fields_ignored(self):
+        dr = DimensionResult(
+            name="x", status="fail", rationale="r", extra="ignored"  # type: ignore[call-arg]
+        )
+        assert not hasattr(dr, "extra")
+
+
+class TestDifferencingResponse:
+    def test_construction(self):
+        resp = DifferencingResponse(
+            status="equivalent",
+            dimensions=[
+                DimensionResult(name="public_api", status="pass", rationale="ok"),
+            ],
+            summary="All good",
+        )
+        assert resp.status == "equivalent"
+        assert len(resp.dimensions) == 1
+        assert resp.summary == "All good"
+
+    def test_defaults(self):
+        resp = DifferencingResponse(status="divergent", summary="Mismatch")
+        assert resp.dimensions == []
+
+    def test_extra_fields_ignored(self):
+        resp = DifferencingResponse(
+            status="equivalent", summary="ok", unknown="ignored"  # type: ignore[call-arg]
+        )
+        assert not hasattr(resp, "unknown")
+
+
+class TestDifferencingContext:
+    def test_all_fields(self, tmp_path: Path):
+        ctx = _make_differencing_context(tmp_path)
+        assert ctx.output_dir_a.endswith("/a")
+        assert ctx.output_dir_b.endswith("/b")
+        assert ctx.project_intent.name == "test-project"
+        assert ctx.implementation is not None
+        assert ctx.response_file_path.endswith("diff_response.json")
+
+    def test_optional_implementation(self, tmp_path: Path):
+        ctx = _make_differencing_context(tmp_path, implementation=None)
+        assert ctx.implementation is None
+
+    def test_extra_fields_ignored(self, tmp_path: Path):
+        ctx = _make_differencing_context(tmp_path)
+        # extra fields in model_config = {"extra": "ignore"} means no error
+        assert isinstance(ctx, DifferencingContext)
+
+
+# ---------------------------------------------------------------------------
+# render_differencing_prompt
+# ---------------------------------------------------------------------------
+
+
+class TestRenderDifferencingPrompt:
+    def test_replaces_all_variables(self, tmp_path: Path):
+        template = (
+            "Project: {project}\n"
+            "Impl: {implementation}\n"
+            "DirA: {output_dir_a}\n"
+            "DirB: {output_dir_b}\n"
+            "Response: {response_file}"
+        )
+        ctx = _make_differencing_context(tmp_path)
+        result = render_differencing_prompt(template, ctx)
+
+        assert "# Test Project" in result
+        assert "# Implementation" in result
+        assert str(tmp_path / "a") in result
+        assert str(tmp_path / "b") in result
+        assert "diff_response.json" in result
+
+    def test_missing_implementation(self, tmp_path: Path):
+        template = "Impl: {implementation}"
+        ctx = _make_differencing_context(tmp_path, implementation=None)
+        result = render_differencing_prompt(template, ctx)
+        assert result == "Impl: "
+
+
+# ---------------------------------------------------------------------------
+# MockAgent — differencing
+# ---------------------------------------------------------------------------
+
+
+class TestMockAgentDifferencing:
+    def test_difference_records_calls(self, tmp_path: Path):
+        agent = MockAgent()
+        ctx = _make_differencing_context(tmp_path)
+        resp = agent.difference(ctx)
+
+        assert resp.status == "equivalent"
+        assert len(agent.difference_calls) == 1
+        assert agent.difference_calls[0].output_dir_a == ctx.output_dir_a
+
+    def test_custom_differencing_response(self, tmp_path: Path):
+        custom = DifferencingResponse(
+            status="divergent",
+            dimensions=[DimensionResult(name="runtime_behavior", status="fail", rationale="Different output")],
+            summary="Not equivalent",
+        )
+        agent = MockAgent(differencing_response=custom)
+        ctx = _make_differencing_context(tmp_path)
+        resp = agent.difference(ctx)
+
+        assert resp.status == "divergent"
+        assert len(resp.dimensions) == 1
+        assert resp.dimensions[0].name == "runtime_behavior"
+
+
+# ---------------------------------------------------------------------------
+# CLIAgent — differencing
+# ---------------------------------------------------------------------------
+
+
+class TestCLIAgentDifferencing:
+    def test_difference_reads_response_file(self, tmp_path: Path):
+        profile = _make_profile(command="true")
+        agent = CLIAgent(profile)
+        ctx = _make_differencing_context(tmp_path)
+
+        _write_differencing_response(ctx.response_file_path)
+
+        with patch.object(agent, "_run", return_value=MagicMock()):
+            resp = agent.difference(ctx)
+
+        assert resp.status == "equivalent"
+        assert len(resp.dimensions) == 1
+        assert resp.dimensions[0].name == "public_api"
+
+    def test_difference_missing_response_raises(self, tmp_path: Path):
+        profile = _make_profile(command="true")
+        agent = CLIAgent(profile)
+        ctx = _make_differencing_context(tmp_path)
+
+        with patch.object(agent, "_run", return_value=MagicMock()):
+            with pytest.raises(AgentError, match="Response file not found"):
+                agent.difference(ctx)
+
+
+# ---------------------------------------------------------------------------
+# ClaudeAgent — differencing
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeAgentDifferencing:
+    def test_difference_reads_response_file(self, tmp_path: Path):
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        ctx = _make_differencing_context(tmp_path)
+
+        _write_differencing_response(ctx.response_file_path)
+
+        with patch.object(agent, "_run_noninteractive", return_value=MagicMock()):
+            resp = agent.difference(ctx)
+
+        assert resp.status == "equivalent"
+        assert len(resp.dimensions) == 1

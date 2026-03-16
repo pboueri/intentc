@@ -1,0 +1,5 @@
+{
+  "name": "differencing-tests-pass",
+  "status": "pass",
+  "reason": "All 11 tests in intentc/differencing/test_differencing.py passed with exit code 0. Tests cover response parsing (valid equivalent, divergent, missing file, malformed JSON, unknown fields) and the run_differencing workflow (context construction, state immutability, empty response error, divergent response, implementation passing, none implementation)."
+}

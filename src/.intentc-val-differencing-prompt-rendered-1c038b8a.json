@@ -1,0 +1,5 @@
+{
+  "name": "differencing-prompt-rendered",
+  "status": "pass",
+  "reason": "The difference prompt template exists at intent/differencing/prompts/difference.prompt and contains all expected template variables: {project}, {implementation}, {output_dir_a}, {output_dir_b}, and {response_file}. The render_differencing_prompt function in build/agents.py correctly substitutes all five variables. The prompt instructs the agent to evaluate all five standard dimensions in order (public_api, test_suite, runtime_behavior, dependency_compatibility, configuration_compatibility) with detailed evaluation guidance for each, and requires the agent to write a DifferencingResponse JSON to the response file with status, dimensions, and summary fields."
+}

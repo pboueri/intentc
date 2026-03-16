@@ -1,0 +1,13 @@
+{
+  "status": "success",
+  "summary": "Implemented differencing feature: extended Agent interface with difference() method, added DifferencingContext/DifferencingResponse/DimensionResult types, created differencing workflow module, and comprehensive tests. The difference prompt template already existed at intent/differencing/prompts/difference.prompt. All 11 differencing tests pass, and all existing tests remain green.",
+  "files_created": [
+    "src/intentc/differencing/__init__.py",
+    "src/intentc/differencing/differencing.py",
+    "src/intentc/differencing/test_differencing.py"
+  ],
+  "files_modified": [
+    "src/intentc/build/agents.py",
+    "src/intentc/build/test_agents.py"
+  ]
+}

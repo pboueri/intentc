@@ -41,8 +41,28 @@ class ValidationResponse(BaseModel):
     reason: str
 
 
+class DimensionResult(BaseModel):
+    """Per-axis evaluation result within a differencing response."""
+
+    model_config = {"extra": "ignore"}
+
+    name: str
+    status: str  # "pass" or "fail"
+    rationale: str
+
+
+class DifferencingResponse(BaseModel):
+    """Structured response from an agent after a differencing evaluation."""
+
+    model_config = {"extra": "ignore"}
+
+    status: str  # "equivalent" or "divergent"
+    dimensions: list[DimensionResult] = []
+    summary: str
+
+
 # ---------------------------------------------------------------------------
-# BuildContext
+# Contexts
 # ---------------------------------------------------------------------------
 
 
@@ -61,11 +81,24 @@ class BuildContext(BaseModel):
     response_file_path: str
 
 
+class DifferencingContext(BaseModel):
+    """Everything the agent needs to perform a differencing evaluation."""
+
+    model_config = {"extra": "ignore"}
+
+    output_dir_a: str
+    output_dir_b: str
+    project_intent: ProjectIntent
+    response_file_path: str
+    implementation: Implementation | None = None
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "intent" / "build" / "agents" / "prompts"
+_DIFF_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "intent" / "differencing" / "prompts"
 
 
 class PromptTemplates(BaseModel):
@@ -76,6 +109,7 @@ class PromptTemplates(BaseModel):
     build: str = ""
     validate_template: str = ""
     plan: str = ""
+    difference: str = ""
 
 
 def load_default_prompts() -> PromptTemplates:
@@ -91,6 +125,10 @@ def load_default_prompts() -> PromptTemplates:
         templates.validate_template = validate_path.read_text(encoding="utf-8")
     if plan_path.exists():
         templates.plan = plan_path.read_text(encoding="utf-8")
+
+    diff_path = _DIFF_PROMPTS_DIR / "difference.prompt"
+    if diff_path.exists():
+        templates.difference = diff_path.read_text(encoding="utf-8")
 
     return templates
 
@@ -138,6 +176,29 @@ def render_prompt(template: str, ctx: BuildContext, validation: Validation | Non
     )
 
 
+def render_differencing_prompt(template: str, ctx: DifferencingContext) -> str:
+    """Render a prompt template with DifferencingContext variables.
+
+    Template variables:
+        {project} — the project-level intent body
+        {implementation} — the implementation-level intent body
+        {output_dir_a} — reference output directory
+        {output_dir_b} — candidate output directory
+        {response_file} — path to the response file
+    """
+    project_text = ctx.project_intent.body
+    implementation_text = ctx.implementation.body if ctx.implementation else ""
+
+    return (
+        template
+        .replace("{project}", project_text)
+        .replace("{implementation}", implementation_text)
+        .replace("{output_dir_a}", ctx.output_dir_a)
+        .replace("{output_dir_b}", ctx.output_dir_b)
+        .replace("{response_file}", ctx.response_file_path)
+    )
+
+
 # ---------------------------------------------------------------------------
 # AgentProfile
 # ---------------------------------------------------------------------------
@@ -175,6 +236,10 @@ class Agent(abc.ABC):
     @abc.abstractmethod
     def validate(self, ctx: BuildContext, validation: Validation) -> ValidationResponse:
         """Evaluate a single validation against the implementation."""
+
+    @abc.abstractmethod
+    def difference(self, ctx: DifferencingContext) -> DifferencingResponse:
+        """Evaluate functional equivalence between two builds."""
 
     @abc.abstractmethod
     def plan(self, ctx: BuildContext) -> None:
@@ -223,19 +288,25 @@ class CLIAgent(Agent):
 
     def build(self, ctx: BuildContext) -> BuildResponse:
         prompt = render_prompt(self._templates.build, ctx)
-        self._run(prompt, ctx)
+        self._run(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return BuildResponse(**data)
 
     def validate(self, ctx: BuildContext, validation: Validation) -> ValidationResponse:
         prompt = render_prompt(self._templates.validate_template, ctx, validation=validation)
-        self._run(prompt, ctx)
+        self._run(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return ValidationResponse(**data)
 
+    def difference(self, ctx: DifferencingContext) -> DifferencingResponse:
+        prompt = render_differencing_prompt(self._templates.difference, ctx)
+        self._run(prompt, ctx.output_dir_a)
+        data = _read_response_file(ctx.response_file_path)
+        return DifferencingResponse(**data)
+
     def plan(self, ctx: BuildContext) -> None:
         prompt = render_prompt(self._templates.plan, ctx)
-        self._run(prompt, ctx)
+        self._run(prompt, ctx.output_dir)
 
     def get_name(self) -> str:
         return self._profile.name
@@ -249,7 +320,7 @@ class CLIAgent(Agent):
             raise AgentError("CLIAgent requires a command in the profile")
         return [self._profile.command, *self._profile.cli_args, prompt]
 
-    def _run(self, prompt: str, ctx: BuildContext) -> subprocess.CompletedProcess[str]:
+    def _run(self, prompt: str, cwd: str) -> subprocess.CompletedProcess[str]:
         """Execute the CLI command with the given prompt."""
         cmd = self._build_command(prompt)
         try:
@@ -258,7 +329,7 @@ class CLIAgent(Agent):
                 capture_output=True,
                 text=True,
                 timeout=self._profile.timeout,
-                cwd=ctx.output_dir,
+                cwd=cwd,
             )
             return result
         except subprocess.TimeoutExpired:
@@ -309,7 +380,6 @@ def _print_stream_event(event: dict) -> None:
 class ClaudeAgent(Agent):
     """Specialization for Claude Code.
 
-<<<<<<< HEAD
     Combines ``--dangerously-skip-permissions`` (so every tool runs without
     prompts, matching normal non-interactive behaviour) with Claude Code's
     built-in OS-level sandbox for filesystem isolation.
@@ -324,11 +394,8 @@ class ClaudeAgent(Agent):
     All commands and network access remain fully allowed.  The builder is
     responsible for populating ``sandbox_write_paths`` and
     ``sandbox_read_paths`` on the profile before the agent is created.
-=======
-    Uses CLIAgent via composition, overriding the command to `claude`
-    with flags: -p, --output-format stream-json, --dangerously-skip-permissions,
-    and --model from the profile.  Streams agent output to stderr in real-time.
->>>>>>> 354a96f (build core/specifications [gen:1835255e-ed9b-4db6-a29d-de5349a5aeea])
+
+    Streams output to stderr
     """
 
     def __init__(self, profile: AgentProfile) -> None:
@@ -337,15 +404,21 @@ class ClaudeAgent(Agent):
 
     def build(self, ctx: BuildContext) -> BuildResponse:
         prompt = render_prompt(self._templates.build, ctx)
-        self._run_noninteractive(prompt, ctx)
+        self._run_noninteractive(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return BuildResponse(**data)
 
     def validate(self, ctx: BuildContext, validation: Validation) -> ValidationResponse:
         prompt = render_prompt(self._templates.validate_template, ctx, validation=validation)
-        self._run_noninteractive(prompt, ctx)
+        self._run_noninteractive(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return ValidationResponse(**data)
+
+    def difference(self, ctx: DifferencingContext) -> DifferencingResponse:
+        prompt = render_differencing_prompt(self._templates.difference, ctx)
+        self._run_noninteractive(prompt, ctx.output_dir_a)
+        data = _read_response_file(ctx.response_file_path)
+        return DifferencingResponse(**data)
 
     def plan(self, ctx: BuildContext) -> None:
         """Launch Claude Code in interactive REPL mode for planning."""
@@ -444,7 +517,6 @@ class ClaudeAgent(Agent):
         cmd.extend(self._profile.cli_args)
         return cmd
 
-<<<<<<< HEAD
     def _run_noninteractive(
         self, prompt: str, ctx: BuildContext
     ) -> subprocess.CompletedProcess[str]:
@@ -459,10 +531,6 @@ class ClaudeAgent(Agent):
         use_sandbox = self._has_sandbox_paths
         if use_sandbox:
             self._write_sandbox_settings(ctx.output_dir)
-=======
-    def _run_noninteractive(self, prompt: str, ctx: BuildContext) -> None:
-        """Run Claude Code in non-interactive mode, streaming output to stderr."""
->>>>>>> 354a96f (build core/specifications [gen:1835255e-ed9b-4db6-a29d-de5349a5aeea])
         cmd = self._build_noninteractive_command(prompt)
         try:
             proc = subprocess.Popen(
@@ -470,7 +538,7 @@ class ClaudeAgent(Agent):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=ctx.output_dir,
+                cwd=cwd,
             )
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -513,6 +581,7 @@ class MockAgent(Agent):
         name: str = "mock",
         build_response: BuildResponse | None = None,
         validation_response: ValidationResponse | None = None,
+        differencing_response: DifferencingResponse | None = None,
     ) -> None:
         self._name = name
         self._build_response = build_response or BuildResponse(
@@ -524,8 +593,14 @@ class MockAgent(Agent):
             status="pass",
             reason="Mock validation passed",
         )
+        self._differencing_response = differencing_response or DifferencingResponse(
+            status="equivalent",
+            dimensions=[],
+            summary="Mock differencing completed",
+        )
         self.build_calls: list[BuildContext] = []
         self.validate_calls: list[tuple[BuildContext, Validation]] = []
+        self.difference_calls: list[DifferencingContext] = []
         self.plan_calls: list[BuildContext] = []
 
     def build(self, ctx: BuildContext) -> BuildResponse:
@@ -540,6 +615,10 @@ class MockAgent(Agent):
             status=self._validation_response.status,
             reason=self._validation_response.reason,
         )
+
+    def difference(self, ctx: DifferencingContext) -> DifferencingResponse:
+        self.difference_calls.append(ctx)
+        return self._differencing_response
 
     def plan(self, ctx: BuildContext) -> None:
         self.plan_calls.append(ctx)
