@@ -24,7 +24,7 @@ The CLI needs to resolve a default agent profile and output directory without re
 default_profile:
   name: default
   provider: claude
-  timeout: 300
+  timeout: 3600
   retries: 3
 default_output_dir: src
 ```

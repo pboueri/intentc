@@ -15,13 +15,14 @@ validations:
     args:
       rubric: |
         Verify the agent module defines:
-        1. Agent interface with Build, Validate, Plan, GetName, GetType methods
+        1. Agent interface with Build, Validate, Difference, Plan, GetName, GetType methods
         2. BuildContext type with all specified fields including ResponseFilePath
-        3. CLIAgent base implementation that constructs prompts and reads response files
-        4. ClaudeAgent that extends CLIAgent with Claude-specific flags (--dangerously-skip-permissions, --output-format json, --model)
-        5. CreateFromProfile factory function
-        6. MockAgent for testing
-        7. BuildResponse and ValidationResponse types
+        3. DifferencingContext type with fields: OutputDirA, OutputDirB, ProjectIntent, ResponseFilePath
+        4. CLIAgent base implementation that constructs prompts and reads response files
+        5. ClaudeAgent that extends CLIAgent with Claude-specific flags (--dangerously-skip-permissions, --output-format json, --model)
+        6. CreateFromProfile factory function
+        7. MockAgent for testing (records all calls including Difference, returns configurable responses)
+        8. BuildResponse, ValidationResponse, and DifferencingResponse types
       context_files: ["src/agent/**"]
 
   - name: agent-tests-pass

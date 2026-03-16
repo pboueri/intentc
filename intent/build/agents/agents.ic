@@ -18,6 +18,7 @@ Because the success of agents is so tied to their context and how they are manag
 interface Agent:
     Build(ctx: BuildContext) -> BuildResponse, error
     Validate(ctx: BuildContext, validation: Validation) -> ValidationResponse, error
+    Difference(ctx: DifferencingContext) -> DifferencingResponse, error
     Plan(ctx: BuildContext) -> interactive session
     GetName() -> string
     GetType() -> string
@@ -25,7 +26,7 @@ interface Agent:
 
 ### Permissionless Execution
 
-Agents must run non-interactively during builds and validations. They should never prompt for confirmation or approval. For Claude Code this means `--dangerously-skip-permissions`. For generic CLI agents, the command is assumed to run without interaction by default.
+Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval. For Claude Code this means `--dangerously-skip-permissions`. For generic CLI agents, the command is assumed to run without interaction by default.
 
 ### Plan as Interactive REPL
 
@@ -58,6 +59,23 @@ The validation system is defined in [build/validations](../validations/validatio
 - `status` (string) — `"pass"` or `"fail"`
 - `reason` (string) — explanation of the result
 
+### DifferencingResponse
+
+Written by the agent after a differencing evaluation. The full specification of this response type and its dimensions is defined in [differencing](../../differencing/differencing.ic).
+
+- `status` (string) — `"equivalent"` or `"divergent"`
+- `dimensions` (list of DimensionResult) — per-axis evaluation results, each with `name`, `status` (`"pass"`/`"fail"`), and `rationale`
+- `summary` (string) — human-readable overall assessment
+
+## DifferencingContext
+
+Everything the agent needs to perform a differencing evaluation:
+
+- `OutputDirA` (string) — path to the reference output directory
+- `OutputDirB` (string) — path to the candidate output directory
+- `ProjectIntent` (Intent) — the project-level intent (project.ic + implementation.ic context)
+- `ResponseFilePath` (string) — path where the agent must write the DifferencingResponse JSON
+
 ## BuildContext
 
 Everything the agent needs to act on a target:
@@ -89,7 +107,7 @@ Factory function. Reads the profile's `provider` field and returns the appropria
 
 ## MockAgent
 
-For testing intentc itself. Records all calls, returns configurable BuildResponse and ValidationResponse values.
+For testing intentc itself. Records all calls, returns configurable BuildResponse, ValidationResponse, and DifferencingResponse values.
 
 ## AgentProfile
 
@@ -111,11 +129,14 @@ All default prompts are stored in [prompts/](prompts/).
 - `Build` — template for build prompts — [file](prompts/build.prompt)
 - `Validate` — template for validation prompts — [file](prompts/validate.prompt)
 - `Plan` — template for planning/refining a feature — [file](prompts/plan.prompt)
+- `Difference` — template for differencing prompts — [file](../../differencing/prompts/difference.prompt)
 
-Templates reference variables from the BuildContext:
+Templates reference variables from BuildContext or DifferencingContext:
 - `{project}` — the project-level intent
 - `{implementation}` — the implementation-level intent
-- `{feature}` — the target feature intent
-- `{validations}` — all validation text for the target (used by build and plan prompts)
-- `{validation}` — the single validation being evaluated (used by validate prompt)
+- `{feature}` — the target feature intent (build, validate, plan)
+- `{validations}` — all validation text for the target (build and plan)
+- `{validation}` — the single validation being evaluated (validate)
+- `{output_dir_a}` — reference output directory (difference)
+- `{output_dir_b}` — candidate output directory (difference)
 - `{response_file}` — path to the response file the agent must write to
