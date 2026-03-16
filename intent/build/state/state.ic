@@ -1,0 +1,73 @@
+---
+name: state
+version: 1
+depends_on: [core/specifications, core/project]
+tags: [build, foundation]
+---
+
+# Build State
+
+Tracks the status and history of each target across builds. State is scoped per output directory and persisted under `.intentc/state/{output-dir}/`.
+
+## TargetStatus
+
+Enum of possible states for a target:
+- `pending` — never built
+- `built` — successfully built
+- `failed` — last build failed
+- `outdated` — built, but a dependency has changed since
+
+## BuildStep
+
+A single phase within a build. Captures what happened and how long it took.
+
+- `Phase` (string) — name of the phase (e.g. "resolve_deps", "build", "validate")
+- `Status` (string) — "success" or "failure"
+- `Duration` (duration) — wall-clock time
+- `Summary` (string) — human-readable description of what happened
+
+## BuildResult
+
+The outcome of building a single target.
+
+- `Target` (string) — feature path
+- `GenerationID` (string) — unique identifier for this build run
+- `Status` (TargetStatus) — resulting status
+- `Steps` (list of BuildStep) — ordered phases
+- `CommitID` (string) — checkpoint ID from the VCS capturing all changes (new files, modifications, deletions) produced by this build
+- `TotalDuration` (duration) — sum of step durations
+- `Timestamp` (datetime) — when the build completed
+
+## StateManager
+
+Manages per-target state for a given output directory. Depends on a `VersionControl` instance for checkpointing changes.
+
+- `GetStatus(target) -> TargetStatus` — returns current status; `pending` if unknown
+- `GetBuildResult(target) -> BuildResult or null` — last build result, null if never built
+- `SaveBuildResult(target, result)` — persist result, update status
+- `SetStatus(target, status)` — override status (e.g. mark outdated)
+- `MarkDependentsOutdated(target, project)` — walk the DAG and set all descendants to `outdated`
+- `Reset(target)` — clear all state for a target
+- `ResetAll()` — clear all state for the output directory
+- `ListTargets() -> list of (target, status)` — all tracked targets
+
+## VersionControl
+
+An abstract interface for checkpointing file changes. Implementations produce a unique ID (SHA, UUID, etc.) for each checkpoint that can be used to inspect or restore changes.
+
+- `Checkpoint(message) -> string` — snapshot current changes, return a unique commit/checkpoint ID
+- `Diff(fromID, toID) -> string` — return the diff between two checkpoints
+- `Restore(commitID)` — restore the output directory to the state at a given checkpoint
+- `Log(target?) -> list of commitIDs` — list checkpoints, optionally filtered by target
+
+### GitVersionControl
+
+Concrete implementation backed by git. Uses commits on a build-managed branch. The checkpoint ID is the git SHA.
+
+## Persistence
+
+State is stored as a single JSON file per output directory at `.intentc/state/{output-dir}/state.json`. The schema is versioned. Unknown fields are tolerated on read. Missing files return empty/default state — never errors.
+
+## Build Log
+
+An append-only log at `.intentc/state/{output-dir}/build-log.jsonl`. Each line is a JSON object representing a completed BuildResult. This provides full audit history independent of the mutable state file.

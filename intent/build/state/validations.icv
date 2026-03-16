@@ -1,0 +1,41 @@
+target: build/state
+validations:
+  - name: state-types-and-interfaces
+    type: llm_judge
+    args:
+      rubric: |
+        Verify the state module defines:
+        1. TargetStatus enum (pending, built, failed, outdated)
+        2. BuildStep and BuildResult types with all specified fields including CommitID
+        3. StateManager with all specified methods
+        4. VersionControl abstract interface with Checkpoint, Diff, Restore, Log
+        5. GitVersionControl concrete implementation
+    severity: error
+
+  - name: state-roundtrip
+    type: llm_judge
+    args:
+      rubric: |
+        Verify tests demonstrate a full state roundtrip: create a StateManager,
+        save a BuildResult for a target, reload state from disk, and confirm
+        all fields (status, steps, commit ID, timestamp) survive the roundtrip.
+        Missing state files should return defaults, not errors.
+    severity: error
+
+  - name: dag-aware-operations
+    type: llm_judge
+    args:
+      rubric: |
+        Verify tests demonstrate that MarkDependentsOutdated walks the project
+        DAG and sets all downstream targets to outdated, and that Reset clears
+        state for a single target without affecting others.
+    severity: error
+
+  - name: build-log-append-only
+    type: llm_judge
+    args:
+      rubric: |
+        Verify tests demonstrate the build log at build-log.jsonl is append-only:
+        multiple SaveBuildResult calls produce multiple lines, each a valid JSON
+        object representing a BuildResult. Previous entries are never overwritten.
+    severity: error
