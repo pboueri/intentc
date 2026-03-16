@@ -1,0 +1,11 @@
+---
+name: implementation
+---
+
+# Implementation
+
+- Language: Python 3.11+
+- Use only the standard library (dataclasses, json, pathlib, sys, argparse, uuid).
+- No external dependencies.
+- Output is a single-directory Python package under `src/todo_app/` with an
+  `__init__.py` and one module per feature.

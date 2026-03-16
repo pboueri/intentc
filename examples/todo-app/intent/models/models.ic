@@ -1,0 +1,14 @@
+---
+name: models
+version: 1
+---
+
+# Models
+
+Define a `Task` dataclass in `src/todo_app/models.py` with fields:
+- `id` (str) — unique identifier, generated via `uuid.uuid4().hex[:8]`
+- `title` (str) — short description of the task
+- `done` (bool) — completion status, defaults to False
+
+Provide a factory function `create_task(title: str) -> Task` that returns a
+new Task with a generated id and done=False.

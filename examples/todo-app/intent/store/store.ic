@@ -1,0 +1,20 @@
+---
+name: store
+version: 1
+depends_on:
+  - models
+---
+
+# Store
+
+Implement a `TaskStore` class in `src/todo_app/store.py` that persists tasks
+to a JSON file using the `Task` dataclass from `models`.
+
+Methods:
+- `__init__(self, path: str)` — path to the JSON file; create it if missing.
+- `add(self, task: Task) -> None` — append a task and save.
+- `list_all(self) -> list[Task]` — return all tasks.
+- `mark_done(self, task_id: str) -> bool` — set done=True for the task with
+  the given id. Return True if found, False otherwise.
+- `_load(self) -> list[Task]` and `_save(self, tasks: list[Task])` — internal
+  helpers for JSON serialization.

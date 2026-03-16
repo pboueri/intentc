@@ -1,0 +1,21 @@
+---
+name: cli
+version: 1
+depends_on:
+  - store
+---
+
+# CLI
+
+Implement a command-line interface in `src/todo_app/cli.py` using `argparse`
+(no external dependencies) that wires up the `TaskStore`.
+
+Commands:
+- `add <title>` — create a task and print its id.
+- `list` — print all tasks in a readable format (id, title, status).
+- `done <id>` — mark a task as done.
+
+The store file defaults to `tasks.json` in the current directory.
+
+Include a `main()` function and an `if __name__ == "__main__"` guard so the
+module is directly runnable via `python -m todo_app.cli`.

@@ -1,0 +1,28 @@
+target: models
+version: 1
+validations:
+  - name: models-importable
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Run `python -c "from todo_app.models import Task, create_task"` from
+        within `src/`. Verify it exits with code 0.
+
+  - name: models-create-task
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Run from `src/`:
+        ```
+        python -c "
+        from todo_app.models import create_task
+        t = create_task('buy milk')
+        assert isinstance(t.id, str) and len(t.id) > 0
+        assert t.title == 'buy milk'
+        assert t.done is False
+        print('OK')
+        "
+        ```
+        Verify it prints OK and exits with code 0.
