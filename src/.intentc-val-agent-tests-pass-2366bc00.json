@@ -1,0 +1,5 @@
+{
+  "name": "agent-tests-pass",
+  "status": "pass",
+  "reason": "All 56 agent tests pass with exit code 0. Tests cover BuildResponse, ValidationResponse, DimensionResult, DifferencingResponse, BuildContext, DifferencingContext, PromptTemplates, RenderPrompt, RenderDifferencingPrompt, AgentProfile, AgentInterface, MockAgent, CLIAgent, ClaudeAgent, and CreateFromProfile."
+}

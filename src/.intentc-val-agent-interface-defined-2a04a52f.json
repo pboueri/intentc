@@ -1,0 +1,5 @@
+{
+  "name": "agent-interface-defined",
+  "status": "pass",
+  "reason": "All 8 required components are fully implemented in src/agent/agent.py: (1) Agent abstract base class with Build, Validate, Difference, Plan, GetName, GetType methods; (2) BuildContext Pydantic model with all fields including response_file_path; (3) DifferencingContext with output_dir_a, output_dir_b, project_intent, response_file_path; (4) CLIAgent base implementation that constructs prompts via render_prompt() and reads response files via _read_response_file(); (5) ClaudeAgent extending CLIAgent with --dangerously-skip-permissions, --output-format stream-json, and --model flags; (6) create_from_profile factory function routing claude->ClaudeAgent, cli->CLIAgent, unknown->error; (7) MockAgent recording all calls (build_calls, validate_calls, difference_calls, plan_calls) with configurable responses; (8) BuildResponse, ValidationResponse, and DifferencingResponse Pydantic models with all specified fields."
+}
