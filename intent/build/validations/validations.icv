@@ -1,0 +1,29 @@
+target: build/validations
+version: 1
+validations:
+  - name: validation-suite-lifecycle
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the validations module implements the ValidationSuite with:
+        1. Construction from a Project, AgentProfile, output directory, and runner registry
+        2. Agent is created internally via CreateFromProfile, not passed in
+        3. ValidateFeature loads .icv files for a feature, runs each entry through the registry, and returns a ValidationSuiteResult
+        4. ValidateProject runs all features in topological order plus project-level assertions
+        5. ValidateEntries accepts an arbitrary list of entries for a target
+        6. ValidationSuiteResult correctly rolls up passed/failed based on severity (error blocks, warning does not)
+        Tests should use a MockAgent and verify the full lifecycle end-to-end.
+      context_files: ["src/validations/**"]
+
+  - name: runner-registry-extensibility
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the runner registry works correctly:
+        1. AgentValidationRunner is registered by default for type "agent_validation"
+        2. A custom runner can be registered and is dispatched to when a validation entry has a matching type
+        3. A validation entry with an unknown type fails with a descriptive error indicating the unregistered type
+        Tests should register a mock runner, run a validation entry with that type, and confirm it was invoked.
+      context_files: ["src/validations/**"]

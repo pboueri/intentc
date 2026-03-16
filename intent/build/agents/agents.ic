@@ -50,9 +50,9 @@ Written by the agent after a build invocation.
 
 ### ValidationResponse
 
-Written after a single validation is evaluated. The agent's Validate method is called once per validation item — the builder owns the loop over all validations for a target.
+Written after a single validation is evaluated. The agent's Validate method is called once per validation entry by the ValidationSuite, which owns the loop and result collection.
 
-Not all validation types require an agent. The system runs `folder_check`, `file_check`, and `command_check` validations directly. Only `llm_judge` and `agent_validation` types invoke the agent. Regardless of who runs the validation, the result uses the same schema.
+The validation system is defined in [build/validations](../validations/validations.ic).
 
 - `name` (string) — the validation name
 - `status` (string) — `"pass"` or `"fail"`

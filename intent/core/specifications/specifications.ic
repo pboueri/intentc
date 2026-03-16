@@ -25,17 +25,17 @@ The text is content that can be used for the agent, including local file referen
 Validation files are `.icv` files that can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails.
 
 ### Top Level
-- `target` (string) - Feature this validates wiht its path like `module/feature`
-- `agent_profile` (string, optional) - Agent profile for llm_judge evaluations.
-- `validations` (list of Validation) - The validation entries with a `type` that is pluggable
+- `target` (string) — feature this validates, using its path like `module/feature`
+- `agent_profile` (string, optional) — agent profile to use for evaluating this file's validations
+- `validations` (list of Validation) — the validation entries
 
 ### Validation Level
-- `type` (enum) -- the type of validation to run. These can be registered and have their own runtime in the future. 
-- `name` (string) -- the name of the test to run
-- `severity` (enum) -- if the test fails what happens. 
-- `args` (map) -- an arbitrary map of arguments passed to the runner for `type`
+- `name` (string) — unique identifier for the validation within this file
+- `type` (string) — selects the runner that evaluates this validation. Defaults to `agent_validation`. Extensible via a runner registry.
+- `severity` (enum: `error`, `warning`) — `error` blocks the build, `warning` is advisory. Default: `error`.
+- `args` (map) — arguments passed to the runner for this type. For `agent_validation`, the key arg is `rubric` (a natural language description of what to verify).
 
-Each validation has a `type` to run and the type can be registered by extensions to `intentc`. By default it contains `agent_validation` which runs an agent that takes an argument `rubric` and is meant output a structured reponse back to the runner for the validation outcome. This flow will be defined in future files. 
+The full validation lifecycle and extensibility model are defined in [build/validations](../../build/validations/validations.ic).
 
 ## Project Intent
 
