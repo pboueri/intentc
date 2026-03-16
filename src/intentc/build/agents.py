@@ -151,7 +151,7 @@ class AgentProfile(BaseModel):
     provider: str  # "claude", "codex", "cli"
     command: str = ""
     cli_args: list[str] = []
-    timeout: float = 300.0  # seconds, default 5m
+    timeout: float = 3600.0  # seconds, default 1h
     retries: int = 3
     model_id: str | None = None
     prompt_templates: PromptTemplates | None = None
