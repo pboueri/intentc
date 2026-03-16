@@ -1,0 +1,139 @@
+target: project
+version: 1
+validations:
+  - name: e2e-todo-app-dependency-chain
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        This is an end-to-end validation that tests the full intentc workflow:
+        init → populate features → build → verify. All work MUST happen in an
+        isolated temporary directory.
+
+        ## Setup
+
+        1. Create a temporary directory (e.g. via `mktemp -d`).
+        2. `cd` into it and run `intentc init todo-app`.
+        3. Verify `intent/project.ic` and `.intentc/config.yaml` were created.
+        4. Remove the generated `intent/starter/` directory — we will replace it
+           with our own features.
+
+        ## Create an implementation file
+
+        Write `intent/implementation.ic` with:
+
+        ```
+        ---
+        name: implementation
+        ---
+
+        # Implementation
+
+        - Language: Python 3.11+
+        - Use only the standard library (dataclasses, json, pathlib, sys, argparse).
+        - No external dependencies.
+        - Output is a single-directory Python package under `src/todo_app/` with an
+          `__init__.py` and one module per feature.
+        ```
+
+        ## Populate three features with an A → B → C dependency chain
+
+        ### Feature A — `models` (no dependencies)
+
+        Write `intent/models/models.ic`:
+
+        ```
+        ---
+        name: models
+        version: 1
+        ---
+
+        # Models
+
+        Define a `Task` dataclass in `src/todo_app/models.py` with fields:
+        - `id` (str) — unique identifier, generated via `uuid.uuid4().hex[:8]`
+        - `title` (str) — short description of the task
+        - `done` (bool) — completion status, defaults to False
+
+        Provide a factory function `create_task(title: str) -> Task` that returns a
+        new Task with a generated id and done=False.
+        ```
+
+        ### Feature B — `store` (depends on models)
+
+        Write `intent/store/store.ic`:
+
+        ```
+        ---
+        name: store
+        version: 1
+        depends_on:
+          - models
+        ---
+
+        # Store
+
+        Implement a `TaskStore` class in `src/todo_app/store.py` that persists tasks
+        to a JSON file using the `Task` dataclass from `models`.
+
+        Methods:
+        - `__init__(self, path: str)` — path to the JSON file; create it if missing.
+        - `add(self, task: Task) -> None` — append a task and save.
+        - `list_all(self) -> list[Task]` — return all tasks.
+        - `mark_done(self, task_id: str) -> bool` — set done=True for the task with
+          the given id. Return True if found, False otherwise.
+        - `_load(self) -> list[Task]` and `_save(self, tasks: list[Task])` — internal
+          helpers for JSON serialization.
+        ```
+
+        ### Feature C — `cli` (depends on store)
+
+        Write `intent/cli/cli.ic`:
+
+        ```
+        ---
+        name: cli
+        version: 1
+        depends_on:
+          - store
+        ---
+
+        # CLI
+
+        Implement a command-line interface in `src/todo_app/cli.py` using `argparse`
+        (no external dependencies) that wires up the `TaskStore`.
+
+        Commands:
+        - `add <title>` — create a task and print its id.
+        - `list` — print all tasks in a readable format (id, title, status).
+        - `done <id>` — mark a task as done.
+
+        The store file defaults to `tasks.json` in the current directory.
+
+        Include a `main()` function and an `if __name__ == "__main__"` guard so the
+        module is directly runnable via `python -m todo_app.cli`.
+        ```
+
+        ## Build
+
+        Run `intentc build` from the project root (the temp directory). This should
+        build all three features in topological order: models → store → cli.
+
+        ## Verification
+
+        1. The build command exits with code 0.
+        2. The directory `src/todo_app/` exists and contains at least:
+           `__init__.py`, `models.py`, `store.py`, `cli.py`.
+        3. Running `python -c "from todo_app.models import Task, create_task; t = create_task('test'); assert t.title == 'test'; assert t.done == False; print('models OK')"` from within `src/` succeeds.
+        4. Running `python -c "from todo_app.store import TaskStore; from todo_app.models import create_task; import tempfile, os; s = TaskStore(os.path.join(tempfile.mkdtemp(), 'tasks.json')); t = create_task('hello'); s.add(t); assert len(s.list_all()) == 1; print('store OK')"` from within `src/` succeeds.
+
+        ## Cleanup
+
+        Remove the temporary directory when done, regardless of pass/fail.
+
+        ## Pass criteria
+
+        This validation passes if and only if ALL of the above verification steps
+        succeed. If any step fails, report which step failed and include the
+        relevant command output or error message.
+      context_files: ["src/intentc/**"]
