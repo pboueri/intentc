@@ -1,0 +1,5 @@
+{
+  "name": "build-log-append-only",
+  "status": "pass",
+  "reason": "Tests in TestBuildLog (test_state.py:326-384) demonstrate append-only behavior: test_append_only verifies 3 save_build_result calls produce 3 JSONL lines with correct data and no overwrites; test_each_entry_is_valid_json confirms each line is a valid JSON BuildResult; test_log_survives_reload proves reloading StateManager does not truncate previous entries. The implementation uses open('a') append mode in _append_log (state.py:226), guaranteeing previous entries are never overwritten."
+}

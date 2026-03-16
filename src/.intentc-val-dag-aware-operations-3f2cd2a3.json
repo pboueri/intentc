@@ -1,0 +1,5 @@
+{
+  "name": "dag-aware-operations",
+  "status": "pass",
+  "reason": "Tests in intentc/build/test_state.py::TestDAGOperations directly demonstrate both requirements. test_mark_dependents_outdated builds a diamond DAG and verifies all downstream targets (b, c, d) are set to outdated after marking dependents of 'a', while 'a' itself remains built. test_mark_dependents_partial_graph further confirms DAG-awareness by showing only actual descendants are affected. test_reset_does_not_affect_others confirms that resetting target 'a' clears its state (returns to pending) without affecting target 'b', which retains its built status and build result."
+}

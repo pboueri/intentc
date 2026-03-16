@@ -1,0 +1,5 @@
+{
+  "name": "state-types-and-interfaces",
+  "status": "pass",
+  "reason": "All specified types and interfaces are defined in intentc/build/state.py: (1) TargetStatus enum with pending, built, failed, outdated values; (2) BuildStep with phase, status, duration, summary fields and BuildResult with target, generation_id, status, steps, commit_id, total_duration, timestamp fields; (3) StateManager with get_status, get_build_result, save_build_result, set_status, mark_dependents_outdated, reset, reset_all, list_targets methods; (4) VersionControl abstract class (abc.ABC) with checkpoint, diff, restore, log abstract methods; (5) GitVersionControl concrete implementation backed by git subprocess calls."
+}
