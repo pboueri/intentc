@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import json
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -271,6 +272,36 @@ class CLIAgent(Agent):
 
 
 # ---------------------------------------------------------------------------
+# Stream-JSON helpers
+# ---------------------------------------------------------------------------
+
+
+def _print_stream_event(event: dict) -> None:
+    """Print a Claude stream-json event to stderr so the user can follow progress."""
+    etype = event.get("type", "")
+
+    if etype == "assistant":
+        # Assistant text content
+        message = event.get("message", {})
+        for block in message.get("content", []):
+            if block.get("type") == "text":
+                text = block.get("text", "")
+                if text:
+                    print(text, file=sys.stderr, flush=True)
+
+    elif etype == "content_block_delta":
+        delta = event.get("delta", {})
+        if delta.get("type") == "text_delta":
+            text = delta.get("text", "")
+            if text:
+                print(text, end="", file=sys.stderr, flush=True)
+
+    elif etype == "result":
+        # Final result — print a newline to separate from streamed content
+        print(file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------------------
 # ClaudeAgent
 # ---------------------------------------------------------------------------
 
@@ -278,6 +309,7 @@ class CLIAgent(Agent):
 class ClaudeAgent(Agent):
     """Specialization for Claude Code.
 
+<<<<<<< HEAD
     Combines ``--dangerously-skip-permissions`` (so every tool runs without
     prompts, matching normal non-interactive behaviour) with Claude Code's
     built-in OS-level sandbox for filesystem isolation.
@@ -292,6 +324,11 @@ class ClaudeAgent(Agent):
     All commands and network access remain fully allowed.  The builder is
     responsible for populating ``sandbox_write_paths`` and
     ``sandbox_read_paths`` on the profile before the agent is created.
+=======
+    Uses CLIAgent via composition, overriding the command to `claude`
+    with flags: -p, --output-format stream-json, --dangerously-skip-permissions,
+    and --model from the profile.  Streams agent output to stderr in real-time.
+>>>>>>> 354a96f (build core/specifications [gen:1835255e-ed9b-4db6-a29d-de5349a5aeea])
     """
 
     def __init__(self, profile: AgentProfile) -> None:
@@ -391,7 +428,7 @@ class ClaudeAgent(Agent):
         cmd = [
             "claude",
             "-p", prompt,
-            "--output-format", "json",
+            "--output-format", "stream-json",
             "--dangerously-skip-permissions",
         ]
         if self._profile.model_id:
@@ -407,6 +444,7 @@ class ClaudeAgent(Agent):
         cmd.extend(self._profile.cli_args)
         return cmd
 
+<<<<<<< HEAD
     def _run_noninteractive(
         self, prompt: str, ctx: BuildContext
     ) -> subprocess.CompletedProcess[str]:
@@ -421,17 +459,37 @@ class ClaudeAgent(Agent):
         use_sandbox = self._has_sandbox_paths
         if use_sandbox:
             self._write_sandbox_settings(ctx.output_dir)
+=======
+    def _run_noninteractive(self, prompt: str, ctx: BuildContext) -> None:
+        """Run Claude Code in non-interactive mode, streaming output to stderr."""
+>>>>>>> 354a96f (build core/specifications [gen:1835255e-ed9b-4db6-a29d-de5349a5aeea])
         cmd = self._build_noninteractive_command(prompt)
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self._profile.timeout,
                 cwd=ctx.output_dir,
             )
-            return result
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                _print_stream_event(event)
+            proc.wait(timeout=self._profile.timeout)
+            if proc.returncode and proc.returncode != 0:
+                stderr_out = proc.stderr.read() if proc.stderr else ""
+                raise AgentError(
+                    f"Claude agent '{self._profile.name}' exited with code {proc.returncode}: {stderr_out}"
+                )
         except subprocess.TimeoutExpired:
+            proc.kill()
             raise AgentError(
                 f"Claude agent '{self._profile.name}' timed out after {self._profile.timeout}s"
             )

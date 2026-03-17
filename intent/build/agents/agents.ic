@@ -107,6 +107,10 @@ Specialization for Claude Code. Sets command to `claude` with `-p`, `--output-fo
 
 When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
+### Streaming Output
+
+ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The subprocess is launched with `Popen` and stdout is read line-by-line. Each line is a JSON event. Relevant events (assistant text, content deltas) are printed to stderr as they arrive so the user can follow what the agent is doing without interfering with structured response handling. The response file mechanism remains unchanged — the agent still writes its structured JSON response to the response file path.
+
 For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode.
 
 ## CreateFromProfile(profile: AgentProfile) -> Agent
