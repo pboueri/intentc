@@ -158,8 +158,10 @@ class Builder:
         now = datetime.now()
         node = self.project.features[target]
 
-        # Resolve agent profile
+        # Resolve agent profile and configure sandbox paths
         profile = self._resolve_profile(opts)
+        if profile.provider == "claude":
+            profile = self._with_sandbox_paths(profile, target, opts.output_dir)
         agent = self._create_agent(profile)
 
         # Step 1: resolve_deps
@@ -282,6 +284,40 @@ class Builder:
         if opts.profile_override and opts.profile_override in self._named_profiles:
             return self._named_profiles[opts.profile_override]
         return self.agent_profile
+
+    def _with_sandbox_paths(
+        self, profile: AgentProfile, target: str, output_dir: str
+    ) -> AgentProfile:
+        """Return a copy of *profile* with sandbox paths for *target*.
+
+        Write paths: the resolved output directory.
+        Read paths: the intent directory for the target, each of its DAG
+        ancestors, plus project.ic and implementation.ic.
+        """
+        output_path = str(Path(output_dir).resolve())
+        read_paths: list[str] = []
+
+        intent_dir = self.project.intent_dir
+        if intent_dir is not None:
+            intent_dir_resolved = intent_dir.resolve()
+            # project.ic & implementation.ic are always readable
+            project_ic = intent_dir_resolved / "project.ic"
+            if project_ic.exists():
+                read_paths.append(str(project_ic))
+            impl_ic = intent_dir_resolved / "implementation.ic"
+            if impl_ic.exists():
+                read_paths.append(str(impl_ic))
+            # Target + ancestors
+            ancestors = self.project.ancestors(target)
+            for t in sorted(ancestors | {target}):
+                target_dir = intent_dir_resolved / t
+                if target_dir.is_dir():
+                    read_paths.append(str(target_dir))
+
+        return profile.model_copy(update={
+            "sandbox_write_paths": [output_path],
+            "sandbox_read_paths": read_paths,
+        })
 
     # ------------------------------------------------------------------
     # Clean
