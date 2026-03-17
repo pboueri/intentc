@@ -13,7 +13,7 @@ Intentc is implemented as a python library with modern sensibilities, primarily 
 ```yaml
 language: Python 3.11+
 packaging: uv
-sandboxing: docker
+sandboxing: claude-code-sandbox (OS-level via bubblewrap/seatbelt), docker (fallback for generic CLI agents)
 cli_framework: typer
 data_modeling: pydantic
 yaml_library: PyYAML

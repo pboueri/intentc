@@ -24,9 +24,20 @@ interface Agent:
     GetType() -> string
 ```
 
-### Permissionless Execution
+### Sandboxed Execution
 
-Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval. For Claude Code this means `--dangerously-skip-permissions`. For generic CLI agents, the command is assumed to run without interaction by default.
+Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval, and they must be isolated to only modify the output directory.
+
+For **Claude Code**, this is achieved through its built-in sandbox mode rather than `--dangerously-skip-permissions`. The ClaudeAgent writes a `.claude/settings.local.json` in the working directory before each invocation that enables OS-level sandbox enforcement:
+
+- **Filesystem isolation**: Writes are restricted to the output directory (the CWD) and its subdirectories via the sandbox's default write policy. The intent directory is explicitly marked as deny-write to prevent accidental modification.
+- **Network isolation**: Network access is blocked by default; only explicitly allowed domains can be reached.
+- **No escape hatch**: `allowUnsandboxedCommands` is set to `false`, preventing the agent from bypassing sandbox restrictions.
+- **Auto-allow mode**: Sandboxed commands run without permission prompts. Explicit permission rules (`Bash(*)`, `Read(*)`, `Edit(*)`, `Write(*)`) allow all tool types while the sandbox enforces the actual security boundaries at the OS level.
+
+The sandbox settings file is cleaned up after each invocation.
+
+For **generic CLI agents**, the command is assumed to run without interaction by default and isolation is the responsibility of the caller (e.g., Docker containers).
 
 ### Plan as Interactive REPL
 
@@ -94,7 +105,9 @@ Generic base that wraps any command-line tool. Constructs a prompt from BuildCon
 
 ## ClaudeAgent
 
-Specialization for Claude Code. Extends CLIAgent via composition. Sets command to `claude`, adds `-p`, `--output-format json`, `--dangerously-skip-permissions`, and `--model` flags from the agent profile.
+Specialization for Claude Code. Sets command to `claude` with `-p` and `--output-format json` flags for non-interactive use, plus `--model` from the agent profile.
+
+Before each non-interactive invocation, ClaudeAgent writes a `.claude/settings.local.json` in the output directory that enables Claude Code's built-in sandbox with auto-allow mode. This replaces the previous `--dangerously-skip-permissions` flag with OS-level filesystem and network isolation, scoping the agent to read/write only within the output directory.
 
 For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode.
 

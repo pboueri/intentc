@@ -23,7 +23,7 @@ This project supports the above by providing the tooling, tracking, and extensib
 - **Agents are pluggable and customizable.** Any CLI tool that accepts prompts can be a code generation agent. The agent interface is minimal and extensible, future proofing and specializing the build system to the user's needs.
 - **Managed State.** Specs and generated files are managed with version control, with a clear separated history of intent changes versus generated changes.
 - **Observable.** Builds are logged and have clear steps and summaries from the agents to allow a developer to understand what happened in the layer below. Updating intents requires an understanding of the compilation step and modifying to get the desired outcome.
-- **Isolated.** The build is isolated from the rest of the system so that it can only access the current generated artifacts, and the relevant intents without any future intents or alternative implementations.
+- **Isolated.** The build is isolated from the rest of the system so that it can only access the current generated artifacts, and the relevant intents without any future intents or alternative implementations. When Claude Code is the agent, isolation is enforced at the OS level via Claude Code's built-in sandbox mode, which restricts filesystem writes to the output directory and blocks unauthorized network access.
 
 ## Project Structure
 

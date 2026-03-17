@@ -441,7 +441,7 @@ class TestClaudeAgent:
         assert "build it" in cmd
         assert "--output-format" in cmd
         assert "json" in cmd
-        assert "--dangerously-skip-permissions" in cmd
+        assert "--dangerously-skip-permissions" not in cmd
         assert "--model" in cmd
         assert "opus-4" in cmd
 
@@ -463,8 +463,66 @@ class TestClaudeAgent:
         cmd = agent._build_interactive_command("plan it")
         assert cmd[0] == "claude"
         assert "-p" not in cmd
-        assert "--dangerously-skip-permissions" not in cmd
         assert "--output-format" not in cmd
+
+    def test_sandbox_settings_structure(self):
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        settings = agent._sandbox_settings()
+        assert settings["sandbox"]["enabled"] is True
+        assert settings["sandbox"]["autoAllow"] is True
+        assert settings["sandbox"]["allowUnsandboxedCommands"] is False
+        assert "Bash(*)" in settings["permissions"]["allow"]
+        assert "Read(*)" in settings["permissions"]["allow"]
+        assert "Edit(*)" in settings["permissions"]["allow"]
+        assert "Write(*)" in settings["permissions"]["allow"]
+
+    def test_sandbox_settings_with_intent_dir(self):
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        settings = agent._sandbox_settings(intent_dir="/project/intent")
+        assert "/project/intent" in settings["sandbox"]["filesystem"]["denyWrite"]
+
+    def test_write_and_cleanup_sandbox_settings(self, tmp_path: Path):
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+
+        settings_path = agent._write_sandbox_settings(str(tmp_path))
+        assert settings_path.exists()
+        assert settings_path == tmp_path / ".claude" / "settings.local.json"
+
+        # Verify JSON content
+        import json
+        data = json.loads(settings_path.read_text())
+        assert data["sandbox"]["enabled"] is True
+
+        agent._cleanup_sandbox_settings(str(tmp_path))
+        assert not settings_path.exists()
+        assert not (tmp_path / ".claude").exists()
+
+    def test_run_noninteractive_writes_sandbox_settings(self, tmp_path: Path):
+        """Verify sandbox settings are written before and cleaned after invocation."""
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        ctx = _make_context(tmp_path)
+
+        settings_existed_during_run = []
+
+        original_run = subprocess.run
+
+        def mock_run(*args, **kwargs):
+            settings_path = tmp_path / ".claude" / "settings.local.json"
+            settings_existed_during_run.append(settings_path.exists())
+            raise FileNotFoundError("claude")
+
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(AgentError, match="CLI not found"):
+                agent._run_noninteractive("test prompt", ctx)
+
+        # Settings existed during the run
+        assert settings_existed_during_run == [True]
+        # Settings cleaned up after
+        assert not (tmp_path / ".claude" / "settings.local.json").exists()
 
     def test_build_reads_response_file(self, tmp_path: Path):
         profile = _make_profile(provider="claude")

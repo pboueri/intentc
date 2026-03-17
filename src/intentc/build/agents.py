@@ -276,9 +276,14 @@ class CLIAgent(Agent):
 class ClaudeAgent(Agent):
     """Specialization for Claude Code.
 
-    Uses CLIAgent via composition, overriding the command to `claude`
-    with flags: -p, --output-format json, --dangerously-skip-permissions,
-    and --model from the profile.
+    Uses Claude Code's built-in sandbox for filesystem and network isolation.
+    The sandbox restricts writes to the output directory (CWD) and blocks
+    network access to non-allowed hosts at the OS level.
+
+    Instead of --dangerously-skip-permissions, sandbox auto-allow mode
+    permits tool execution within sandbox boundaries. Explicit permission
+    rules allow Read, Edit, Write, and Bash tools while the sandbox
+    enforces the actual filesystem restrictions.
     """
 
     def __init__(self, profile: AgentProfile) -> None:
@@ -309,13 +314,73 @@ class ClaudeAgent(Agent):
     def get_type(self) -> str:
         return "claude"
 
+    def _sandbox_settings(self, intent_dir: str | None = None) -> dict:
+        """Build Claude Code sandbox settings for isolated builds.
+
+        The sandbox provides OS-level filesystem and network isolation:
+        - Writes are restricted to the CWD (output_dir) by default.
+        - If an intent_dir is provided, it is added as a read-only path
+          (no write access granted).
+        - Network access is blocked except for explicitly allowed domains.
+        - The unsandboxed-command escape hatch is disabled.
+
+        Explicit permission rules allow all tool types so the agent can
+        operate non-interactively, while the sandbox enforces the actual
+        security boundaries at the OS level.
+        """
+        settings: dict = {
+            "permissions": {
+                "allow": [
+                    "Bash(*)",
+                    "Read(*)",
+                    "Edit(*)",
+                    "Write(*)",
+                ]
+            },
+            "sandbox": {
+                "enabled": True,
+                "autoAllow": True,
+                "allowUnsandboxedCommands": False,
+            },
+        }
+        if intent_dir:
+            settings["sandbox"]["filesystem"] = {
+                "denyWrite": [intent_dir],
+            }
+        return settings
+
+    def _write_sandbox_settings(self, cwd: str, intent_dir: str | None = None) -> Path:
+        """Write sandbox settings to .claude/settings.local.json in the CWD."""
+        settings_dir = Path(cwd) / ".claude"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = settings_dir / "settings.local.json"
+        settings_path.write_text(
+            json.dumps(self._sandbox_settings(intent_dir), indent=2),
+            encoding="utf-8",
+        )
+        return settings_path
+
+    def _cleanup_sandbox_settings(self, cwd: str) -> None:
+        """Remove the temporary sandbox settings after an invocation."""
+        settings_dir = Path(cwd) / ".claude"
+        settings_path = settings_dir / "settings.local.json"
+        if settings_path.exists():
+            settings_path.unlink()
+        # Remove .claude dir if empty
+        if settings_dir.exists() and not any(settings_dir.iterdir()):
+            settings_dir.rmdir()
+
     def _build_noninteractive_command(self, prompt: str) -> list[str]:
-        """Build claude command for non-interactive (build/validate) use."""
+        """Build claude command for non-interactive (build/validate) use.
+
+        Sandbox settings are written to .claude/settings.local.json in the
+        CWD before invocation, replacing --dangerously-skip-permissions with
+        OS-level sandbox enforcement.
+        """
         cmd = [
             "claude",
             "-p", prompt,
             "--output-format", "json",
-            "--dangerously-skip-permissions",
         ]
         if self._profile.model_id:
             cmd.extend(["--model", self._profile.model_id])
@@ -333,7 +398,13 @@ class ClaudeAgent(Agent):
     def _run_noninteractive(
         self, prompt: str, ctx: BuildContext
     ) -> subprocess.CompletedProcess[str]:
-        """Run Claude Code in non-interactive mode."""
+        """Run Claude Code in non-interactive mode with sandbox isolation.
+
+        Writes sandbox settings before invocation and cleans up afterward.
+        The sandbox restricts the agent to writing only within the output
+        directory while the intent content is provided inline via the prompt.
+        """
+        self._write_sandbox_settings(ctx.output_dir)
         cmd = self._build_noninteractive_command(prompt)
         try:
             result = subprocess.run(
@@ -350,6 +421,8 @@ class ClaudeAgent(Agent):
             )
         except FileNotFoundError:
             raise AgentError("Claude Code CLI not found. Install it to use the claude provider.")
+        finally:
+            self._cleanup_sandbox_settings(ctx.output_dir)
 
 
 # ---------------------------------------------------------------------------
