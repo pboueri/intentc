@@ -26,16 +26,14 @@ interface Agent:
 
 ### Sandboxed Execution
 
-Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval, and they must be isolated to only modify the output directory.
+Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval. All commands and network access are fully allowed (equivalent to `--dangerously-skip-permissions`), but filesystem access is scoped:
 
-For **Claude Code**, this is achieved through its built-in sandbox mode rather than `--dangerously-skip-permissions`. The ClaudeAgent writes a `.claude/settings.local.json` in the working directory before each invocation that enables OS-level sandbox enforcement:
+- **Write access**: only the output directory.
+- **Read access**: only the intent files for the current target and all of its ancestors in the DAG (plus `project.ic` and `implementation.ic`), and the output directory.
 
-- **Filesystem isolation**: Writes are restricted to the output directory (the CWD) and its subdirectories via the sandbox's default write policy. The intent directory is explicitly marked as deny-write to prevent accidental modification.
-- **Network isolation**: Network access is blocked by default; only explicitly allowed domains can be reached.
-- **No escape hatch**: `allowUnsandboxedCommands` is set to `false`, preventing the agent from bypassing sandbox restrictions.
-- **Auto-allow mode**: Sandboxed commands run without permission prompts. Explicit permission rules (`Bash(*)`, `Read(*)`, `Edit(*)`, `Write(*)`) allow all tool types while the sandbox enforces the actual security boundaries at the OS level.
+The **builder** is responsible for computing these paths from the project DAG and passing them into the `AgentProfile` via `sandbox_write_paths` and `sandbox_read_paths` before the agent is created.
 
-The sandbox settings file is cleaned up after each invocation.
+For **Claude Code**, when sandbox paths are present on the profile the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD that enables Claude Code's built-in OS-level sandbox (`bubblewrap` on Linux, `Seatbelt` on macOS). This enforces the filesystem restrictions at the OS level so that even subprocesses spawned by the agent inherit the same boundaries. The settings file is cleaned up after each invocation.
 
 For **generic CLI agents**, the command is assumed to run without interaction by default and isolation is the responsibility of the caller (e.g., Docker containers).
 
@@ -105,9 +103,9 @@ Generic base that wraps any command-line tool. Constructs a prompt from BuildCon
 
 ## ClaudeAgent
 
-Specialization for Claude Code. Sets command to `claude` with `-p` and `--output-format json` flags for non-interactive use, plus `--model` from the agent profile.
+Specialization for Claude Code. Sets command to `claude` with `-p`, `--output-format json`, `--dangerously-skip-permissions`, and `--model` flags from the agent profile.
 
-Before each non-interactive invocation, ClaudeAgent writes a `.claude/settings.local.json` in the output directory that enables Claude Code's built-in sandbox with auto-allow mode. This replaces the previous `--dangerously-skip-permissions` flag with OS-level filesystem and network isolation, scoping the agent to read/write only within the output directory.
+When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
 For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode.
 
@@ -134,6 +132,8 @@ Named, reusable agent configuration. Captures provider selection and model versi
 - `Retries` (integer) — number of retries on error (timeout, crash, malformed response), default 3
 - `ModelID` (string, optional) — provider-specific model identifier
 - `PromptTemplates` (PromptTemplates, optional) — template overrides
+- `SandboxWritePaths` (list of strings) — filesystem paths the agent may write to. Set by the builder before each target build.
+- `SandboxReadPaths` (list of strings) — filesystem paths the agent may read from (intent files for the target and its DAG ancestors). Set by the builder before each target build.
 
 ## PromptTemplates
 

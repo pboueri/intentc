@@ -441,7 +441,7 @@ class TestClaudeAgent:
         assert "build it" in cmd
         assert "--output-format" in cmd
         assert "json" in cmd
-        assert "--dangerously-skip-permissions" not in cmd
+        assert "--dangerously-skip-permissions" in cmd
         assert "--model" in cmd
         assert "opus-4" in cmd
 
@@ -463,28 +463,33 @@ class TestClaudeAgent:
         cmd = agent._build_interactive_command("plan it")
         assert cmd[0] == "claude"
         assert "-p" not in cmd
+        assert "--dangerously-skip-permissions" not in cmd
         assert "--output-format" not in cmd
 
-    def test_sandbox_settings_structure(self):
-        profile = _make_profile(provider="claude")
+    def test_sandbox_settings_with_paths(self):
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=["/out/src"],
+            sandbox_read_paths=["/project/intent/core", "/project/intent/project.ic"],
+        )
         agent = ClaudeAgent(profile)
         settings = agent._sandbox_settings()
         assert settings["sandbox"]["enabled"] is True
         assert settings["sandbox"]["autoAllow"] is True
         assert settings["sandbox"]["allowUnsandboxedCommands"] is False
-        assert "Bash(*)" in settings["permissions"]["allow"]
-        assert "Read(*)" in settings["permissions"]["allow"]
-        assert "Edit(*)" in settings["permissions"]["allow"]
-        assert "Write(*)" in settings["permissions"]["allow"]
+        assert "///out/src" in settings["sandbox"]["filesystem"]["allowWrite"]
+        assert "///project/intent/core" in settings["sandbox"]["filesystem"]["denyWrite"]
 
-    def test_sandbox_settings_with_intent_dir(self):
+    def test_sandbox_settings_no_paths(self):
         profile = _make_profile(provider="claude")
         agent = ClaudeAgent(profile)
-        settings = agent._sandbox_settings(intent_dir="/project/intent")
-        assert "/project/intent" in settings["sandbox"]["filesystem"]["denyWrite"]
+        assert not agent._has_sandbox_paths
 
     def test_write_and_cleanup_sandbox_settings(self, tmp_path: Path):
-        profile = _make_profile(provider="claude")
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=[str(tmp_path)],
+        )
         agent = ClaudeAgent(profile)
 
         settings_path = agent._write_sandbox_settings(str(tmp_path))
@@ -500,15 +505,16 @@ class TestClaudeAgent:
         assert not settings_path.exists()
         assert not (tmp_path / ".claude").exists()
 
-    def test_run_noninteractive_writes_sandbox_settings(self, tmp_path: Path):
-        """Verify sandbox settings are written before and cleaned after invocation."""
-        profile = _make_profile(provider="claude")
+    def test_run_noninteractive_writes_sandbox_settings_when_paths_set(self, tmp_path: Path):
+        """Verify sandbox settings are written when sandbox paths are configured."""
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=[str(tmp_path)],
+        )
         agent = ClaudeAgent(profile)
         ctx = _make_context(tmp_path)
 
         settings_existed_during_run = []
-
-        original_run = subprocess.run
 
         def mock_run(*args, **kwargs):
             settings_path = tmp_path / ".claude" / "settings.local.json"
@@ -519,10 +525,27 @@ class TestClaudeAgent:
             with pytest.raises(AgentError, match="CLI not found"):
                 agent._run_noninteractive("test prompt", ctx)
 
-        # Settings existed during the run
         assert settings_existed_during_run == [True]
-        # Settings cleaned up after
         assert not (tmp_path / ".claude" / "settings.local.json").exists()
+
+    def test_run_noninteractive_skips_sandbox_when_no_paths(self, tmp_path: Path):
+        """Without sandbox paths, no settings file should be written."""
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        ctx = _make_context(tmp_path)
+
+        settings_existed_during_run = []
+
+        def mock_run(*args, **kwargs):
+            settings_path = tmp_path / ".claude" / "settings.local.json"
+            settings_existed_during_run.append(settings_path.exists())
+            raise FileNotFoundError("claude")
+
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(AgentError, match="CLI not found"):
+                agent._run_noninteractive("test prompt", ctx)
+
+        assert settings_existed_during_run == [False]
 
     def test_build_reads_response_file(self, tmp_path: Path):
         profile = _make_profile(provider="claude")
