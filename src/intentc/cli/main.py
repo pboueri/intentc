@@ -94,6 +94,8 @@ def init(
     ] = None,
 ) -> None:
     """Create a new intentc project in the current directory."""
+    import subprocess as _sp
+
     intent_dir = Path("intent")
     if (intent_dir / "project.ic").exists():
         print_error(
@@ -108,6 +110,17 @@ def init(
 
     config = Config()
     config_path = save_config(config, Path("."))
+
+    # Initialize a git repository so that intentc build can make commits.
+    git_dir = Path(".git")
+    if not git_dir.exists():
+        _sp.run(["git", "init"], check=True, capture_output=True)
+        _sp.run(["git", "add", "-A"], check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "-m", "intentc init"],
+            check=True,
+            capture_output=True,
+        )
 
     created_files = [
         "intent/project.ic",

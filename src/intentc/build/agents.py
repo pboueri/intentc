@@ -502,6 +502,7 @@ class ClaudeAgent(Agent):
             "claude",
             "-p", prompt,
             "--output-format", "stream-json",
+            "--verbose",
             "--dangerously-skip-permissions",
         ]
         if self._profile.model_id:
@@ -518,7 +519,7 @@ class ClaudeAgent(Agent):
         return cmd
 
     def _run_noninteractive(
-        self, prompt: str, ctx: BuildContext
+        self, prompt: str, cwd: str
     ) -> subprocess.CompletedProcess[str]:
         """Run Claude Code in non-interactive mode.
 
@@ -530,7 +531,7 @@ class ClaudeAgent(Agent):
         """
         use_sandbox = self._has_sandbox_paths
         if use_sandbox:
-            self._write_sandbox_settings(ctx.output_dir)
+            self._write_sandbox_settings(cwd)
         cmd = self._build_noninteractive_command(prompt)
         try:
             proc = subprocess.Popen(
@@ -565,7 +566,7 @@ class ClaudeAgent(Agent):
             raise AgentError("Claude Code CLI not found. Install it to use the claude provider.")
         finally:
             if use_sandbox:
-                self._cleanup_sandbox_settings(ctx.output_dir)
+                self._cleanup_sandbox_settings(cwd)
 
 
 # ---------------------------------------------------------------------------
