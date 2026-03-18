@@ -4,7 +4,10 @@
 
 Prove that `intentc` can rebuild itself. Starting from `intent/`, use `intentc build` to
 regenerate the entire `src/` into a fresh output directory, then confirm it is functionally
-equivalent to the original using `intentc compare`.
+equivalent to the original using `intentc compare`. 
+
+Make sure the agent is sandboxed and cant look at the existing implementation. If it is cheating by reading src/ or git history or other 
+means of breaking out of the sandbox kill it and fix the implementation so it cant do so
 
 If the challenge passes, the intent files *are* the source — the generated code is
 a reproducible artifact, not the source of truth.
@@ -87,10 +90,12 @@ and informs future improvements to the intent files.
 ## Notes
 
 - Use your best judgement when fixing divergences. You may:
-  - Update `intent/` files to improve the spec so the agent produces better output
-  - Update `src/` directly if you identify bugs in the existing implementation
+  - Update `intent/` files to improve the spec to be more detailed and less ambiguous so the agent produces better output
+  - Update `src/` directly if you identify bugs in the existing implementation that do not match the spec
   - Re-run `intentc build` for specific targets after making changes
 - The goal is equivalence, not byte-for-byte identity. Prefer fixing intent files over
   patching generated code where possible, as better specs produce more reproducible results.
 - `intentc compare` requires the `compare` CLI command to be implemented
   (see `intent/interfaces/cli/cli.ic`).
+
+Note: Aggressively use sub-agents to preserve context as needed. 
