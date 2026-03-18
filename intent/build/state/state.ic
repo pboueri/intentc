@@ -71,3 +71,12 @@ State is stored as a single JSON file per output directory at `.intentc/state/{o
 ## Build Log
 
 An append-only log at `.intentc/state/{output-dir}/build-log.jsonl`. Each line is a JSON object representing a completed BuildResult. This provides full audit history independent of the mutable state file.
+
+## Response Files
+
+Agent response files are stored under `.intentc/state/{output-dir}/responses/`, organized by type:
+
+- `.intentc/state/{output-dir}/responses/build/{target}-{uuid}.json` — build agent responses
+- `.intentc/state/{output-dir}/responses/val/{validation-name}-{uuid}.json` — validation agent responses
+
+These files are historical artifacts written by agents during builds and validations. They accumulate over time and provide a record of agent outputs for debugging and audit.
