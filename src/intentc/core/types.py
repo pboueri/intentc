@@ -36,6 +36,7 @@ class Validation(BaseModel):
     name: str
     severity: Severity = Severity.ERROR
     args: dict[str, Any] = {}
+    agent_profile: dict[str, Any] | None = None
 
 
 class ValidationFile(BaseModel):

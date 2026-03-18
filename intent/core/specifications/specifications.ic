@@ -45,4 +45,15 @@ Aside from that it follows the same `.ic` spec but cannot have a `depends_on` fl
 
 ## Implementation
 
-The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run. 
+The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run.
+
+## Module Layout
+
+This feature generates the following files:
+- `intentc/__init__.py` — Package init. Should be empty or minimal.
+- `intentc/core/__init__.py` — Package init. Should re-export the public API from types and parser:
+  - From types: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`
+  - From parser: `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`
+- `intentc/core/types.py` — Core data models
+- `intentc/core/parser.py` — File I/O (parse and write .ic/.icv files)
+- `intentc/core/test_core.py` — Tests

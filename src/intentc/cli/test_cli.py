@@ -119,7 +119,10 @@ def _setup_project_dir(tmp_path: Path) -> Path:
     intent_dir = tmp_path / "intent"
     intent_dir.mkdir()
     (intent_dir / "project.ic").write_text(
-        "---\nname: test\ntags: [project]\n---\n# Test"
+        "---\nname: test\ntags: []\n---\n# Test"
+    )
+    (intent_dir / "implementation.ic").write_text(
+        "---\nname: implementation\ntags: []\n---\n# Implementation"
     )
     feat_dir = intent_dir / "a"
     feat_dir.mkdir()
@@ -189,7 +192,7 @@ class TestBuildCommand:
         os.chdir(tmp_path)
 
         mock_builder = MagicMock()
-        mock_builder.build.return_value = ([], RuntimeError("build failed"))
+        mock_builder.build.side_effect = RuntimeError("build failed")
         MockBuilder.return_value = mock_builder
 
         result = runner.invoke(app, ["build"])
@@ -335,7 +338,7 @@ class TestPlanCommand:
 
 
 class TestProfileResolution:
-    def test_flag_overrides_config(self, tmp_path: Path):
+    def test_flag_overrides_config(self):
         from intentc.cli.main import _resolve_profile
 
         config = Config(
@@ -344,7 +347,7 @@ class TestProfileResolution:
         profile = _resolve_profile("custom", config)
         assert profile.name == "custom"
 
-    def test_none_returns_config_default(self, tmp_path: Path):
+    def test_none_returns_config_default(self):
         from intentc.cli.main import _resolve_profile
 
         config = Config(

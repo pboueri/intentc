@@ -13,6 +13,20 @@ tags: [orchestration]
 
 The builder is the core workflow engine of intentc. It takes a loaded project, manages each incremental build along the DAG, runs validations, and manages all project state through the state manager. Every build is an atomic unit: a target is only marked `built` and checkpointed after both the agent invocation and all validations succeed. If anything fails, the target is marked `failed` and the DAG walk stops immediately.
 
+## Module Layout
+
+This feature generates:
+- `intentc/build/builder/__init__.py` — Package init. **Empty file** (do NOT re-export Builder/BuildOptions). Consumers import from `intentc.build.builder.builder` directly.
+- `intentc/build/builder/builder.py` — Builder implementation
+- `intentc/build/builder/test_builder.py` — Tests
+
+Imports used:
+- `from intentc.build.agents import Agent, AgentError, AgentProfile, BuildContext, create_from_profile`
+- `from intentc.build.state import BuildResult, BuildStep, StateManager, TargetStatus, VersionControl`
+- `from intentc.build.validations import ValidationSuite, ValidationSuiteResult`
+- `from intentc.core.project import Project`
+- `from intentc.core.types import IntentFile`
+
 ## Builder
 
 ```
@@ -23,7 +37,13 @@ Builder:
     agentProfile: AgentProfile
 ```
 
-Dependencies are injected at construction. The builder does not create agents directly — it receives an `AgentProfile` and uses `CreateFromProfile` when it needs an agent instance. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing.
+Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing.
+
+```python
+class Builder:
+    def __init__(self, project, state_manager, version_control, agent_profile):
+        self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
+```
 
 ## BuildOptions
 
@@ -38,13 +58,17 @@ BuildOptions:
 
 ## GenerationID
 
-Each `Build()` invocation produces a single generation ID (a UUID) that is shared across all targets built in that run. This ID links together everything that happened in one build invocation and is stored in each target's `BuildResult`.
+Each `build()` invocation produces a single generation ID (a `str(uuid.uuid4())`) that is shared across all targets built in that run. This ID links together everything that happened in one build invocation and is stored in each target's `BuildResult`.
+
+Timestamps use naive `datetime.now()` (no timezone). Durations use `datetime.now() - step_start` to produce `timedelta` values.
 
 ## Build Pipeline
 
-`Build(opts) -> list[BuildResult], error`:
+`build(self, opts: BuildOptions) -> tuple[list[BuildResult], Exception | None]`:
 
-1. **Determine build set** — If `opts.target` is specified, collect it and its unbuilt ancestors (via topological sort). Otherwise collect all targets with status `pending` or `outdated` (or all targets if `force` is true). If the build set is empty, return early.
+Returns a tuple of (results, error). Error is non-None if any target failed. The error is NOT raised — it is returned as the second element of the tuple. The caller decides how to handle it.
+
+1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending` or `outdated` only (NOT `failed`) — or all if `force`. Always in topological order. If the build set is empty, return `([], None)` early.
 2. **Dry run check** — If `dryRun`, return the build set with their current statuses. No side effects.
 3. **Generate generation ID** — A single UUID for this entire build invocation.
 4. **Resolve output directory** — Use `opts.outputDir`. Create if it doesn't exist.
@@ -63,7 +87,7 @@ For each target in the build set:
 
    - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), and timestamp. If all steps succeeded, status is `built`. If any step failed, status is `failed`.
    - **Save** — `stateManager.SaveBuildResult(target, result)`.
-   - **On failure** — If the target's status is `failed`, stop the DAG walk immediately and return an error alongside the results collected so far. Do **not** roll back files — the failed output remains on disk for inspection. The checkpoint step is skipped for failed targets, so the version control history only contains successful builds.
+   - **On failure** — If the target's status is `failed`, stop the DAG walk immediately and return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
 
 ### Atomicity
 
@@ -71,7 +95,7 @@ The checkpoint happens only after both build and validation succeed. This means 
 
 ### Retries
 
-Retries apply only to agent execution errors (crashes, timeouts, malformed response files). They do **not** apply to validation failures. If a target builds successfully but fails validation, the target is marked `failed` with no retry. The user must inspect the output and adjust their intents or validations.
+Retries apply only to agent execution errors (crashes, timeouts, malformed response files). They do **not** apply to validation failures. The retry loop is `for attempt in range(profile.retries)` — so `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
 
 ## Clean
 
@@ -80,9 +104,9 @@ Retries apply only to agent execution errors (crashes, timeouts, malformed respo
 Reverts a target's generated code and resets its state. This is not a destructive rollback — it creates a new revert commit in the linear version control history.
 
 1. Look up the target's last `BuildResult` via the state manager. If none exists, return early.
-2. Use `versionControl` to create a revert commit that undoes the changes introduced by the build's `commit_id`. The history remains linear and auditable.
-3. Reset the target's state to `pending` via `stateManager.Reset(target)`.
-4. Mark all descendants of the target as `outdated` via `stateManager.MarkDependentsOutdated(target, project)`.
+2. If the result has a `commit_id`, call `version_control.restore(commit_id)` to revert the files. Do NOT call `checkpoint()` — the restored files are left unstaged.
+3. Reset the target's state to `pending` via `state_manager.reset(target)`.
+4. Mark all descendants of the target as `outdated` via `state_manager.mark_dependents_outdated(target, project)`.
 
 `CleanAll(outputDir)`:
 

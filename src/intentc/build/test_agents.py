@@ -23,6 +23,7 @@ from intentc.build.agents import (
     MockAgent,
     PromptTemplates,
     ValidationResponse,
+    _find_git_root,
     create_from_profile,
     load_default_prompts,
     render_differencing_prompt,
@@ -245,7 +246,7 @@ class TestAgentProfile:
         assert p.name == "my-agent"
         assert p.provider == "claude"
         assert p.model_id == "opus"
-        assert p.timeout == 300.0
+        assert p.timeout == 3600.0
         assert p.retries == 3
 
     def test_defaults(self):
@@ -443,7 +444,7 @@ class TestClaudeAgent:
         assert "-p" in cmd
         assert "build it" in cmd
         assert "--output-format" in cmd
-        assert "json" in cmd
+        assert "stream-json" in cmd
         assert "--dangerously-skip-permissions" in cmd
         assert "--model" in cmd
         assert "opus-4" in cmd
@@ -494,6 +495,132 @@ class TestClaudeAgent:
 
         assert resp.status == "pass"
         assert resp.name == "my-val"
+
+
+# ---------------------------------------------------------------------------
+# ClaudeAgent — sandbox settings
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeAgentSandbox:
+    def test_no_sandbox_when_no_paths(self, tmp_path: Path):
+        """No settings file written when sandbox paths are empty."""
+        profile = _make_profile(provider="claude")
+        agent = ClaudeAgent(profile)
+        ctx = agent._write_sandbox_settings(str(tmp_path))
+        assert ctx is None
+        assert not (tmp_path / ".claude" / "settings.local.json").exists()
+
+    def test_writes_sandbox_settings(self, tmp_path: Path):
+        """Sandbox settings are written when paths are configured."""
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=["/tmp/output"],
+            sandbox_read_paths=["/tmp/output", "/home/intent"],
+        )
+        agent = ClaudeAgent(profile)
+
+        # tmp_path has no .git, so settings go in CWD
+        ctx = agent._write_sandbox_settings(str(tmp_path))
+        assert ctx is not None
+
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        assert settings_path.exists()
+
+        data = json.loads(settings_path.read_text())
+        assert data["sandbox"]["enabled"] is True
+        assert "//tmp/output" in data["sandbox"]["filesystem"]["allowWrite"]
+        assert "//tmp/output" in data["sandbox"]["filesystem"]["allowRead"]
+        assert "//home/intent" in data["sandbox"]["filesystem"]["allowRead"]
+
+        # Cleanup removes the file
+        agent._cleanup_sandbox_settings(ctx)
+        assert not settings_path.exists()
+
+    def test_preserves_existing_settings(self, tmp_path: Path):
+        """Existing settings content is merged, not overwritten."""
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.local.json"
+        original = {"permissions": {"allow": ["Bash(ls *)"]}}
+        settings_path.write_text(json.dumps(original))
+
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=["/out"],
+        )
+        agent = ClaudeAgent(profile)
+
+        ctx = agent._write_sandbox_settings(str(tmp_path))
+        assert ctx is not None
+
+        data = json.loads(settings_path.read_text())
+        # Sandbox config added
+        assert data["sandbox"]["enabled"] is True
+        # Original permissions preserved
+        assert data["permissions"]["allow"] == ["Bash(ls *)"]
+
+        # Cleanup restores original
+        agent._cleanup_sandbox_settings(ctx)
+        restored = json.loads(settings_path.read_text())
+        assert "sandbox" not in restored
+        assert restored["permissions"]["allow"] == ["Bash(ls *)"]
+
+    def test_writes_to_git_root(self, tmp_path: Path):
+        """Settings are written at the git root, not the CWD."""
+        # Create a fake git repo structure
+        git_root = tmp_path / "repo"
+        git_root.mkdir()
+        (git_root / ".git").mkdir()
+        subdir = git_root / "src"
+        subdir.mkdir()
+
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=["/out"],
+        )
+        agent = ClaudeAgent(profile)
+
+        ctx = agent._write_sandbox_settings(str(subdir))
+        assert ctx is not None
+
+        # Settings should be at git root, not in subdir
+        assert (git_root / ".claude" / "settings.local.json").exists()
+        assert not (subdir / ".claude" / "settings.local.json").exists()
+
+        agent._cleanup_sandbox_settings(ctx)
+
+    def test_sandbox_path_format(self, tmp_path: Path):
+        """Paths use // prefix for absolute paths."""
+        profile = _make_profile(
+            provider="claude",
+            sandbox_write_paths=["/Users/foo/output"],
+            sandbox_read_paths=["/Users/foo/intent"],
+        )
+        agent = ClaudeAgent(profile)
+
+        ctx = agent._write_sandbox_settings(str(tmp_path))
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+
+        assert data["sandbox"]["filesystem"]["allowWrite"] == ["//Users/foo/output"]
+        assert data["sandbox"]["filesystem"]["allowRead"] == ["//Users/foo/intent"]
+
+        agent._cleanup_sandbox_settings(ctx)
+
+
+class TestFindGitRoot:
+    def test_finds_git_root(self, tmp_path: Path):
+        git_root = tmp_path / "repo"
+        git_root.mkdir()
+        (git_root / ".git").mkdir()
+        subdir = git_root / "a" / "b"
+        subdir.mkdir(parents=True)
+
+        assert _find_git_root(str(subdir)) == str(git_root)
+        assert _find_git_root(str(git_root)) == str(git_root)
+
+    def test_returns_none_without_git(self, tmp_path: Path):
+        assert _find_git_root(str(tmp_path)) is None
 
 
 # ---------------------------------------------------------------------------

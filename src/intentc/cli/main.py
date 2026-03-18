@@ -51,10 +51,8 @@ def _resolve_profile(profile_name: str | None, config: Config) -> AgentProfile:
     return config.default_profile
 
 
-def _load_project_or_exit() -> "Project":
+def _load_project_or_exit():
     """Load the project or exit with code 2."""
-    from intentc.core.project import Project
-
     try:
         return load_project(Path("intent"))
     except Exception as exc:
@@ -63,7 +61,7 @@ def _load_project_or_exit() -> "Project":
 
 
 def _make_builder(
-    project: "Project",
+    project,
     config: Config,
     profile_name: str | None,
     output_dir: str | None,
@@ -273,6 +271,33 @@ def status(
 
 
 @app.command()
+def diff(
+    target: Annotated[
+        str,
+        typer.Argument(help="Feature path to diff."),
+    ],
+    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
+) -> None:
+    """Show the diff of what was generated for a target."""
+    config = load_config(Path("."))
+    resolved_output = output_dir or config.default_output_dir
+    state_mgr = StateManager(Path("."), resolved_output)
+
+    result = state_mgr.get_build_result(target)
+    if result is None:
+        print_error(f"No build result found for target '{target}'.")
+        raise typer.Exit(code=2)
+
+    if not result.commit_id:
+        print_error(f"Target '{target}' has no commit ID (build may have failed).")
+        raise typer.Exit(code=2)
+
+    vcs = GitVersionControl(Path(resolved_output))
+    diff_text = vcs.diff(f"{result.commit_id}~1", result.commit_id)
+    render_diff(diff_text)
+
+
+@app.command()
 def compare(
     dir_a: Annotated[
         str,
@@ -311,30 +336,3 @@ def compare(
 
     if result.status != "equivalent":
         raise typer.Exit(code=1)
-
-
-@app.command()
-def diff(
-    target: Annotated[
-        str,
-        typer.Argument(help="Feature path to diff."),
-    ],
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
-) -> None:
-    """Show the diff of what was generated for a target."""
-    config = load_config(Path("."))
-    resolved_output = output_dir or config.default_output_dir
-    state_mgr = StateManager(Path("."), resolved_output)
-
-    result = state_mgr.get_build_result(target)
-    if result is None:
-        print_error(f"No build result found for target '{target}'.")
-        raise typer.Exit(code=2)
-
-    if not result.commit_id:
-        print_error(f"Target '{target}' has no commit ID (build may have failed).")
-        raise typer.Exit(code=2)
-
-    vcs = GitVersionControl(Path(resolved_output))
-    diff_text = vcs.diff(f"{result.commit_id}~1", result.commit_id)
-    render_diff(diff_text)

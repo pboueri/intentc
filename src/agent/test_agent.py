@@ -358,7 +358,7 @@ class TestAgentProfile:
         assert p.name == "my-agent"
         assert p.provider == "claude"
         assert p.model_id == "opus"
-        assert p.timeout == 300.0
+        assert p.timeout == 3600.0
         assert p.retries == 3
 
     def test_defaults(self):

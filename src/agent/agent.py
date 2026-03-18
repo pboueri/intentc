@@ -6,6 +6,7 @@ import abc
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -95,12 +96,14 @@ class DifferencingContext(BaseModel):
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "intentc" / ".." / ".." / "intent" / "build" / "agents" / "prompts"
-# Normalize the path
-_PROMPTS_DIR = _PROMPTS_DIR.resolve()
+def _prompts_dir() -> Path:
+    """Resolve the prompts directory relative to the project's intent/ directory."""
+    return Path.cwd() / "intent" / "build" / "agents" / "prompts"
 
-_DIFF_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "intentc" / ".." / ".." / "intent" / "differencing" / "prompts"
-_DIFF_PROMPTS_DIR = _DIFF_PROMPTS_DIR.resolve()
+
+def _diff_prompts_dir() -> Path:
+    """Resolve the differencing prompts directory relative to the project's intent/ directory."""
+    return Path.cwd() / "intent" / "differencing" / "prompts"
 
 
 class PromptTemplates(BaseModel):
@@ -117,10 +120,11 @@ class PromptTemplates(BaseModel):
 def load_default_prompts() -> PromptTemplates:
     """Load the default prompt templates from the prompts/ directory."""
     templates = PromptTemplates()
-    build_path = _PROMPTS_DIR / "build.prompt"
-    validate_path = _PROMPTS_DIR / "validate.prompt"
-    plan_path = _PROMPTS_DIR / "plan.prompt"
-    diff_path = _DIFF_PROMPTS_DIR / "difference.prompt"
+    prompts_dir = _prompts_dir()
+    build_path = prompts_dir / "build.prompt"
+    validate_path = prompts_dir / "validate.prompt"
+    plan_path = prompts_dir / "plan.prompt"
+    diff_path = _diff_prompts_dir() / "difference.prompt"
 
     if build_path.exists():
         templates.build = build_path.read_text(encoding="utf-8")
@@ -214,10 +218,12 @@ class AgentProfile(BaseModel):
     provider: str  # "claude", "codex", "cli"
     command: str = ""
     cli_args: list[str] = []
-    timeout: float = 300.0  # seconds, default 5m
+    timeout: float = 3600.0  # seconds, default 1h
     retries: int = 3
     model_id: str | None = None
     prompt_templates: PromptTemplates | None = None
+    sandbox_write_paths: list[str] = []
+    sandbox_read_paths: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +266,24 @@ class Agent(abc.ABC):
 
 class AgentError(Exception):
     """Raised when an agent invocation fails."""
+
+
+@dataclass
+class _SandboxContext:
+    """Tracks state needed to restore settings after a sandboxed invocation."""
+
+    settings_path: Path
+    original_content: str | None
+
+
+def _find_git_root(start: str) -> str | None:
+    """Walk up from start to find the nearest .git directory."""
+    path = Path(start).resolve()
+    while path != path.parent:
+        if (path / ".git").exists():
+            return str(path)
+        path = path.parent
+    return None
 
 
 def _read_response_file(path: str) -> dict:
@@ -426,6 +450,7 @@ class ClaudeAgent(Agent):
         cmd = [
             "claude",
             "-p", prompt,
+            "--verbose",
             "--output-format", "stream-json",
             "--dangerously-skip-permissions",
         ]
@@ -440,12 +465,73 @@ class ClaudeAgent(Agent):
         if self._profile.model_id:
             cmd.extend(["--model", self._profile.model_id])
         cmd.extend(self._profile.cli_args)
+        cmd.append(prompt)
         return cmd
+
+    def _write_sandbox_settings(self, cwd: str) -> _SandboxContext | None:
+        """Write temporary sandbox settings to the project's settings.local.json.
+
+        When sandbox paths are configured on the profile, this writes a
+        ``.claude/settings.local.json`` at the git root (or CWD if no git repo)
+        that enables Claude Code's OS-level sandbox. Any existing content is
+        preserved and merged — only the ``sandbox`` key is added/overwritten.
+        The caller must call ``_cleanup_sandbox_settings`` to restore the file.
+        """
+        if not self._profile.sandbox_write_paths and not self._profile.sandbox_read_paths:
+            return None
+
+        project_root = _find_git_root(cwd) or cwd
+        settings_dir = Path(project_root) / ".claude"
+        settings_path = settings_dir / "settings.local.json"
+
+        # Save original content for restoration
+        original_content: str | None = None
+        if settings_path.exists():
+            original_content = settings_path.read_text(encoding="utf-8")
+
+        # Merge sandbox config into existing settings
+        existing: dict = {}
+        if original_content:
+            try:
+                existing = json.loads(original_content)
+            except json.JSONDecodeError:
+                existing = {}
+
+        existing["sandbox"] = {
+            "enabled": True,
+            "filesystem": {
+                "allowWrite": [
+                    "//" + p.lstrip("/") for p in self._profile.sandbox_write_paths
+                ],
+                "allowRead": [
+                    "//" + p.lstrip("/") for p in self._profile.sandbox_read_paths
+                ],
+            },
+        }
+
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        return _SandboxContext(settings_path=settings_path, original_content=original_content)
+
+    def _cleanup_sandbox_settings(self, ctx: _SandboxContext | None) -> None:
+        """Restore the original settings.local.json after a sandboxed invocation."""
+        if ctx is None:
+            return
+        if ctx.original_content is not None:
+            ctx.settings_path.write_text(ctx.original_content, encoding="utf-8")
+        elif ctx.settings_path.exists():
+            ctx.settings_path.unlink()
+            # Remove .claude dir if we created it and it's now empty
+            try:
+                ctx.settings_path.parent.rmdir()
+            except OSError:
+                pass
 
     def _run_noninteractive(self, prompt: str, cwd: str) -> None:
         """Run Claude Code in non-interactive mode, streaming output to stderr."""
-        cmd = self._build_noninteractive_command(prompt)
+        sandbox_ctx = self._write_sandbox_settings(cwd)
         try:
+            cmd = self._build_noninteractive_command(prompt)
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -476,6 +562,8 @@ class ClaudeAgent(Agent):
             )
         except FileNotFoundError:
             raise AgentError("Claude Code CLI not found. Install it to use the claude provider.")
+        finally:
+            self._cleanup_sandbox_settings(sandbox_ctx)
 
 
 # ---------------------------------------------------------------------------

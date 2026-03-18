@@ -14,7 +14,7 @@ validations:
         5. ValidateEntries accepts an arbitrary list of entries for a target
         6. ValidationSuiteResult correctly rolls up passed/failed based on severity (error blocks, warning does not)
         Tests should use a MockAgent and verify the full lifecycle end-to-end.
-      context_files: ["src/validations/**"]
+      context_files: ["intentc/build/validations.py", "intentc/build/test_validations.py"]
 
   - name: runner-registry-extensibility
     type: agent_validation
@@ -26,4 +26,4 @@ validations:
         2. A custom runner can be registered and is dispatched to when a validation entry has a matching type
         3. A validation entry with an unknown type fails with a descriptive error indicating the unregistered type
         Tests should register a mock runner, run a validation entry with that type, and confirm it was invoked.
-      context_files: ["src/validations/**"]
+      context_files: ["intentc/build/validations.py", "intentc/build/test_validations.py"]
