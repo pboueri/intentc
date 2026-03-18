@@ -1,0 +1,21 @@
+name: Test
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --group dev
+
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - run: uv run pytest
