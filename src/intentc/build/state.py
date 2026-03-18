@@ -197,6 +197,16 @@ class StateManager:
         """All tracked targets and their statuses."""
         return [(name, entry.status) for name, entry in sorted(self._targets.items())]
 
+    @property
+    def build_response_dir(self) -> Path:
+        """Directory for build response files."""
+        return self._dir / "responses" / "build"
+
+    @property
+    def val_response_dir(self) -> Path:
+        """Directory for validation response files."""
+        return self._dir / "responses" / "val"
+
     # -- persistence -------------------------------------------------------
 
     def _load(self) -> None:

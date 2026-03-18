@@ -217,8 +217,6 @@ class AgentProfile(BaseModel):
     retries: int = 3
     model_id: str | None = None
     prompt_templates: PromptTemplates | None = None
-    sandbox_write_paths: list[str] = []
-    sandbox_read_paths: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -380,22 +378,9 @@ def _print_stream_event(event: dict) -> None:
 class ClaudeAgent(Agent):
     """Specialization for Claude Code.
 
-    Combines ``--dangerously-skip-permissions`` (so every tool runs without
-    prompts, matching normal non-interactive behaviour) with Claude Code's
-    built-in OS-level sandbox for filesystem isolation.
-
-    The sandbox scopes the agent to:
-    - **write** only to the paths listed in ``profile.sandbox_write_paths``
-      (typically the output directory).
-    - **read** only from the paths listed in ``profile.sandbox_read_paths``
-      (typically the intent files for the target and its DAG ancestors, plus
-      the output directory).
-
-    All commands and network access remain fully allowed.  The builder is
-    responsible for populating ``sandbox_write_paths`` and
-    ``sandbox_read_paths`` on the profile before the agent is created.
-
-    Streams output to stderr
+    Uses CLIAgent via composition, overriding the command to `claude`
+    with flags: -p, --output-format stream-json, --dangerously-skip-permissions,
+    and --model from the profile.  Streams agent output to stderr in real-time.
     """
 
     def __init__(self, profile: AgentProfile) -> None:
@@ -432,77 +417,13 @@ class ClaudeAgent(Agent):
     def get_type(self) -> str:
         return "claude"
 
-    # -- sandbox settings ---------------------------------------------------
-
-    def _sandbox_settings(self) -> dict:
-        """Build Claude Code sandbox settings from the profile.
-
-        The profile's ``sandbox_write_paths`` controls which directories the
-        agent may write to (via ``allowWrite``).  ``sandbox_read_paths``
-        controls which directories the agent may read from — everything
-        outside those paths is denied (via ``denyRead`` set to ``/``
-        combined with negative deny entries for allowed paths is not
-        supported, so we use ``allowWrite`` for write scoping and rely on
-        the permission layer for read scoping).
-
-        When sandbox paths are configured the settings enable the sandbox
-        with auto-allow so that all commands execute without prompts inside
-        the sandbox boundary.
-        """
-        settings: dict = {
-            "sandbox": {
-                "enabled": True,
-                "autoAllow": True,
-                "allowUnsandboxedCommands": False,
-                "filesystem": {},
-            },
-        }
-        if self._profile.sandbox_write_paths:
-            settings["sandbox"]["filesystem"]["allowWrite"] = [
-                f"//{p}" if Path(p).is_absolute() else p
-                for p in self._profile.sandbox_write_paths
-            ]
-        if self._profile.sandbox_read_paths:
-            settings["sandbox"]["filesystem"]["denyWrite"] = [
-                f"//{p}" if Path(p).is_absolute() else p
-                for p in self._profile.sandbox_read_paths
-            ]
-        return settings
-
-    def _write_sandbox_settings(self, cwd: str) -> Path:
-        """Write sandbox settings to .claude/settings.local.json in the CWD."""
-        settings_dir = Path(cwd) / ".claude"
-        settings_dir.mkdir(parents=True, exist_ok=True)
-        settings_path = settings_dir / "settings.local.json"
-        settings_path.write_text(
-            json.dumps(self._sandbox_settings(), indent=2),
-            encoding="utf-8",
-        )
-        return settings_path
-
-    def _cleanup_sandbox_settings(self, cwd: str) -> None:
-        """Remove the temporary sandbox settings after an invocation."""
-        settings_dir = Path(cwd) / ".claude"
-        settings_path = settings_dir / "settings.local.json"
-        if settings_path.exists():
-            settings_path.unlink()
-        # Remove .claude dir if empty
-        if settings_dir.exists() and not any(settings_dir.iterdir()):
-            settings_dir.rmdir()
-
-    @property
-    def _has_sandbox_paths(self) -> bool:
-        return bool(self._profile.sandbox_write_paths or self._profile.sandbox_read_paths)
-
-    # -- command building ----------------------------------------------------
-
     def _build_noninteractive_command(self, prompt: str) -> list[str]:
         """Build claude command for non-interactive (build/validate) use."""
         cmd = [
             "claude",
             "-p", prompt,
-            "--output-format", "stream-json",
             "--verbose",
+            "--output-format", "stream-json",
             "--dangerously-skip-permissions",
         ]
         if self._profile.model_id:
@@ -516,22 +437,11 @@ class ClaudeAgent(Agent):
         if self._profile.model_id:
             cmd.extend(["--model", self._profile.model_id])
         cmd.extend(self._profile.cli_args)
+        cmd.append(prompt)
         return cmd
 
-    def _run_noninteractive(
-        self, prompt: str, cwd: str
-    ) -> subprocess.CompletedProcess[str]:
-        """Run Claude Code in non-interactive mode.
-
-        When the profile has sandbox paths configured, writes a
-        ``.claude/settings.local.json`` before invocation and cleans it up
-        afterward.  The sandbox restricts filesystem access at the OS level
-        while ``--dangerously-skip-permissions`` keeps all commands and
-        network access fully allowed.
-        """
-        use_sandbox = self._has_sandbox_paths
-        if use_sandbox:
-            self._write_sandbox_settings(cwd)
+    def _run_noninteractive(self, prompt: str, cwd: str) -> None:
+        """Run Claude Code in non-interactive mode, streaming output to stderr."""
         cmd = self._build_noninteractive_command(prompt)
         try:
             proc = subprocess.Popen(
@@ -564,9 +474,6 @@ class ClaudeAgent(Agent):
             )
         except FileNotFoundError:
             raise AgentError("Claude Code CLI not found. Install it to use the claude provider.")
-        finally:
-            if use_sandbox:
-                self._cleanup_sandbox_settings(cwd)
 
 
 # ---------------------------------------------------------------------------

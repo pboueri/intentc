@@ -722,6 +722,49 @@ class TestBuildContext:
         ctx = agent.build_calls[0]
         assert ctx.project_intent.name == "test"
 
+    def test_build_validation_response_in_state_dir(self, tmp_path: Path):
+        """During build, validation response files should be under .intentc/state/."""
+        project = _project_with_validations()
+        output_dir = "out"
+        sm = StateManager(tmp_path, output_dir)
+        vc = MockVersionControl()
+        profile = AgentProfile(name="mock", provider="cli")
+        builder = Builder(project, sm, vc, profile)
+
+        mock_agent = MockAgent()
+        builder._create_agent = lambda p: mock_agent
+
+        opts = BuildOptions(target="a", output_dir=output_dir)
+        (tmp_path / output_dir).mkdir()
+        results, err = builder.build(opts)
+
+        for call in mock_agent.validate_calls:
+            ctx = call[0]
+            assert "/responses/val/" in ctx.response_file_path
+            assert str(sm.val_response_dir) in ctx.response_file_path
+
+    def test_build_response_file_in_state_dir(self, tmp_path: Path):
+        """Build response files should be written under .intentc/state/, not in the output dir."""
+        project = _simple_project()
+        output_dir = "out"
+        state_mgr = StateManager(tmp_path, output_dir)
+        vcs = MockVersionControl()
+        profile = AgentProfile(name="mock", provider="cli")
+        builder = Builder(project, state_mgr, vcs, profile)
+
+        mock_agent = MockAgent()
+        builder._create_agent = lambda p: mock_agent
+
+        opts = BuildOptions(target="a", output_dir=output_dir)
+        (tmp_path / output_dir).mkdir()
+        results, err = builder.build(opts)
+
+        # Verify the response file path was under .intentc/state/
+        assert len(mock_agent.build_calls) == 1
+        resp_path = mock_agent.build_calls[0].response_file_path
+        assert "/responses/build/" in resp_path
+        assert str(state_mgr.build_response_dir) in resp_path
+
 
 # ---------------------------------------------------------------------------
 # Outdated / pending targets
