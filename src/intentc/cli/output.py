@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-from intentc.build.agents import ValidationResponse
+from intentc.build.agents import DifferencingResponse, ValidationResponse
 from intentc.build.state import BuildResult, TargetStatus
 from intentc.build.validations import ValidationSuiteResult
 
@@ -126,6 +126,22 @@ def render_init_summary(files: list[str]) -> None:
         "\n".join(f"  [green]+[/green] {f}" for f in files),
         title="[bold]Project initialized[/bold]",
     ))
+
+
+def render_compare_result(result: DifferencingResponse) -> None:
+    """Print a differencing result as a dimensions table plus summary."""
+    status_style = "green" if result.status == "equivalent" else "red"
+    table = Table(title=f"Compare: [{status_style}]{result.status}[/{status_style}]")
+    table.add_column("Dimension", style="cyan")
+    table.add_column("Status")
+    table.add_column("Rationale")
+
+    for dim in result.dimensions:
+        style = "green" if dim.status == "pass" else "red"
+        table.add_row(dim.name, f"[{style}]{dim.status}[/{style}]", dim.rationale)
+
+    console.print(table)
+    console.print(Panel(result.summary, title="Summary"))
 
 
 def print_error(message: str) -> None:

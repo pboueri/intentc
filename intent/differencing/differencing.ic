@@ -4,7 +4,7 @@ version: 1
 depends_on:
   - core/*
   - build/agents
-  - build/state
+  - interfaces/cli
 tags: [equivalence, validation]
 ---
 
@@ -28,12 +28,15 @@ The `DifferencingContext` carries everything the agent needs:
 
 - `OutputDirA` (string) — path to the reference output directory
 - `OutputDirB` (string) — path to the candidate output directory
-- `ProjectIntent` (Intent) — the project-level intent for context
+- `ProjectIntent` (Intent) — the project-level intent (project.ic content)
+- `Implementation` (Intent) — the implementation-level intent (implementation.ic content)
 - `ResponseFilePath` (string) — path where the agent writes the structured response
+
+Both `ProjectIntent` and `Implementation` are passed so the prompt template can render them as separate variables (`{project}` and `{implementation}`).
 
 ## DifferencingResponse
 
-The structured result written by the agent to the response file (type defined in agents).
+The structured result written by the agent to the response file. This is the authoritative definition of the type; the implementation lives in the agents module alongside the other response types.
 
 - `status` (string) — `"equivalent"` or `"divergent"`
 - `dimensions` (list of DimensionResult) — individual evaluation axes
@@ -73,10 +76,36 @@ The agent prompt for differencing is stored at [prompts/difference.prompt](promp
 - `{output_dir_b}` — path to the candidate output directory
 - `{response_file}` — path where the agent must write the DifferencingResponse JSON
 
+## CLI Command
+
+### `intentc compare <dir_a> <dir_b>`
+
+Evaluate functional equivalence between two output directories.
+
+1. Load the project and config.
+2. Resolve agent profile: `--profile` flag > config default.
+3. Validate that both directories exist; abort with a descriptive error if either is missing.
+4. Call `run_differencing(dir_a, dir_b, project, agent_profile)`.
+5. Print results using Rich: a table of dimensions (name, status, rationale) followed by the summary.
+6. Exit with code 0 if equivalent, code 1 if divergent.
+
+**Arguments:**
+- `dir_a` (positional, required) — path to the reference output directory.
+- `dir_b` (positional, required) — path to the candidate output directory.
+
+**Options:**
+- `--profile / -p` — agent profile override.
+
+The command is a thin wrapper over the `run_differencing` workflow function, following the same wiring pattern as other CLI commands.
+
 ## Workflow
 
-1. The caller constructs a `DifferencingContext` with both output directories, the project intent, and a response file path.
-2. The caller creates an agent via `CreateFromProfile` and calls `agent.Difference(ctx)`.
-3. The agent renders the difference prompt template with the context, then actively investigates both directories — reading code, examining interfaces, running tests, and exercising the software.
-4. The agent writes a `DifferencingResponse` to the response file.
-5. The caller reads and returns the parsed response. No build state is modified — differencing is a pure evaluation.
+The `run_differencing` function is the core workflow, callable from the CLI or programmatically.
+
+1. Validate that both output directories exist. If either is missing, return a descriptive error including the missing path.
+2. Construct a `DifferencingContext` with both output directories, the project intent, the implementation intent, and a temporary response file path.
+3. Create an agent via `CreateFromProfile` and call `agent.Difference(ctx)`.
+4. The agent renders the difference prompt template with the context, then actively investigates both directories — reading code, examining interfaces, running tests, and exercising the software.
+5. The agent writes a `DifferencingResponse` to the response file.
+6. Read and parse the response file. If the file is missing, return a failure with a descriptive error. If the JSON is malformed, return a failure with the parse error and file path.
+7. Return the parsed `DifferencingResponse`. No build state is modified — differencing is a pure evaluation.

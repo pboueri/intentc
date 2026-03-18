@@ -8,29 +8,14 @@ validations:
       rubric: |
         Verify the Agent interface has been extended with a Difference method:
         1. The Agent abstract interface defines Difference(ctx: DifferencingContext) -> DifferencingResponse, error
-        2. DifferencingContext type is defined with fields: OutputDirA, OutputDirB, ProjectIntent, ResponseFilePath
+        2. DifferencingContext type is defined with fields: OutputDirA, OutputDirB, ProjectIntent, Implementation, ResponseFilePath
         3. DifferencingResponse type is defined with fields: status (equivalent/divergent), dimensions (list of DimensionResult), summary (string)
         4. DimensionResult type is defined with fields: name (string), status (pass/fail), rationale (string)
         5. CLIAgent implements Difference by rendering the difference prompt and reading the response file
-        6. ClaudeAgent inherits the Difference implementation from CLIAgent
+        6. ClaudeAgent implements Difference following the same pattern as CLIAgent (render prompt, invoke agent, read response file)
         7. MockAgent records Difference calls and returns a configurable DifferencingResponse
         All response types should be serializable to/from JSON for the response file mechanism.
       context_files: ["src/intentc/build/agents.*"]
-
-  - name: differencing-prompt-rendered
-    type: agent_validation
-    severity: error
-    args:
-      rubric: |
-        Verify that the difference prompt template exists at
-        intent/differencing/prompts/difference.prompt and can be rendered
-        with the expected template variables: {project}, {implementation},
-        {output_dir_a}, {output_dir_b}, {response_file}. The rendered prompt
-        should instruct the agent to evaluate the five standard dimensions
-        (public_api, test_suite, runtime_behavior, dependency_compatibility,
-        configuration_compatibility) and write a DifferencingResponse JSON
-        to the response file.
-      context_files: ["intent/differencing/prompts/**"]
 
   - name: differencing-workflow-implemented
     type: agent_validation
@@ -61,6 +46,18 @@ validations:
         4. A malformed JSON response file produces a descriptive error
         5. Unknown fields in the response are tolerated (forward compatibility)
       context_files: ["src/intentc/differencing/**"]
+
+  - name: differencing-prompt-rendered
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the differencing prompt template exists and renders correctly:
+        1. The prompt file exists at intent/differencing/prompts/difference.prompt
+        2. The template contains the variables {project}, {implementation}, {output_dir_a}, {output_dir_b}, and {response_file}
+        3. render_differencing_prompt (or equivalent) substitutes all template variables from DifferencingContext
+        4. The rendered prompt contains the actual values passed in, not raw template variable placeholders
+      context_files: ["intent/differencing/prompts/*", "src/intentc/build/agents.*"]
 
   - name: differencing-tests-pass
     type: agent_validation

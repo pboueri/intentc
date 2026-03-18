@@ -17,6 +17,7 @@ from intentc.cli.output import (
     console,
     print_error,
     render_build_results,
+    render_compare_result,
     render_diff,
     render_init_summary,
     render_status_table,
@@ -77,8 +78,6 @@ def _make_builder(
         state_manager=state_mgr,
         version_control=vcs,
         agent_profile=agent_profile,
-        validation_profile=config.default_validation_profile,
-        max_parallel_validations=config.max_parallel_validations,
     )
     return builder, resolved_output
 
@@ -96,8 +95,6 @@ def init(
     ] = None,
 ) -> None:
     """Create a new intentc project in the current directory."""
-    import subprocess as _sp
-
     intent_dir = Path("intent")
     if (intent_dir / "project.ic").exists():
         print_error(
@@ -112,17 +109,6 @@ def init(
 
     config = Config()
     config_path = save_config(config, Path("."))
-
-    # Initialize a git repository so that intentc build can make commits.
-    git_dir = Path(".git")
-    if not git_dir.exists():
-        _sp.run(["git", "init"], check=True, capture_output=True)
-        _sp.run(["git", "add", "-A"], check=True, capture_output=True)
-        _sp.run(
-            ["git", "commit", "-m", "intentc init"],
-            check=True,
-            capture_output=True,
-        )
 
     created_files = [
         "intent/project.ic",
@@ -284,6 +270,47 @@ def status(
         outdated_list = builder.detect_outdated()
 
     render_status_table(targets, results, outdated_list)
+
+
+@app.command()
+def compare(
+    dir_a: Annotated[
+        str,
+        typer.Argument(help="Path to the reference output directory."),
+    ],
+    dir_b: Annotated[
+        str,
+        typer.Argument(help="Path to the candidate output directory."),
+    ],
+    profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
+) -> None:
+    """Evaluate functional equivalence between two output directories."""
+    from intentc.differencing.differencing import run_differencing
+
+    path_a = Path(dir_a)
+    path_b = Path(dir_b)
+
+    if not path_a.is_dir():
+        print_error(f"Reference directory does not exist: {dir_a}")
+        raise typer.Exit(code=2)
+    if not path_b.is_dir():
+        print_error(f"Candidate directory does not exist: {dir_b}")
+        raise typer.Exit(code=2)
+
+    project = _load_project_or_exit()
+    config = load_config(Path("."))
+    agent_profile = _resolve_profile(profile, config)
+
+    try:
+        result = run_differencing(dir_a, dir_b, project, agent_profile)
+    except Exception as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1)
+
+    render_compare_result(result)
+
+    if result.status != "equivalent":
+        raise typer.Exit(code=1)
 
 
 @app.command()
