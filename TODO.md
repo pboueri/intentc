@@ -11,6 +11,8 @@ Personal running notes — not for Claude to act on independently.
 - [ ] Nice branding — logo, colors, polished terminal output throughout
 - [ ] Suggest next steps after build — "core/project built. You can now build: build/state, build/agents"
 - [ ] Detect stale builds automatically — editing an intent file should immediately mark downstream features as outdated in `intentc status`
+- [ ] `intentc seed` -- seed from an existing brownfield project in a guided fashion
+- [ ] Progress tracking and time estimates
 
 ## Build Quality & Intelligence
 
