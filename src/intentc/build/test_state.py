@@ -193,6 +193,23 @@ class TestStateManager:
 
 
 # ---------------------------------------------------------------------------
+# Response directory properties
+# ---------------------------------------------------------------------------
+
+
+class TestResponseDirs:
+    def test_build_response_dir(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "src")
+        expected = tmp_path / ".intentc" / "state" / "src" / "responses" / "build"
+        assert sm.build_response_dir == expected
+
+    def test_val_response_dir(self, tmp_path: Path):
+        sm = StateManager(tmp_path, "src")
+        expected = tmp_path / ".intentc" / "state" / "src" / "responses" / "val"
+        assert sm.val_response_dir == expected
+
+
+# ---------------------------------------------------------------------------
 # State roundtrip — save, reload from disk, verify
 # ---------------------------------------------------------------------------
 
