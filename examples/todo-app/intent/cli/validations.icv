@@ -6,7 +6,10 @@ validations:
     severity: error
     args:
       rubric: |
-        Run `python -c "from todo_app.cli import main"` from within `src/`.
+        You are already in the output directory (e.g. `src/`). Run:
+        ```
+        python -c "from todo_app.cli import main"
+        ```
         Verify it exits with code 0.
 
   - name: cli-add-and-list
@@ -14,10 +17,10 @@ validations:
     severity: error
     args:
       rubric: |
-        From a temporary directory, run:
+        You are already in the output directory (e.g. `src/`). Run:
         ```
-        PYTHONPATH=<project_root>/src python -m todo_app.cli add "test task"
-        PYTHONPATH=<project_root>/src python -m todo_app.cli list
+        python -m todo_app.cli add "test task"
+        python -m todo_app.cli list
         ```
         Verify the `add` command prints an id and the `list` command output
         includes "test task".

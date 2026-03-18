@@ -228,7 +228,9 @@ class ValidationSuite:
                 )
                 continue
 
-            response_file = Path(self._output_dir) / f".intentc-val-{entry.name}-{uuid.uuid4().hex[:8]}.json"
+            intentc_dir = Path(".intentc") / self._output_dir
+            intentc_dir.mkdir(parents=True, exist_ok=True)
+            response_file = intentc_dir / f".intentc-val-{entry.name}-{uuid.uuid4().hex[:8]}.json"
             ctx = ValidationContext(
                 project_intent=self._project.project_intent,
                 implementation=self._project.implementation,

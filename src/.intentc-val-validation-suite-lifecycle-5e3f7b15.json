@@ -1,5 +1,0 @@
-{
-  "name": "validation-suite-lifecycle",
-  "status": "pass",
-  "reason": "All rubric points verified: (1) ValidationSuite is constructed from Project, AgentProfile, output_dir, and runner_registry. (2) Agent is created internally via create_from_profile(), not passed in. (3) validate_feature() loads .icv files for a feature, runs each entry through the runner registry, and returns a ValidationSuiteResult. (4) validate_project() runs all features in topological order then project-level assertions. (5) validate_entries() accepts an arbitrary list of entries for a target. (6) ValidationSuiteResult rolls up passed/failed correctly — only severity=error failures block (passed=False), warnings do not. (7) Tests use a MockAgent and verify the full lifecycle end-to-end, including severity rollup, unknown features, empty validations, and runner extensibility."
-}

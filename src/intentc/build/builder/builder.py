@@ -176,7 +176,9 @@ class Builder:
 
         # Step 2: build (with retries)
         step_start = datetime.now()
-        response_file = Path(opts.output_dir) / f".intentc-build-{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
+        intentc_dir = Path(".intentc") / opts.output_dir
+        intentc_dir.mkdir(parents=True, exist_ok=True)
+        response_file = intentc_dir / f".intentc-build-{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
         ctx = BuildContext(
             intent=node.intents[0] if node.intents else IntentFile(name=target),
             validations=node.validations,
@@ -295,6 +297,7 @@ class Builder:
         ancestors, plus project.ic and implementation.ic.
         """
         output_path = str(Path(output_dir).resolve())
+        intentc_cache_path = str((Path(".intentc") / output_dir).resolve())
         read_paths: list[str] = []
 
         intent_dir = self.project.intent_dir
@@ -315,7 +318,7 @@ class Builder:
                     read_paths.append(str(target_dir))
 
         return profile.model_copy(update={
-            "sandbox_write_paths": [output_path],
+            "sandbox_write_paths": [output_path, intentc_cache_path],
             "sandbox_read_paths": read_paths,
         })
 

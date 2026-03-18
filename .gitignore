@@ -30,6 +30,7 @@ go.work.sum
 
 # Build directories created by intentc
 **/.intentc/state
+.intentc*
 
 .DS_Store
 

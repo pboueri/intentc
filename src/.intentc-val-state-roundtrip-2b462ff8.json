@@ -1,5 +1,0 @@
-{
-  "name": "state-roundtrip",
-  "status": "pass",
-  "reason": "Tests in intentc/build/test_state.py fully demonstrate a state roundtrip. The TestStateRoundtrip.test_full_roundtrip test creates a StateManager, saves a BuildResult with all fields populated (target, generation_id, status, steps with phase/status/duration/summary, commit_id, total_duration, timestamp), then creates a second StateManager instance pointing to the same path and verifies every field survives the roundtrip. Additionally, test_missing_state_file_returns_defaults confirms that a fresh StateManager with no on-disk state returns TargetStatus.PENDING and None for build results—no errors. test_corrupt_state_file_returns_defaults verifies graceful handling of corrupt JSON. test_unknown_fields_tolerated checks forward compatibility."
-}
