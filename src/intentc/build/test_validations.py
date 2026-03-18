@@ -174,13 +174,12 @@ class TestValidationRunnerInterface:
 
 class TestAgentValidationRunner:
     def test_delegates_to_agent(self, tmp_path: Path):
-        mock_agent = MockAgent(
+        agent = MockAgent(
             validation_response=ValidationResponse(
                 name="placeholder", status="pass", reason="All good"
             )
         )
-        profile = _make_profile()
-        runner = AgentValidationRunner(profile)
+        runner = AgentValidationRunner(agent)
         assert runner.type() == "agent_validation"
 
         v = _make_validation(name="my-check")
@@ -190,86 +189,37 @@ class TestAgentValidationRunner:
             output_dir=str(tmp_path),
             response_file_path=str(tmp_path / "resp.json"),
         )
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            resp = runner.run(v, ctx)
-        finally:
-            val_mod.create_from_profile = original
+        resp = runner.run(v, ctx)
 
         assert resp.status == "pass"
         assert resp.name == "my-check"
-        assert len(mock_agent.validate_calls) == 1
+        assert len(agent.validate_calls) == 1
 
     def test_agent_error_returns_failure(self, tmp_path: Path):
         """If the agent raises AgentError, the runner returns a fail response."""
         from intentc.build.agents import AgentError
 
-        mock_agent = MockAgent()
+        agent = MockAgent()
+        runner = AgentValidationRunner(agent)
 
+        # Make the agent raise on validate
         def bad_validate(ctx, v):
             raise AgentError("broken")
 
-        mock_agent.validate = bad_validate  # type: ignore[assignment]
+        agent.validate = bad_validate  # type: ignore[assignment]
 
-        profile = _make_profile()
-        runner = AgentValidationRunner(profile)
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            v = _make_validation(name="err-check")
-            ctx = ValidationContext(
-                project_intent=ProjectIntent(name="p", body=""),
-                feature_intent=IntentFile(name="f", body=""),
-                output_dir=str(tmp_path),
-                response_file_path=str(tmp_path / "resp.json"),
-            )
-            resp = runner.run(v, ctx)
-        finally:
-            val_mod.create_from_profile = original
-
-        assert resp.status == "fail"
-        assert resp.name == "err-check"
-        assert "Agent error" in resp.reason
-
-    def test_per_validation_profile_override(self, tmp_path: Path):
-        """A validation with agent_profile uses a merged profile."""
-        from intentc.core.types import ValidationAgentProfile
-
-        captured_profiles: list[AgentProfile] = []
-
-        def capturing_create(p: AgentProfile):
-            captured_profiles.append(p)
-            return MockAgent()
-
-        profile = _make_profile(provider="claude", model_id=None)
-        runner = AgentValidationRunner(profile)
-
-        v = _make_validation(
-            name="override-check",
-            agent_profile=ValidationAgentProfile(provider="claude", model_id="claude-opus-4-6"),
-        )
+        v = _make_validation(name="err-check")
         ctx = ValidationContext(
             project_intent=ProjectIntent(name="p", body=""),
             feature_intent=IntentFile(name="f", body=""),
             output_dir=str(tmp_path),
             response_file_path=str(tmp_path / "resp.json"),
         )
+        resp = runner.run(v, ctx)
 
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = capturing_create
-        try:
-            runner.run(v, ctx)
-        finally:
-            val_mod.create_from_profile = original
-
-        assert len(captured_profiles) == 1
-        assert captured_profiles[0].model_id == "claude-opus-4-6"
+        assert resp.status == "fail"
+        assert resp.name == "err-check"
+        assert "Agent error" in resp.reason
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +438,29 @@ class TestValidationSuiteLifecycle:
             assert result.results[1].status == "fail"
         finally:
             val_mod.create_from_profile = original_create
+
+    def test_validation_response_file_in_custom_dir(self, tmp_path: Path):
+        """When val_response_dir is provided, response files go there."""
+        project = _simple_project()
+        mock_agent = MockAgent()
+        response_dir = tmp_path / "custom_responses"
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project, _make_profile(), str(tmp_path / "out"),
+                val_response_dir=response_dir,
+            )
+            result = suite.validate_feature("feat/a")
+
+            assert len(mock_agent.validate_calls) == 2
+            for call in mock_agent.validate_calls:
+                ctx = call[0]
+                assert ctx.response_file_path.startswith(str(response_dir))
+        finally:
+            val_mod.create_from_profile = original
 
     def test_no_validations_returns_passed(self, tmp_path: Path):
         """Feature with no .icv entries returns passed=True with empty results."""

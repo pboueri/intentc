@@ -231,6 +231,7 @@ class Builder:
                 project=self.project,
                 agent_profile=profile,
                 output_dir=opts.output_dir,
+                val_response_dir=self.state_manager.val_response_dir,
             )
             suite_result = suite.validate_feature(target)
 
@@ -326,6 +327,7 @@ class Builder:
             project=self.project,
             agent_profile=profile,
             output_dir=output_dir,
+            val_response_dir=self.state_manager.val_response_dir,
         )
         if target is not None:
             return suite.validate_feature(target)
