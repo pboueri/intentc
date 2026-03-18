@@ -17,6 +17,7 @@ Each entry in the `validations` list of a .icv file defines a single check.
 - `type` (string) — selects which runner evaluates this validation. Defaults to `agent_validation`. This is the extensibility point for future validation types.
 - `severity` (enum: `error`, `warning`) — `error` means failure, `warning` is advisory. Default: `error`.
 - `args` (map) — arguments passed to the runner for this type
+- `agent_profile` (map, optional) — per-validation agent profile override. Fields: `provider`, `model_id`, `timeout`. Merged on top of the suite's default validation profile — only fields present are overridden.
 
 ### args for `agent_validation`
 
@@ -44,19 +45,20 @@ The result of running a suite of validations. Returned by the ValidationSuite af
 
 ## ValidationSuite
 
-The ValidationSuite is the core orchestrator for running validations. It takes a project, an agent, and an output directory, and can validate a specific feature or the entire project. It owns the loop over validation entries, dispatches to runners, reads response files, and collects results.
+The ValidationSuite is the core orchestrator for running validations. It takes a project, an agent profile, an output directory, and runs validations concurrently within each target.
 
 ```
 ValidationSuite:
     project: Project
-    agentProfile: AgentProfile
+    agentProfile: AgentProfile      # default validation profile (Sonnet by default)
     outputDir: string
     runnerRegistry: map[string, ValidationRunner]
+    maxWorkers: int                 # max concurrent validations per target (default: 5)
 ```
 
-The suite does not receive a pre-constructed Agent. It receives an AgentProfile (resolved from the .icv file's `agent_profile` field, falling back to the project config's default profile). The suite uses `CreateFromProfile` to construct the agent internally. This keeps the caller (builder, CLI, etc.) from needing to know how to wire agents — it just passes the profile.
+The suite receives an AgentProfile (the default validation profile, typically a lighter/faster model than the build profile). It passes this to `AgentValidationRunner`, which creates agents on demand per validation call, merging any per-validation `agent_profile` override.
 
-Individual .icv files can override the profile via their `agent_profile` field. The resolution order is: .icv file's `agent_profile` > caller-provided profile > config default.
+Profile resolution order for each validation: per-validation `agent_profile` override > suite's agentProfile > config default.
 
 ### Methods
 
@@ -68,10 +70,10 @@ Individual .icv files can override the profile via their `agent_profile` field. 
 
 1. The suite receives a feature path (or iterates all features for project-wide validation).
 2. It looks up the feature's .icv files from the parsed Project.
-3. For each validation entry:
-   - It looks up the runner for the entry's `type` in the registry.
-   - It invokes the runner with the validation entry and context (project intent, output dir, agent).
-   - The runner returns a ValidationResponse (by reading the agent's response file for `agent_validation`, or by other means for future types).
+3. All validation entries for the target are submitted concurrently to a thread pool (up to `maxWorkers`). For each entry:
+   - The runner for the entry's `type` is looked up in the registry.
+   - The runner is invoked with the validation entry and context (project intent, output dir).
+   - The runner returns a ValidationResponse. Result order matches input order.
 4. The suite collects all responses into a ValidationSuiteResult.
 5. `passed` is false if any `severity: error` validation has `status: "fail"`.
 
@@ -97,7 +99,7 @@ What the runner needs to evaluate a validation. Constructed by the suite for eac
 
 ### AgentValidationRunner
 
-The built-in runner for `type: agent_validation`. Constructs a prompt from the rubric and context, invokes the agent's Validate method, reads the response file, and returns the parsed ValidationResponse. If the response file is missing or malformed, returns a failure with a descriptive error.
+The built-in runner for `type: agent_validation`. Accepts a default AgentProfile and creates a fresh agent per validation call, merging any per-validation `agent_profile` override first. Constructs a prompt from the rubric and context, invokes the agent's Validate method, reads the response file, and returns the parsed ValidationResponse. If the response file is missing or malformed, returns a failure with a descriptive error.
 
 ## Extensibility
 

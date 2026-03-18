@@ -21,7 +21,15 @@ class Config(BaseModel):
         timeout=3600,
         retries=3,
     )
+    default_validation_profile: AgentProfile = AgentProfile(
+        name="default-validation",
+        provider="claude",
+        timeout=3600,
+        retries=3,
+        model_id="claude-sonnet-4-6",
+    )
     default_output_dir: str = "src"
+    max_parallel_validations: int = 5
 
 
 _CONFIG_PATH = ".intentc/config.yaml"
@@ -45,9 +53,17 @@ def load_config(project_root: Path) -> Config:
         if isinstance(profile_data, dict)
         else Config().default_profile
     )
+    val_profile_data = data.get("default_validation_profile")
+    val_profile = (
+        AgentProfile(**val_profile_data)
+        if isinstance(val_profile_data, dict)
+        else Config().default_validation_profile
+    )
     return Config(
         default_profile=profile,
+        default_validation_profile=val_profile,
         default_output_dir=data.get("default_output_dir", "src"),
+        max_parallel_validations=int(data.get("max_parallel_validations", 5)),
     )
 
 
@@ -62,7 +78,15 @@ def save_config(config: Config, project_root: Path) -> Path:
             "timeout": config.default_profile.timeout,
             "retries": config.default_profile.retries,
         },
+        "default_validation_profile": {
+            "name": config.default_validation_profile.name,
+            "provider": config.default_validation_profile.provider,
+            "timeout": config.default_validation_profile.timeout,
+            "retries": config.default_validation_profile.retries,
+            "model_id": config.default_validation_profile.model_id,
+        },
         "default_output_dir": config.default_output_dir,
+        "max_parallel_validations": config.max_parallel_validations,
     }
     config_path.write_text(yaml.dump(data, default_flow_style=False), encoding="utf-8")
     return config_path

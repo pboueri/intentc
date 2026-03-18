@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import abc
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from intentc.build.agents import (
-    Agent,
     AgentError,
     AgentProfile,
     BuildContext,
@@ -85,15 +85,18 @@ class ValidationRunner(abc.ABC):
 class AgentValidationRunner(ValidationRunner):
     """Built-in runner for type 'agent_validation'.
 
-    Constructs a BuildContext from the ValidationContext, invokes the agent's
-    validate method, and returns the parsed ValidationResponse. If the agent
-    raises an error or returns an invalid response, returns a failure.
+    Accepts a default AgentProfile and creates agents on demand per validation,
+    merging any per-validation agent_profile override from the Validation entry.
+    This allows each validation to run with its own agent configuration while
+    sharing the suite-level default.
     """
 
-    def __init__(self, agent: Agent) -> None:
-        self._agent = agent
+    def __init__(self, default_profile: AgentProfile) -> None:
+        self._default_profile = default_profile
 
     def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
+        profile = self._resolve_profile(validation)
+        agent = create_from_profile(profile)
         build_ctx = BuildContext(
             intent=ctx.feature_intent,
             validations=[],
@@ -105,7 +108,7 @@ class AgentValidationRunner(ValidationRunner):
             response_file_path=ctx.response_file_path,
         )
         try:
-            return self._agent.validate(build_ctx, validation)
+            return agent.validate(build_ctx, validation)
         except AgentError as exc:
             return ValidationResponse(
                 name=validation.name,
@@ -118,6 +121,24 @@ class AgentValidationRunner(ValidationRunner):
                 status="fail",
                 reason=f"Unexpected error: {exc}",
             )
+
+    def _resolve_profile(self, validation: Validation) -> AgentProfile:
+        """Return the effective AgentProfile for this validation.
+
+        If the validation has an agent_profile override, merge its fields
+        on top of the default profile. Otherwise return the default as-is.
+        """
+        override = validation.agent_profile
+        if override is None:
+            return self._default_profile
+        return self._default_profile.model_copy(update={
+            k: v for k, v in {
+                "provider": override.provider,
+                "model_id": override.model_id,
+                "timeout": override.timeout,
+            }.items()
+            if v is not None
+        })
 
     def type(self) -> str:
         return "agent_validation"
@@ -148,7 +169,8 @@ class ValidationSuite:
     """Core orchestrator for running validations.
 
     Takes a project, an agent profile, and an output directory. Can validate
-    a specific feature or the entire project.
+    a specific feature or the entire project. Validations within a single
+    target run concurrently up to *max_workers* at a time.
     """
 
     def __init__(
@@ -157,15 +179,16 @@ class ValidationSuite:
         agent_profile: AgentProfile,
         output_dir: str,
         runner_registry: dict[str, ValidationRunner] | None = None,
+        max_workers: int = 5,
     ) -> None:
         self._project = project
         self._agent_profile = agent_profile
         self._output_dir = output_dir
-        self._agent = create_from_profile(agent_profile)
+        self._max_workers = max_workers
 
         # Initialize registry with the built-in agent runner
         self._runners: dict[str, ValidationRunner] = {}
-        agent_runner = AgentValidationRunner(self._agent)
+        agent_runner = AgentValidationRunner(agent_profile)
         self._runners[agent_runner.type()] = agent_runner
 
         # Merge caller-provided runners (can override defaults)
@@ -209,25 +232,32 @@ class ValidationSuite:
     def validate_entries(
         self, target: str, entries: list[Validation]
     ) -> ValidationSuiteResult:
-        """Run a specific list of validation entries against a target."""
-        responses: list[ValidationResponse] = []
+        """Run a list of validation entries against a target concurrently.
 
-        # Resolve feature intent for context (use a blank one for "project" target)
+        All entries for the same target are submitted to a thread pool and
+        run in parallel (up to *max_workers*). Result order matches input order.
+        """
+        if not entries:
+            return ValidationSuiteResult(
+                target=target,
+                results=[],
+                passed=True,
+                summary=_build_summary([], []),
+            )
+
         feature_intent = self._resolve_feature_intent(target)
 
-        for entry in entries:
+        def _run_one(entry: Validation) -> ValidationResponse:
             runner = self._runners.get(entry.type.value)
             if runner is None:
-                responses.append(
-                    ValidationResponse(
-                        name=entry.name,
-                        status="fail",
-                        reason=f"No runner registered for validation type '{entry.type.value}'. "
-                        f"Registered types: {', '.join(sorted(self._runners))}",
-                    )
+                return ValidationResponse(
+                    name=entry.name,
+                    status="fail",
+                    reason=(
+                        f"No runner registered for validation type '{entry.type.value}'. "
+                        f"Registered types: {', '.join(sorted(self._runners))}"
+                    ),
                 )
-                continue
-
             intentc_dir = Path(".intentc") / self._output_dir
             intentc_dir.mkdir(parents=True, exist_ok=True)
             response_file = intentc_dir / f".intentc-val-{entry.name}-{uuid.uuid4().hex[:8]}.json"
@@ -238,21 +268,29 @@ class ValidationSuite:
                 output_dir=self._output_dir,
                 response_file_path=str(response_file),
             )
-            resp = runner.run(entry, ctx)
-            responses.append(resp)
+            return runner.run(entry, ctx)
+
+        workers = min(self._max_workers, len(entries))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_run_one, entry): i for i, entry in enumerate(entries)}
+            responses: list[ValidationResponse | None] = [None] * len(entries)
+            for future in as_completed(futures):
+                idx = futures[future]
+                responses[idx] = future.result()
 
         # Determine pass/fail based on error-severity entries
         severity_map = {v.name: v.severity for v in entries}
         passed = not any(
             r.status != "pass" and severity_map.get(r.name, Severity.ERROR) == Severity.ERROR
             for r in responses
+            if r is not None
         )
 
         return ValidationSuiteResult(
             target=target,
-            results=responses,
+            results=[r for r in responses if r is not None],
             passed=passed,
-            summary=_build_summary(responses, entries),
+            summary=_build_summary([r for r in responses if r is not None], entries),
         )
 
     def _validate_assertions(self, entries: list[Validation]) -> ValidationSuiteResult:

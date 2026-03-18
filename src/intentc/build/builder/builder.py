@@ -53,11 +53,15 @@ class Builder:
         state_manager: StateManager,
         version_control: VersionControl,
         agent_profile: AgentProfile,
+        validation_profile: AgentProfile | None = None,
+        max_parallel_validations: int = 5,
     ) -> None:
         self.project = project
         self.state_manager = state_manager
         self.version_control = version_control
         self.agent_profile = agent_profile
+        self.validation_profile = validation_profile or agent_profile
+        self.max_parallel_validations = max_parallel_validations
         self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
         self._named_profiles: dict[str, AgentProfile] = {}
 
@@ -232,8 +236,9 @@ class Builder:
             step_start = datetime.now()
             suite = ValidationSuite(
                 project=self.project,
-                agent_profile=profile,
+                agent_profile=self.validation_profile,
                 output_dir=opts.output_dir,
+                max_workers=self.max_parallel_validations,
             )
             suite_result = suite.validate_feature(target)
 
@@ -359,11 +364,11 @@ class Builder:
         If target is None, validates the entire project.
         Does not modify any state.
         """
-        profile = self.agent_profile
         suite = ValidationSuite(
             project=self.project,
-            agent_profile=profile,
+            agent_profile=self.validation_profile,
             output_dir=output_dir,
+            max_workers=self.max_parallel_validations,
         )
         if target is not None:
             return suite.validate_feature(target)

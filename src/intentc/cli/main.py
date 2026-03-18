@@ -77,6 +77,8 @@ def _make_builder(
         state_manager=state_mgr,
         version_control=vcs,
         agent_profile=agent_profile,
+        validation_profile=config.default_validation_profile,
+        max_parallel_validations=config.max_parallel_validations,
     )
     return builder, resolved_output
 

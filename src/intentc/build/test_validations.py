@@ -174,12 +174,13 @@ class TestValidationRunnerInterface:
 
 class TestAgentValidationRunner:
     def test_delegates_to_agent(self, tmp_path: Path):
-        agent = MockAgent(
+        mock_agent = MockAgent(
             validation_response=ValidationResponse(
                 name="placeholder", status="pass", reason="All good"
             )
         )
-        runner = AgentValidationRunner(agent)
+        profile = _make_profile()
+        runner = AgentValidationRunner(profile)
         assert runner.type() == "agent_validation"
 
         v = _make_validation(name="my-check")
@@ -189,37 +190,86 @@ class TestAgentValidationRunner:
             output_dir=str(tmp_path),
             response_file_path=str(tmp_path / "resp.json"),
         )
-        resp = runner.run(v, ctx)
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            resp = runner.run(v, ctx)
+        finally:
+            val_mod.create_from_profile = original
 
         assert resp.status == "pass"
         assert resp.name == "my-check"
-        assert len(agent.validate_calls) == 1
+        assert len(mock_agent.validate_calls) == 1
 
     def test_agent_error_returns_failure(self, tmp_path: Path):
         """If the agent raises AgentError, the runner returns a fail response."""
         from intentc.build.agents import AgentError
 
-        agent = MockAgent()
-        runner = AgentValidationRunner(agent)
+        mock_agent = MockAgent()
 
-        # Make the agent raise on validate
         def bad_validate(ctx, v):
             raise AgentError("broken")
 
-        agent.validate = bad_validate  # type: ignore[assignment]
+        mock_agent.validate = bad_validate  # type: ignore[assignment]
 
-        v = _make_validation(name="err-check")
+        profile = _make_profile()
+        runner = AgentValidationRunner(profile)
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            v = _make_validation(name="err-check")
+            ctx = ValidationContext(
+                project_intent=ProjectIntent(name="p", body=""),
+                feature_intent=IntentFile(name="f", body=""),
+                output_dir=str(tmp_path),
+                response_file_path=str(tmp_path / "resp.json"),
+            )
+            resp = runner.run(v, ctx)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert resp.status == "fail"
+        assert resp.name == "err-check"
+        assert "Agent error" in resp.reason
+
+    def test_per_validation_profile_override(self, tmp_path: Path):
+        """A validation with agent_profile uses a merged profile."""
+        from intentc.core.types import ValidationAgentProfile
+
+        captured_profiles: list[AgentProfile] = []
+
+        def capturing_create(p: AgentProfile):
+            captured_profiles.append(p)
+            return MockAgent()
+
+        profile = _make_profile(provider="claude", model_id=None)
+        runner = AgentValidationRunner(profile)
+
+        v = _make_validation(
+            name="override-check",
+            agent_profile=ValidationAgentProfile(provider="claude", model_id="claude-opus-4-6"),
+        )
         ctx = ValidationContext(
             project_intent=ProjectIntent(name="p", body=""),
             feature_intent=IntentFile(name="f", body=""),
             output_dir=str(tmp_path),
             response_file_path=str(tmp_path / "resp.json"),
         )
-        resp = runner.run(v, ctx)
 
-        assert resp.status == "fail"
-        assert resp.name == "err-check"
-        assert "Agent error" in resp.reason
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = capturing_create
+        try:
+            runner.run(v, ctx)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert len(captured_profiles) == 1
+        assert captured_profiles[0].model_id == "claude-opus-4-6"
 
 
 # ---------------------------------------------------------------------------

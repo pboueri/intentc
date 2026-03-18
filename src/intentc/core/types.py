@@ -27,6 +27,21 @@ class Severity(str, enum.Enum):
     WARNING = "warning"
 
 
+class ValidationAgentProfile(BaseModel):
+    """Inline agent profile override for a single validation entry.
+
+    Defined here (not in build.agents) to avoid circular imports.
+    Fields merge on top of the suite's default validation profile —
+    only the fields you set are overridden.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    provider: str = "claude"
+    model_id: str | None = None
+    timeout: float = 3600.0
+
+
 class Validation(BaseModel):
     """A single validation entry within a ValidationFile."""
 
@@ -36,6 +51,7 @@ class Validation(BaseModel):
     name: str
     severity: Severity = Severity.ERROR
     args: dict[str, Any] = {}
+    agent_profile: ValidationAgentProfile | None = None
 
 
 class ValidationFile(BaseModel):

@@ -26,12 +26,19 @@ default_profile:
   provider: claude
   timeout: 3600
   retries: 3
+default_validation_profile:
+  name: default-validation
+  provider: claude
+  timeout: 3600
+  retries: 3
+  model_id: claude-sonnet-4-6   # lighter model for validations
 default_output_dir: src
+max_parallel_validations: 5
 ```
 
-If the config file is missing, the CLI uses hardcoded sensible defaults (provider: claude, output_dir: src). The config file is created by `intentc init` and can be edited manually.
+If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually.
 
-`load_config(project_root: Path) -> Config` reads the config. `Config` is a simple model with `default_profile: AgentProfile` and `default_output_dir: str`.
+`load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile`, `default_validation_profile`, `default_output_dir`, and `max_parallel_validations`. `default_validation_profile` uses a lighter model than `default_profile` to keep validations fast.
 
 ## Commands
 
@@ -43,7 +50,8 @@ Create a new intentc project in the current directory.
 2. Generate a blank project via `blank_project(name)`.
 3. Write the project to `intent/` via `write_project()`.
 4. Write a default `.intentc/config.yaml` with sensible defaults.
-5. Print a summary of created files.
+5. If no `.git` directory exists, run `git init` and make an initial commit — required for `intentc build` to create checkpoints.
+6. Print a summary of created files.
 
 **Arguments:**
 - `name` (positional, default: current directory name) — project name.
@@ -174,7 +182,11 @@ def build(target: str, force: bool, output_dir: str, profile: str):
     agent_profile = resolve_profile(profile, config)
     state_mgr = StateManager(Path("."), output_dir)
     vcs = GitVersionControl(Path(output_dir))
-    builder = Builder(project, state_mgr, vcs, agent_profile)
+    builder = Builder(
+        project, state_mgr, vcs, agent_profile,
+        validation_profile=config.default_validation_profile,
+        max_parallel_validations=config.max_parallel_validations,
+    )
     results = builder.build(BuildOptions(...))
     render_results(results)
 ```

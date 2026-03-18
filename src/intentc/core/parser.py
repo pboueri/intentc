@@ -251,15 +251,26 @@ def write_validation_file(
     data: dict[str, Any] = {"target": vf.target}
     if vf.agent_profile is not None:
         data["agent_profile"] = vf.agent_profile
-    data["validations"] = [
-        {
+    validation_entries = []
+    for v in vf.validations:
+        entry: dict = {
             "name": v.name,
             "type": v.type.value,
             "severity": v.severity.value,
             "args": v.args,
         }
-        for v in vf.validations
-    ]
+        if v.agent_profile is not None:
+            ap = v.agent_profile
+            entry["agent_profile"] = {
+                k: val for k, val in {
+                    "provider": ap.provider,
+                    "model_id": ap.model_id,
+                    "timeout": ap.timeout,
+                }.items()
+                if val is not None
+            }
+        validation_entries.append(entry)
+    data["validations"] = validation_entries
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
