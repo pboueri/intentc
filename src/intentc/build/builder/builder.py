@@ -53,15 +53,11 @@ class Builder:
         state_manager: StateManager,
         version_control: VersionControl,
         agent_profile: AgentProfile,
-        validation_profile: AgentProfile | None = None,
-        max_parallel_validations: int = 5,
     ) -> None:
         self.project = project
         self.state_manager = state_manager
         self.version_control = version_control
         self.agent_profile = agent_profile
-        self.validation_profile = validation_profile or agent_profile
-        self.max_parallel_validations = max_parallel_validations
         self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
         self._named_profiles: dict[str, AgentProfile] = {}
 
@@ -162,10 +158,8 @@ class Builder:
         now = datetime.now()
         node = self.project.features[target]
 
-        # Resolve agent profile and configure sandbox paths
+        # Resolve agent profile
         profile = self._resolve_profile(opts)
-        if profile.provider == "claude":
-            profile = self._with_sandbox_paths(profile, target, opts.output_dir)
         agent = self._create_agent(profile)
 
         # Step 1: resolve_deps
@@ -180,9 +174,8 @@ class Builder:
 
         # Step 2: build (with retries)
         step_start = datetime.now()
-        intentc_dir = Path(".intentc") / opts.output_dir
-        intentc_dir.mkdir(parents=True, exist_ok=True)
-        response_file = intentc_dir / f".intentc-build-{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
+        self.state_manager.build_response_dir.mkdir(parents=True, exist_ok=True)
+        response_file = self.state_manager.build_response_dir / f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
         ctx = BuildContext(
             intent=node.intents[0] if node.intents else IntentFile(name=target),
             validations=node.validations,
@@ -236,9 +229,8 @@ class Builder:
             step_start = datetime.now()
             suite = ValidationSuite(
                 project=self.project,
-                agent_profile=self.validation_profile,
+                agent_profile=profile,
                 output_dir=opts.output_dir,
-                max_workers=self.max_parallel_validations,
             )
             suite_result = suite.validate_feature(target)
 
@@ -292,41 +284,6 @@ class Builder:
             return self._named_profiles[opts.profile_override]
         return self.agent_profile
 
-    def _with_sandbox_paths(
-        self, profile: AgentProfile, target: str, output_dir: str
-    ) -> AgentProfile:
-        """Return a copy of *profile* with sandbox paths for *target*.
-
-        Write paths: the resolved output directory.
-        Read paths: the intent directory for the target, each of its DAG
-        ancestors, plus project.ic and implementation.ic.
-        """
-        output_path = str(Path(output_dir).resolve())
-        intentc_cache_path = str((Path(".intentc") / output_dir).resolve())
-        read_paths: list[str] = []
-
-        intent_dir = self.project.intent_dir
-        if intent_dir is not None:
-            intent_dir_resolved = intent_dir.resolve()
-            # project.ic & implementation.ic are always readable
-            project_ic = intent_dir_resolved / "project.ic"
-            if project_ic.exists():
-                read_paths.append(str(project_ic))
-            impl_ic = intent_dir_resolved / "implementation.ic"
-            if impl_ic.exists():
-                read_paths.append(str(impl_ic))
-            # Target + ancestors
-            ancestors = self.project.ancestors(target)
-            for t in sorted(ancestors | {target}):
-                target_dir = intent_dir_resolved / t
-                if target_dir.is_dir():
-                    read_paths.append(str(target_dir))
-
-        return profile.model_copy(update={
-            "sandbox_write_paths": [output_path, intentc_cache_path],
-            "sandbox_read_paths": read_paths,
-        })
-
     # ------------------------------------------------------------------
     # Clean
     # ------------------------------------------------------------------
@@ -364,11 +321,11 @@ class Builder:
         If target is None, validates the entire project.
         Does not modify any state.
         """
+        profile = self.agent_profile
         suite = ValidationSuite(
             project=self.project,
-            agent_profile=self.validation_profile,
+            agent_profile=profile,
             output_dir=output_dir,
-            max_workers=self.max_parallel_validations,
         )
         if target is not None:
             return suite.validate_feature(target)
