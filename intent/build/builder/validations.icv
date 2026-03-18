@@ -1,0 +1,74 @@
+target: build/builder
+version: 1
+validations:
+  - name: builder-module-exists
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the builder module directory exists under src/ and contains
+        the core source files for the builder package.
+
+  - name: builder-pipeline-defined
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the builder module:
+        1. Builder type with injected dependencies (project, state manager, version control, agent profile)
+        2. Build method follows the pipeline: determine build set -> dry run check -> generate ID -> resolve output dir -> build each target in topological order
+        3. Each target executes steps: resolve_deps, build, validate, checkpoint
+        4. Emits BuildStep entries with timing for each phase
+        5. Collects steps into BuildResult with total duration, generation ID, and timestamp
+        6. Checkpoint only occurs after both build and validation succeed (atomicity)
+        7. On agent errors (crash, timeout, malformed response), retries up to AgentProfile.Retries times; validation failures are NOT retried
+        8. Resolves agent profile per-target (profileOverride > builder's agentProfile)
+        9. Stops DAG walk on first failure, marks target as failed, does not roll back files
+        10. Supports dry run mode
+        11. Generation ID is a UUID shared across all targets in a single Build() invocation
+        12. Tests use mock agent and verify pipeline ordering
+      context_files: ["src/intentc/build/builder/**"]
+
+  - name: builder-clean-defined
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the builder's Clean method:
+        1. Looks up the target's last BuildResult from state manager
+        2. Creates a revert commit via version control (not a destructive rollback — linear history)
+        3. Resets target state to pending
+        4. Marks all descendants as outdated
+        5. CleanAll resets all state without modifying files
+      context_files: ["src/intentc/build/builder/**"]
+
+  - name: builder-validate-defined
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the builder's Validate method:
+        1. Constructs a ValidationSuite with the project, resolved agent profile, and output dir
+        2. Delegates entirely to the suite (ValidateFeature or ValidateProject)
+        3. Does not modify any state
+        4. Returns the ValidationSuiteResult
+      context_files: ["src/intentc/build/builder/**"]
+
+  - name: builder-invalidation-defined
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the builder's DetectOutdated method:
+        1. Walks all targets tracked by state manager with status "built"
+        2. Compares BuildResult.timestamp against modification times of .ic and .icv files
+        3. Returns list of outdated targets without modifying state
+      context_files: ["src/intentc/build/builder/**"]
+
+  - name: builder-tests-pass
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Run `cd src && uv run pytest intentc/build/builder/ -v` and verify all tests pass
+        with exit code 0.

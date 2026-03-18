@@ -1,0 +1,106 @@
+---
+name: validations
+version: 1
+depends_on: [core/specifications, core/project, build/agents]
+tags: [build, validation]
+---
+
+# Validations
+
+Validations verify that generated code meets the intent. They are a first-class concept that can be run independently of the build pipeline — against a specific feature, or across the entire project. The builder uses validations as a post-build step, but validations do not depend on or assume a build just happened.
+
+## Validation Entry
+
+Each entry in the `validations` list of a .icv file defines a single check.
+
+- `name` (string) — unique identifier within the .icv file
+- `type` (string) — selects which runner evaluates this validation. Defaults to `agent_validation`. This is the extensibility point for future validation types.
+- `severity` (enum: `error`, `warning`) — `error` means failure, `warning` is advisory. Default: `error`.
+- `args` (map) — arguments passed to the runner for this type
+- `agent_profile` (map, optional) — per-validation agent profile override. Fields: `provider`, `model_id`, `timeout`. Merged on top of the suite's default validation profile — only fields present are overridden.
+
+### args for `agent_validation`
+
+- `rubric` (string, required) — natural language description of what to verify. The rubric should be specific enough that the agent can make a clear pass/fail determination by inspecting the generated code, running commands, or any other means available to it.
+- `context_files` (list of strings, optional) — file globs relative to the output directory that the agent should focus on when evaluating this validation. When provided, these are included in the prompt to narrow the agent's attention.
+
+## ValidationResponse
+
+The result of evaluating a single validation, regardless of which runner produced it.
+
+- `name` (string) — the validation name
+- `status` (string) — `"pass"` or `"fail"`
+- `reason` (string) — explanation of the result
+
+For `agent_validation`, the agent writes this as a response file per the mechanism defined in [build/agents](../agents/agents.ic).
+
+## ValidationSuiteResult
+
+The result of running a suite of validations. Returned by the ValidationSuite after all validations have been evaluated.
+
+- `target` (string) — the feature path that was validated, or `"project"` for project-level assertions
+- `results` (list of ValidationResponse) — one per validation entry, in order
+- `passed` (boolean) — true if no `severity: error` validations failed
+- `summary` (string) — human-readable overview (e.g. "5/6 passed, 1 error, 0 warnings")
+
+## ValidationSuite
+
+The ValidationSuite is the core orchestrator for running validations. It takes a project, an agent profile, an output directory, and runs validations concurrently within each target.
+
+```
+ValidationSuite:
+    project: Project
+    agentProfile: AgentProfile      # default validation profile (Sonnet by default)
+    outputDir: string
+    runnerRegistry: map[string, ValidationRunner]
+    maxWorkers: int                 # max concurrent validations per target (default: 5)
+```
+
+The suite receives an AgentProfile (the default validation profile, typically a lighter/faster model than the build profile). It passes this to `AgentValidationRunner`, which creates agents on demand per validation call, merging any per-validation `agent_profile` override.
+
+Profile resolution order for each validation: per-validation `agent_profile` override > suite's agentProfile > config default.
+
+### Methods
+
+- `ValidateFeature(feature: string) -> ValidationSuiteResult` — Loads the .icv files for the given feature from the project, runs each validation entry through the appropriate runner, collects ValidationResponses, and returns a ValidationSuiteResult.
+- `ValidateProject() -> list of ValidationSuiteResult` — Runs ValidateFeature for every feature in the project (in topological order), plus project-level assertions. Returns one result per feature/assertion set.
+- `ValidateEntries(target: string, entries: list of Validation) -> ValidationSuiteResult` — Lower-level method that runs a specific list of validation entries against a target. Used by ValidateFeature and available for the builder to pass a subset.
+
+### Validation Lifecycle
+
+1. The suite receives a feature path (or iterates all features for project-wide validation).
+2. It looks up the feature's .icv files from the parsed Project.
+3. All validation entries for the target are submitted concurrently to a thread pool (up to `maxWorkers`). For each entry:
+   - The runner for the entry's `type` is looked up in the registry.
+   - The runner is invoked with the validation entry and context (project intent, output dir).
+   - The runner returns a ValidationResponse. Result order matches input order.
+4. The suite collects all responses into a ValidationSuiteResult.
+5. `passed` is false if any `severity: error` validation has `status: "fail"`.
+
+## ValidationRunner
+
+The runner interface. Each runner handles one validation type.
+
+```
+interface ValidationRunner:
+    Run(validation: Validation, ctx: ValidationContext) -> ValidationResponse, error
+    Type() -> string
+```
+
+### ValidationContext
+
+What the runner needs to evaluate a validation. Constructed by the suite for each invocation.
+
+- `ProjectIntent` (Intent) — the project-level intent
+- `Implementation` (Implementation) — the implementation intent
+- `FeatureIntent` (Intent) — the target feature's intent
+- `OutputDir` (string) — the output directory to inspect
+- `ResponseFilePath` (string) — path for the agent to write its response (for agent-based runners)
+
+### AgentValidationRunner
+
+The built-in runner for `type: agent_validation`. Accepts a default AgentProfile and creates a fresh agent per validation call, merging any per-validation `agent_profile` override first. Constructs a prompt from the rubric and context, invokes the agent's Validate method, reads the response file, and returns the parsed ValidationResponse. If the response file is missing or malformed, returns a failure with a descriptive error.
+
+## Extensibility
+
+The `type` field on each validation entry selects a runner. For now, only `agent_validation` is implemented. Future types can be registered on the suite's runner registry without modifying the core validation loop. If no runner is found for a type, the validation fails with an error indicating the unknown type.

@@ -1,0 +1,194 @@
+---
+name: cli
+version: 1
+depends_on:
+  - core/*
+  - build/agents
+  - build/state
+  - build/validations
+  - build/builder
+tags: [interface, cli]
+---
+
+# CLI
+
+The CLI is the primary interface for intentc. It is a thin wrapper over the core workflows, wiring dependencies at the command boundary and deferring all logic to the underlying modules. Each command constructs its own agent, state manager, version control, and builder — no shared global state.
+
+Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/) for terminal output. The entry point is `intentc.cli.main:app` as declared in pyproject.toml.
+
+## Project Config
+
+The CLI needs to resolve a default agent profile and output directory without requiring flags on every invocation. These defaults live in an optional config file at `.intentc/config.yaml`:
+
+```yaml
+default_profile:
+  name: default
+  provider: claude
+  timeout: 3600
+  retries: 3
+default_validation_profile:
+  name: default-validation
+  provider: claude
+  timeout: 3600
+  retries: 3
+  model_id: claude-sonnet-4-6   # lighter model for validations
+default_output_dir: src
+max_parallel_validations: 5
+```
+
+If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually.
+
+`load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile`, `default_validation_profile`, `default_output_dir`, and `max_parallel_validations`. `default_validation_profile` uses a lighter model than `default_profile` to keep validations fast.
+
+## Commands
+
+### `intentc init [name]`
+
+Create a new intentc project in the current directory.
+
+1. If `intent/project.ic` already exists, abort with an error — do not overwrite.
+2. Generate a blank project via `blank_project(name)`.
+3. Write the project to `intent/` via `write_project()`.
+4. Write a default `.intentc/config.yaml` with sensible defaults.
+5. If no `.git` directory exists, run `git init` and make an initial commit — required for `intentc build` to create checkpoints.
+6. Print a summary of created files.
+
+**Arguments:**
+- `name` (positional, default: current directory name) — project name.
+
+### `intentc build [target]`
+
+Build features using the configured agent.
+
+1. Load the project via `load_project(intent_dir)`.
+2. Load config via `load_config()`.
+3. Resolve agent profile: `--profile` flag > config default.
+4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
+5. Call `Builder.Build(opts)`.
+6. Print results: for each target, show status, duration, and step summaries.
+7. Exit with code 1 if any target failed.
+
+**Arguments:**
+- `target` (positional, optional) — specific feature path to build. If omitted, builds all pending/outdated targets.
+
+**Options:**
+- `--force / -f` — rebuild even if already built.
+- `--dry-run / -n` — print the build plan without executing.
+- `--output-dir / -o` — override the output directory (default from config).
+- `--profile / -p` — agent profile name override.
+
+### `intentc validate [target]`
+
+Run validations independently of the build pipeline.
+
+1. Load the project and config.
+2. Resolve agent profile.
+3. Construct the `Builder` and call `Builder.Validate(target, output_dir)`.
+4. Print results: for each validation, show name, status, and reason.
+5. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
+6. Exit with code 1 if any error-severity validation failed.
+
+**Arguments:**
+- `target` (positional, optional) — specific feature to validate. If omitted, validates the entire project.
+
+**Options:**
+- `--output-dir / -o` — override the output directory.
+- `--profile / -p` — agent profile override.
+
+### `intentc clean [target]`
+
+Revert a target's generated code and reset its state.
+
+1. Load the project and config.
+2. If `--all` is passed, call `Builder.CleanAll(output_dir)`.
+3. Otherwise, call `Builder.Clean(target, output_dir)` for the specified target.
+4. Print what was cleaned.
+
+**Arguments:**
+- `target` (positional, required unless `--all`) — feature path to clean.
+
+**Options:**
+- `--all` — reset all state for the output directory.
+- `--output-dir / -o` — override the output directory.
+
+### `intentc plan <target>`
+
+Enter interactive planning mode with the agent for a specific feature.
+
+1. Load the project and config.
+2. Resolve agent profile.
+3. Construct a `BuildContext` for the target.
+4. Call `agent.Plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
+
+**Arguments:**
+- `target` (positional, required) — feature path to plan.
+
+**Options:**
+- `--output-dir / -o` — override the output directory.
+- `--profile / -p` — agent profile override.
+
+### `intentc status`
+
+Show the build state for all tracked targets.
+
+1. Load config.
+2. Construct a `StateManager` for the output directory.
+3. Call `list_targets()` and display a table with columns: target, status, last build timestamp, generation ID.
+4. If `--outdated` is passed, also run `Builder.DetectOutdated()` and annotate stale targets.
+
+**Options:**
+- `--output-dir / -o` — override the output directory.
+- `--outdated` — check for targets whose source files have changed since last build.
+
+### `intentc diff <target>`
+
+Show the diff of what was generated for a target.
+
+1. Load config and state manager.
+2. Look up the target's last `BuildResult` to get the `commit_id`.
+3. Use `GitVersionControl.Diff()` to produce the diff from the commit's parent to the commit.
+4. Print the diff to stdout, piping through a pager if the terminal supports it.
+
+**Arguments:**
+- `target` (positional, required) — feature path.
+
+**Options:**
+- `--output-dir / -o` — override the output directory.
+
+## Output Formatting
+
+All commands use Rich for terminal output:
+- **Tables** for status and validation results.
+- **Panels** for build summaries and errors.
+- **Progress bars** for multi-target builds (if not in dry-run mode).
+- **Syntax-highlighted diffs** for the diff command.
+
+Errors are printed to stderr with file paths and actionable descriptions per the implementation conventions.
+
+## Exit Codes
+
+- `0` — success.
+- `1` — build or validation failure (expected failures).
+- `2` — usage error (bad arguments, missing project, config errors).
+
+## Wiring Pattern
+
+Each command follows the same wiring pattern, per the implementation convention of dependency injection at the call site:
+
+```python
+def build(target: str, force: bool, output_dir: str, profile: str):
+    project = load_project(Path("intent"))
+    config = load_config(Path("."))
+    agent_profile = resolve_profile(profile, config)
+    state_mgr = StateManager(Path("."), output_dir)
+    vcs = GitVersionControl(Path(output_dir))
+    builder = Builder(
+        project, state_mgr, vcs, agent_profile,
+        validation_profile=config.default_validation_profile,
+        max_parallel_validations=config.max_parallel_validations,
+    )
+    results = builder.build(BuildOptions(...))
+    render_results(results)
+```
+
+No shared state between commands. Each invocation is self-contained.

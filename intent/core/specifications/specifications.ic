@@ -1,0 +1,48 @@
+---
+name: core
+version: 1
+tags: [foundation]
+---
+
+# Core Data Structures
+
+This file defines the foundation file types and their schemas and intents within intentc, as well as key data fields for each and the resulting representation in memory for use within the system. Each file should be parseable from on disk, and writable back to disk. 
+
+## Intent Files
+
+Files that end with `.ic` are intent files meant to define features. They are defined in markdown with yaml front matter delimited by `---` blocks that contain metadata
+
+The metadata fields contain the following:
+- `name` (string) - Feature identifier, matches directory path.
+- `depends_on` (list of strings) - Dependency names that are the features needed to be completed before this one runs
+- `tags` (optional list of strings) - Categorization tags.
+- `authors` (optional list of strings) -- who the authors of the intent are
+
+The text is content that can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like ../../design_system/* that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build. 
+
+## Validation Files
+
+Validation files are `.icv` files that can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails.
+
+### Top Level
+- `target` (string) — feature this validates, using its path like `module/feature`
+- `agent_profile` (string, optional) — agent profile to use for evaluating this file's validations
+- `validations` (list of Validation) — the validation entries
+
+### Validation Level
+- `name` (string) — unique identifier for the validation within this file
+- `type` (string) — selects the runner that evaluates this validation. Defaults to `agent_validation`. Extensible via a runner registry.
+- `severity` (enum: `error`, `warning`) — `error` blocks the build, `warning` is advisory. Default: `error`.
+- `args` (map) — arguments passed to the runner for this type. For `agent_validation`, the key arg is `rubric` (a natural language description of what to verify).
+
+The full validation lifecycle and extensibility model are defined in [build/validations](../../build/validations/validations.ic).
+
+## Project Intent
+
+The project intent is guiding document for the project meant for cohesion. It is a special document at `intent/project.ic` and marked as such -- a singleton. 
+
+Aside from that it follows the same `.ic` spec but cannot have a `depends_on` flag. 
+
+## Implementation
+
+The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run. 

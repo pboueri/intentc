@@ -1,0 +1,9 @@
+---
+name: todo-app
+tags: [example]
+---
+
+# Todo App
+
+A minimal command-line todo list application. Tasks can be added, listed, and
+marked as done. Data is persisted to a local JSON file.

@@ -1,0 +1,34 @@
+---
+name: dag
+version: 1
+depends_on: [core/specifications]
+---
+
+
+# Project Structure
+
+An intentc project has a well defined structure that is parsed into a core `ProjectIntent` object that is made of up the parsed specifications. It has a well defined DAG of all the features and intents, and provides facilities to get the parents or descendents of a particular feature. 
+
+The project structure is below
+
+```
+ intent/
+    project.ic             # What this project is and why
+    implementation.ic      # How it's built (language, libs, conventions, infrastructure)
+    assertions/
+      *.icv                # A project level assertion that is not tied to any particular feature. 
+    {module}/              # Can be arbitrarily nested
+       {feature}/
+        *.ic               # Feature intent(s) -- can be dependent on other feature intents by referencing {module / feature}
+        *.icv              # Feature validations -- different types and different conventions. Think of them as tests or validation to be run after the feature is completed and iterated on until they pass. 
+        *.*                # Any supporitng materials referenced in the intent files via relative local paths (can reference files elsewhere)
+```
+
+
+## Requirements
+
+1. The intentc project should be able to be read from its entirety into working memory
+2. It should be able to be written to disk in a new location with minimal modification including all the dependent files required from the intent files
+3. It should accumulate all the parsing errors and throw them at once instead of throw just one
+4. There should be a "blank" project that can be intiiatlized and written to disk with minimal files and a minimal feature.
+5. There should be helfpul error messages for malformed projects or the like so users are able to take action and rectify things

@@ -1,0 +1,71 @@
+target: differencing
+version: 1
+validations:
+  - name: agent-difference-method
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the Agent interface has been extended with a Difference method:
+        1. The Agent abstract interface defines Difference(ctx: DifferencingContext) -> DifferencingResponse, error
+        2. DifferencingContext type is defined with fields: OutputDirA, OutputDirB, ProjectIntent, ResponseFilePath
+        3. DifferencingResponse type is defined with fields: status (equivalent/divergent), dimensions (list of DimensionResult), summary (string)
+        4. DimensionResult type is defined with fields: name (string), status (pass/fail), rationale (string)
+        5. CLIAgent implements Difference by rendering the difference prompt and reading the response file
+        6. ClaudeAgent inherits the Difference implementation from CLIAgent
+        7. MockAgent records Difference calls and returns a configurable DifferencingResponse
+        All response types should be serializable to/from JSON for the response file mechanism.
+      context_files: ["src/intentc/build/agents.*"]
+
+  - name: differencing-prompt-rendered
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the difference prompt template exists at
+        intent/differencing/prompts/difference.prompt and can be rendered
+        with the expected template variables: {project}, {implementation},
+        {output_dir_a}, {output_dir_b}, {response_file}. The rendered prompt
+        should instruct the agent to evaluate the five standard dimensions
+        (public_api, test_suite, runtime_behavior, dependency_compatibility,
+        configuration_compatibility) and write a DifferencingResponse JSON
+        to the response file.
+      context_files: ["intent/differencing/prompts/**"]
+
+  - name: differencing-workflow-implemented
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify a differencing workflow function exists that:
+        1. Accepts two output directory paths, a Project, and an AgentProfile
+        2. Constructs a DifferencingContext with the paths, project intent, and a response file path
+        3. Creates an agent via CreateFromProfile and calls agent.Difference(ctx)
+        4. Reads and parses the DifferencingResponse JSON from the response file
+        5. Returns the parsed DifferencingResponse
+        6. Treats a missing or malformed response file as a failure with a descriptive error
+        7. Does not modify any build state — differencing is a pure evaluation
+      context_files: ["src/intentc/differencing/**"]
+
+  - name: differencing-response-parsing
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate that DifferencingResponse parsing works correctly:
+        1. A valid JSON response with status "equivalent" and all dimensions passing
+           is parsed and the overall status is "equivalent"
+        2. A valid JSON response with any dimension having status "fail" results in
+           overall status "divergent"
+        3. A missing response file produces a descriptive error
+        4. A malformed JSON response file produces a descriptive error
+        5. Unknown fields in the response are tolerated (forward compatibility)
+      context_files: ["src/intentc/differencing/**"]
+
+  - name: differencing-tests-pass
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Run `cd src && uv run pytest intentc/differencing/ -v` and verify all tests
+        pass with exit code 0.

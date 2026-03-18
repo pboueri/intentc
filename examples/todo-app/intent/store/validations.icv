@@ -1,0 +1,38 @@
+target: store
+version: 1
+validations:
+  - name: store-importable
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        You are already in the output directory (e.g. `src/`). Run:
+        ```
+        python -c "from todo_app.store import TaskStore"
+        ```
+        Verify it exits with code 0.
+
+  - name: store-roundtrip
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        You are already in the output directory (e.g. `src/`). Run:
+        ```
+        python -c "
+        import tempfile, os
+        from todo_app.models import create_task
+        from todo_app.store import TaskStore
+        p = os.path.join(tempfile.mkdtemp(), 'tasks.json')
+        s = TaskStore(p)
+        t = create_task('hello')
+        s.add(t)
+        assert len(s.list_all()) == 1
+        assert s.list_all()[0].title == 'hello'
+        assert s.mark_done(t.id) is True
+        assert s.list_all()[0].done is True
+        assert s.mark_done('nonexistent') is False
+        print('OK')
+        "
+        ```
+        Verify it prints OK and exits with code 0.

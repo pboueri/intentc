@@ -1,0 +1,56 @@
+---
+name: intentc
+version: 1
+tags: [meta, project]
+---
+
+# intentc -- A Compiler of Intent
+
+intentc is a build system that reads written, interdependent intents and generates working code using AI Agents.
+
+Developers incrementally define files describing *what* they want, and intentc orchestrates AI agents to produce *how* as a reproducible artifact.
+
+## Philosophy
+
+The goal of this project is to create a build system that can reproducibly, and incrementally, generate code and other artifacts from Intent. The user is responsible for clearly defining what it is they want with sufficient detail that it can be handed off to an agent. As the project progresses in time, new intents are added, and old intents are updated, each triggering a new build that updates the code base.
+
+The aspirational property of the system is **functional equivalence**: if the project is well defined, all generated code should be deletable and a functionally equivalent codebase can be regenerated purely from the intent files. If this holds, the intent files *become* the source code and the developers have raised the level of abstraction. Achieving this property is a long-term goal that will be narrowed in on over time through tighter validation and better agent tooling.
+
+This project supports the above by providing the tooling, tracking, and extensibility needed to achieve this in a disciplined manner. Rather than prompting coding agents ad hoc and relying on convention, this project enforces reproducibility with its file layout, emphasis on validation, ease of generation and reproducible builds, as well as other tooling to encourage defining all that is needed in the intent files.
+
+- **Specs are the source of truth.** Intent files (.ic) and validation files (.icv) are human-authored, version-controlled documents that capture product intent independently of implementation.
+- **Validation constrains generation.** Validations are co-authored with intents and guide the agent toward correct output. Tighter constraints produce more reproducible results.
+- **Agents are pluggable and customizable.** Any CLI tool that accepts prompts can be a code generation agent. The agent interface is minimal and extensible, future proofing and specializing the build system to the user's needs.
+- **Managed State.** Specs and generated files are managed with version control, with a clear separated history of intent changes versus generated changes.
+- **Observable.** Builds are logged and have clear steps and summaries from the agents to allow a developer to understand what happened in the layer below. Updating intents requires an understanding of the compilation step and modifying to get the desired outcome.
+- **Isolated.** The build is isolated from the rest of the system so that it can only access the current generated artifacts, and the relevant intents without any future intents or alternative implementations. When Claude Code is the agent, isolation is enforced at the OS level via Claude Code's built-in sandbox mode, which restricts filesystem writes to the output directory and blocks unauthorized network access.
+
+## Project Structure
+
+The project file layout and DAG structure are defined in [core/project](core/project/project.ic).
+
+## Core Workflows
+
+The core workflows of the project are defined below with the intended steps. This is not to rule out other workflows, but meant as an anchoring guide for the project. The specific CLI surface will be defined separately.
+
+### Initialize a Project
+
+A user comes to a new folder to start a project. The project structure is generated such that they can begin defining their project. The initial focus is on the core project.ic and accompanying implementation.ic, as well as initial features. The user then builds iteratively from there.
+
+### Iteratively add a new feature, with refinement
+
+With an existing project, the user creates a new feature as a bite-sized improvement in functionality. They define what is needed in the .ic and .icv files, then run a build for that feature. If help is needed in defining the feature, the user can enter a planning mode where the agent helps refine the intent in context by asking the right questions.
+
+The .icv validations are automatic and iterated on by the agent until they pass. Then there is manual review, where the user looks at the code diffs, the runtime, or any other validation mechanism to see if the intended effect occurred. If not, the user cleans the build for that feature, tweaks what is needed, then runs build again until the outcome is satisfactory.
+
+### Refactor existing features
+
+Sometimes down the line in a project, a user realizes they made a poor assumption in some feature that's upstream of where the leaf nodes are. They go back and tweak the assumptions there, optionally using the planning mode, then rebuild. This invalidates all downstream features, prunes them using the state history, then regenerates the current feature. The user iterates to their liking then builds the full project down to the leaf nodes.
+
+### Validate the project
+
+The user wants to regularly test their project is working as intended. Validation looks up all the .icv files and validates each one sequentially, similar to a test suite. These .icv files need not be confined to a particular feature and can be project or system level tests as well. A report is generated with status of passing and not passing that the user can inspect.
+
+### Rebuild the project to a new target
+
+Sometimes new agents, new languages, or new frameworks come along that make a user want to rebuild the project from scratch to a new target. By updating implementation.ic, config, or other files, the user can build to a new output directory under the new paradigm. Combined with the .icv validations, the user can verify that the new target is functionally equivalent to the original.

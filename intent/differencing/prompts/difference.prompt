@@ -1,0 +1,91 @@
+### Context
+You are working in the context of the following project {project} with the following implementation approach {implementation}
+
+### Task
+You are evaluating whether two builds of this project are **functionally equivalent**. Functional equivalence means both builds behave the same from the perspective of a user or consumer of the software, regardless of internal implementation differences.
+
+- **Reference build (A):** `{output_dir_a}`
+- **Candidate build (B):** `{output_dir_b}`
+
+### How to Evaluate
+
+You must actively investigate both directories. Do not rely on superficial textual diffs — two builds can look completely different and still be equivalent, or look nearly identical and be divergent. Use every tool at your disposal.
+
+Evaluate the following dimensions in order:
+
+#### 1. Public API (`public_api`)
+Compare the public interfaces exposed by both builds. This includes module exports, function/method signatures, class hierarchies, CLI commands, API endpoints, or whatever constitutes the public contract.
+
+- Read source files in both directories and identify the public surface
+- Structural differences (different file layout, different internal names) are acceptable if the external contract is the same
+- Look for missing functions, changed signatures, removed exports, or altered type contracts
+
+#### 2. Test Suite (`test_suite`)
+Attempt to cross-run tests between the builds.
+
+- Identify test files in both builds
+- Run build A's tests against build B's code, and vice versa
+- If tests are tightly coupled to internals and cannot be cross-run, note this and compare test coverage and intent instead
+- Report which tests pass, which fail, and why
+
+#### 3. Runtime Behavior (`runtime_behavior`)
+Exercise the software through its primary interface and compare outputs.
+
+- If it's a CLI tool, run the same commands against both builds and compare output
+- If it's a library, import key modules and call key functions with the same inputs
+- If it has an API, make the same requests and compare responses
+- Use representative inputs that exercise the core functionality
+- This is the most important dimension — if the software does the same thing, it is equivalent
+
+#### 4. Dependency Compatibility (`dependency_compatibility`)
+Compare declared dependencies.
+
+- Check requirements files, pyproject.toml, package.json, go.mod, or equivalent
+- Flag significant version mismatches or missing dependencies that could affect behavior
+- Minor version differences in pinned dependencies are acceptable
+
+#### 5. Configuration Compatibility (`configuration_compatibility`)
+Compare the configuration surface.
+
+- Check that both builds respect the same config files, env vars, and defaults
+- Verify default values are compatible
+
+### Decision Rule
+The overall status is `"equivalent"` only if ALL evaluated dimensions pass. If ANY dimension fails, the status is `"divergent"`. If a dimension cannot be evaluated (e.g., no tests exist), note it as passed with rationale explaining why it was skipped.
+
+### Response
+When you are done, write a JSON file to `{response_file}` with the following structure:
+```json
+{
+  "status": "equivalent" or "divergent",
+  "dimensions": [
+    {
+      "name": "public_api",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and the result"
+    },
+    {
+      "name": "test_suite",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and the result"
+    },
+    {
+      "name": "runtime_behavior",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and the result"
+    },
+    {
+      "name": "dependency_compatibility",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and the result"
+    },
+    {
+      "name": "configuration_compatibility",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and the result"
+    }
+  ],
+  "summary": "overall human-readable assessment of equivalence or divergence, highlighting the key findings"
+}
+```
+You MUST write this file before you finish.

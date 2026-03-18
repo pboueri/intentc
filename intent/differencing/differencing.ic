@@ -1,0 +1,82 @@
+---
+name: differencing
+version: 1
+depends_on:
+  - core/*
+  - build/agents
+  - build/state
+tags: [equivalence, validation]
+---
+
+# Differencing
+
+Differencing answers the core question of intentc's philosophy: are two builds **functionally equivalent**? Given two output directories produced from the same intent, a differencing evaluation determines whether they behave the same way from the perspective of a user or consumer of the software — regardless of how differently the code is structured, named, or organized internally.
+
+This is distinct from a textual diff. Two codebases can have entirely different implementations and still be functionally equivalent. Conversely, a one-line change can break equivalence. The evaluation requires judgment, which is why it is agent-driven.
+
+## When Differencing Is Used
+
+- **Rebuild verification** — After a full rebuild to a new output directory, differencing confirms the new build is equivalent to the old one.
+- **Agent comparison** — Building the same intent with different agents (e.g., Claude vs Codex) and verifying the outputs are interchangeable.
+- **Refactor confidence** — After modifying upstream intents and rebuilding, differencing validates that the functional surface hasn't regressed.
+
+## Agent Integration
+
+Differencing is a first-class agent capability. The Agent interface is extended with a `Difference` method that accepts a `DifferencingContext` and returns a `DifferencingResponse`. The context and response types are defined in [build/agents](../build/agents/agents.ic) alongside the other agent types.
+
+The `DifferencingContext` carries everything the agent needs:
+
+- `OutputDirA` (string) — path to the reference output directory
+- `OutputDirB` (string) — path to the candidate output directory
+- `ProjectIntent` (Intent) — the project-level intent for context
+- `ResponseFilePath` (string) — path where the agent writes the structured response
+
+## DifferencingResponse
+
+The structured result written by the agent to the response file (type defined in agents).
+
+- `status` (string) — `"equivalent"` or `"divergent"`
+- `dimensions` (list of DimensionResult) — individual evaluation axes
+- `summary` (string) — human-readable overall assessment explaining the verdict
+
+### DimensionResult
+
+Each dimension is an independent axis of comparison. The agent evaluates as many as are applicable to the project.
+
+- `name` (string) — identifier for this dimension (e.g. `"public_api"`, `"test_suite"`, `"runtime_behavior"`)
+- `status` (string) — `"pass"` or `"fail"`
+- `rationale` (string) — explanation of what was compared and why it passed or failed
+
+### Standard Dimensions
+
+The agent should evaluate these dimensions in order, stopping early if a critical dimension fails:
+
+1. **`public_api`** — Do both builds expose the same public interfaces? Compare module exports, function signatures, class hierarchies, CLI commands, API endpoints, or whatever constitutes the public surface. Structural differences (file layout, naming) are acceptable as long as the contract is the same.
+
+2. **`test_suite`** — Can the test suite from build A pass against build B, and vice versa? The agent should attempt to run any existing tests from each build against the other's code. If tests are tightly coupled to internal structure and cannot be cross-run, the agent should note this and evaluate based on test coverage and intent rather than literal cross-execution.
+
+3. **`runtime_behavior`** — Does the software behave the same when used? The agent should exercise the software through its primary interface (CLI invocations, API calls, imports) with representative inputs and compare outputs. This is the most important dimension — if the software does the same thing, it is equivalent regardless of how it is built.
+
+4. **`dependency_compatibility`** — Do both builds declare compatible dependencies? Significant version mismatches or missing dependencies that affect runtime behavior are divergences. Minor version differences in pinned dependencies are acceptable.
+
+5. **`configuration_compatibility`** — Do both builds respect the same configuration surface? Config files, environment variables, and default values should be compatible.
+
+The overall `status` is `"equivalent"` only if all evaluated dimensions pass. If any dimension fails, the status is `"divergent"`.
+
+## Evaluation Prompt
+
+The agent prompt for differencing is stored at [prompts/difference.prompt](prompts/difference.prompt). It uses the following template variables:
+
+- `{project}` — the project-level intent (project.ic content)
+- `{implementation}` — the implementation-level intent
+- `{output_dir_a}` — path to the reference output directory
+- `{output_dir_b}` — path to the candidate output directory
+- `{response_file}` — path where the agent must write the DifferencingResponse JSON
+
+## Workflow
+
+1. The caller constructs a `DifferencingContext` with both output directories, the project intent, and a response file path.
+2. The caller creates an agent via `CreateFromProfile` and calls `agent.Difference(ctx)`.
+3. The agent renders the difference prompt template with the context, then actively investigates both directories — reading code, examining interfaces, running tests, and exercising the software.
+4. The agent writes a `DifferencingResponse` to the response file.
+5. The caller reads and returns the parsed response. No build state is modified — differencing is a pure evaluation.

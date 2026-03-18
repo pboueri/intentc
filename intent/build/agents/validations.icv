@@ -1,0 +1,34 @@
+target: build/agents
+version: 1
+validations:
+  - name: agent-module-exists
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that the agent module directory exists under src/ and contains
+        the core source files for the agent package.
+
+  - name: agent-interface-defined
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the agent module defines:
+        1. Agent interface with Build, Validate, Difference, Plan, GetName, GetType methods
+        2. BuildContext type with all specified fields including ResponseFilePath
+        3. DifferencingContext type with fields: OutputDirA, OutputDirB, ProjectIntent, ResponseFilePath
+        4. CLIAgent base implementation that constructs prompts and reads response files
+        5. ClaudeAgent that extends CLIAgent with Claude-specific flags (--dangerously-skip-permissions, --output-format json, --model)
+        6. CreateFromProfile factory function
+        7. MockAgent for testing (records all calls including Difference, returns configurable responses)
+        8. BuildResponse, ValidationResponse, and DifferencingResponse types
+      context_files: ["src/agent/**"]
+
+  - name: agent-tests-pass
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Run `cd src && uv run pytest agent/ -v` and verify all tests pass
+        with exit code 0.

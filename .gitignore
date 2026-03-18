@@ -7,7 +7,6 @@
 *.dll
 *.so
 *.dylib
-intentc
 
 
 # Test binary, built with `go test -c`
@@ -30,5 +29,32 @@ go.work.sum
 .env
 
 # Build directories created by intentc
-build-*
 **/.intentc/state
+.intentc*
+
+.DS_Store
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+./build/
+*.whl
+.eggs/
+*.pyo
+.python-version
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
