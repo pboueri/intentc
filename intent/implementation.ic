@@ -18,6 +18,7 @@ cli_framework: typer
 data_modeling: pydantic
 yaml_library: PyYAML
 serialization: JSON (stdlib), YAML (PyYAML)
+storage: sqlite3 (stdlib) — pluggable via StorageBackend ABC; SQLite is the first backend, more can follow
 version_control: git (required, shells out via subprocess)
 ```
 
@@ -47,6 +48,6 @@ When a CLI command or other interface is created, it is thin, deferring to a wor
 
 Errors include file paths, field names, and actionable descriptions. A user with a malformed spec file should understand exactly what's wrong and where.
 
-### State
+### State & Storage
 
-State files use versioned JSON schemas. Deserialization tolerates unknown fields for forward compatibility. Missing state files return sensible defaults, never errors.
+State is persisted via a `StorageBackend` interface. The default implementation uses SQLite (Python's built-in `sqlite3` module — no external dependencies). The backend interface is designed to be pluggable so that other databases (PostgreSQL, DynamoDB, etc.) can be added by implementing the ABC. Missing databases are created lazily on first write with sensible defaults.

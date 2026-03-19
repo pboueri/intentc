@@ -67,6 +67,17 @@ If the response file is missing or contains invalid JSON, the invocation is trea
 
 For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
 
+### Response File Lifecycle
+
+Response files are **temporary staging artifacts**, not permanent storage. The lifecycle is:
+1. The caller generates a unique response file path and passes it to the agent via `BuildContext.response_file_path`.
+2. The agent writes structured JSON to this path.
+3. The caller reads the response file and parses it.
+4. The raw JSON is stored permanently in the database via `StorageBackend.save_agent_response(...)`.
+5. The response file is **deleted** from disk.
+
+Agent responses are queried from the database, not from disk. The `agent_responses` table in the storage backend is the authoritative record.
+
 ### BuildResponse
 
 Written by the agent after a build invocation.

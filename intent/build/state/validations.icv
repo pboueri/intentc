@@ -1,5 +1,5 @@
 target: build/state
-version: 1
+version: 2
 validations:
   - name: state-types-and-interfaces
     type: agent_validation
@@ -9,7 +9,7 @@ validations:
         Verify the state module defines:
         1. TargetStatus enum (pending, built, failed, outdated)
         2. BuildStep and BuildResult types with all specified fields including CommitID
-        3. StateManager with all specified methods
+        3. StateManager with all specified methods, accepting an optional StorageBackend
         4. VersionControl abstract interface with Checkpoint, Diff, Restore, Log
         5. GitVersionControl concrete implementation
 
@@ -18,10 +18,11 @@ validations:
     severity: error
     args:
       rubric: |
-        Verify tests demonstrate a full state roundtrip: create a StateManager,
-        save a BuildResult for a target, reload state from disk, and confirm
-        all fields (status, steps, commit ID, timestamp) survive the roundtrip.
-        Missing state files should return defaults, not errors.
+        Verify tests demonstrate a full state roundtrip: create a StateManager
+        (backed by SQLiteBackend), save a BuildResult for a target, create a new
+        StateManager from the same database, and confirm all fields (status, steps,
+        commit ID, timestamp) survive the roundtrip. Missing databases should
+        return defaults, not errors.
 
   - name: dag-aware-operations
     type: agent_validation
@@ -32,11 +33,21 @@ validations:
         DAG and sets all downstream targets to outdated, and that Reset clears
         state for a single target without affecting others.
 
-  - name: build-log-append-only
+  - name: build-history-append-only
     type: agent_validation
     severity: error
     args:
       rubric: |
-        Verify tests demonstrate the build log at build-log.jsonl is append-only:
-        multiple SaveBuildResult calls produce multiple lines, each a valid JSON
-        object representing a BuildResult. Previous entries are never overwritten.
+        Verify tests demonstrate that build results are append-only in the database:
+        multiple save_build_result calls produce multiple rows in build_results,
+        each queryable via get_build_history. Previous entries are never overwritten
+        or deleted. The target_state table always points to the latest result.
+
+  - name: response-file-cleanup
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify that after a build result is saved, the agent response JSON is
+        stored in the database via save_agent_response and the response file
+        on disk is deleted. Response files should not accumulate.

@@ -1,7 +1,7 @@
 ---
 name: validations
-version: 1
-depends_on: [core/specifications, core/project, build/agents]
+version: 2
+depends_on: [core/specifications, core/project, build/agents, build/storage]
 tags: [build, validation]
 ---
 
@@ -32,7 +32,7 @@ The result of evaluating a single validation, regardless of which runner produce
 - `status` (string) — `"pass"` or `"fail"`
 - `reason` (string) — explanation of the result
 
-For `agent_validation`, the agent writes this as a response file per the mechanism defined in [build/agents](../agents/agents.ic).
+For `agent_validation`, the agent writes a temporary response file per the mechanism defined in [build/agents](../agents/agents.ic). After reading, the response JSON is stored in the database via `StorageBackend.save_agent_response()` and the file is deleted.
 
 ## ValidationSuiteResult
 
@@ -70,6 +70,7 @@ class ValidationSuite:
         output_dir: str,
         runner_registry: dict[str, ValidationRunner] | None = None,
         val_response_dir: Path | None = None,
+        storage_backend: StorageBackend | None = None,
     ):
 ```
 
@@ -77,7 +78,8 @@ class ValidationSuite:
 - `agent_profile` — default validation profile
 - `output_dir` — the output directory
 - `runner_registry` — optional dict of custom runners (merged with defaults)
-- `val_response_dir` — optional directory for writing validation response files. If None, response files are written under the output directory.
+- `val_response_dir` — optional directory for writing temporary validation response files. If None, response files are written under the output directory.
+- `storage_backend` — optional storage backend for persisting validation results and agent responses. When provided, each `ValidationResponse` is saved via `backend.save_validation_result(...)` and the raw agent response JSON is saved via `backend.save_agent_response(...)` after the response file is read. The response file is then deleted.
 
 The suite receives an AgentProfile (the default validation profile, typically a lighter/faster model than the build profile). It passes this to `AgentValidationRunner`, which creates agents on demand per validation call, merging any per-validation `agent_profile` override.
 
