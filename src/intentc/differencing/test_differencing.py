@@ -29,7 +29,7 @@ def _make_project(**overrides) -> Project:
     """Create a minimal Project for testing."""
     defaults = dict(
         project_intent=ProjectIntent(name="test-project", body="# Test Project"),
-        implementation=Implementation(name="impl", body="# Impl\nPython 3.11"),
+        implementations={"default": Implementation(name="impl", body="# Impl\nPython 3.11")},
     )
     defaults.update(overrides)
     return Project(**defaults)
@@ -293,7 +293,7 @@ class TestRunDifferencing:
         dir_b.mkdir()
 
         impl = Implementation(name="custom-impl", body="# Custom implementation")
-        project = _make_project(implementation=impl)
+        project = _make_project(implementations={"default": impl})
         profile = _make_profile()
 
         mock_agent = MockAgent()
@@ -321,7 +321,7 @@ class TestRunDifferencing:
         dir_a.mkdir()
         dir_b.mkdir()
 
-        project = _make_project(implementation=None)
+        project = _make_project(implementations={})
         profile = _make_profile()
 
         mock_agent = MockAgent()

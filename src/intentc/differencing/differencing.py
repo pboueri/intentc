@@ -21,6 +21,8 @@ def run_differencing(
     output_dir_b: str,
     project: Project,
     profile: AgentProfile,
+    *,
+    implementation: str | None = None,
 ) -> DifferencingResponse:
     """Evaluate functional equivalence between two output directories.
 
@@ -29,8 +31,9 @@ def run_differencing(
     Args:
         output_dir_a: Path to the reference output directory.
         output_dir_b: Path to the candidate output directory.
-        project: The loaded project (provides project_intent and implementation).
+        project: The loaded project (provides project_intent and implementations).
         profile: Agent profile to use for the evaluation.
+        implementation: Name of the implementation to use. If None, uses the default.
 
     Returns:
         A DifferencingResponse with per-dimension results and overall status.
@@ -38,6 +41,8 @@ def run_differencing(
     Raises:
         AgentError: If the response file is missing or contains invalid JSON.
     """
+    resolved_impl = project.resolve_implementation(implementation)
+
     # Create a temporary response file
     response_file = tempfile.NamedTemporaryFile(
         prefix="intentc-diff-",
@@ -51,7 +56,7 @@ def run_differencing(
         output_dir_a=output_dir_a,
         output_dir_b=output_dir_b,
         project_intent=project.project_intent,
-        implementation=project.implementation,
+        implementation=resolved_impl,
         response_file_path=response_file_path,
     )
 
@@ -65,9 +70,13 @@ def run_differencing(
     if project.intent_dir is not None:
         intent_dir = project.intent_dir
         project_ic = intent_dir / "project.ic"
-        impl_ic = intent_dir / "implementation.ic"
         if project_ic.exists():
             sandbox_read.append(str(project_ic.resolve()))
+        impl_dir = intent_dir / "implementations"
+        if impl_dir.is_dir():
+            sandbox_read.append(str(impl_dir.resolve()))
+        # Backward compat: legacy implementation.ic
+        impl_ic = intent_dir / "implementation.ic"
         if impl_ic.exists():
             sandbox_read.append(str(impl_ic.resolve()))
 

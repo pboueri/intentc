@@ -159,11 +159,63 @@ class TestLoadProject:
 
     def test_loads_with_implementation(self, tmp_path: Path):
         intent = _make_project(tmp_path)
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "default.ic", "impl")
+        project = load_project(intent)
+
+        assert len(project.implementations) == 1
+        assert project.resolve_implementation() is not None
+        assert project.resolve_implementation().name == "impl"
+
+    def test_loads_legacy_implementation_ic(self, tmp_path: Path):
+        intent = _make_project(tmp_path)
         _write_ic(intent / "implementation.ic", "impl")
         project = load_project(intent)
 
-        assert project.implementation is not None
-        assert project.implementation.name == "impl"
+        assert len(project.implementations) == 1
+        assert "default" in project.implementations
+        assert project.resolve_implementation().name == "impl"
+
+    def test_loads_multiple_implementations(self, tmp_path: Path):
+        intent = _make_project(tmp_path)
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "python.ic", "python-impl")
+        _write_ic(intent / "implementations" / "rust.ic", "rust-impl")
+        _write_ic(intent / "implementations" / "default.ic", "default-impl")
+        project = load_project(intent)
+
+        assert len(project.implementations) == 3
+        assert project.resolve_implementation("python").name == "python-impl"
+        assert project.resolve_implementation("rust").name == "rust-impl"
+        assert project.resolve_implementation().name == "default-impl"
+
+    def test_resolve_implementation_single_no_default(self, tmp_path: Path):
+        intent = _make_project(tmp_path)
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "python.ic", "python-impl")
+        project = load_project(intent)
+
+        # Single implementation is used even without "default" name
+        assert project.resolve_implementation().name == "python-impl"
+
+    def test_resolve_implementation_missing_name(self, tmp_path: Path):
+        intent = _make_project(tmp_path)
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "default.ic", "impl")
+        project = load_project(intent)
+
+        with pytest.raises(KeyError, match="nonexistent"):
+            project.resolve_implementation("nonexistent")
+
+    def test_resolve_implementation_ambiguous(self, tmp_path: Path):
+        intent = _make_project(tmp_path)
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "python.ic", "python-impl")
+        _write_ic(intent / "implementations" / "rust.ic", "rust-impl")
+        project = load_project(intent)
+
+        with pytest.raises(ValueError, match="Multiple implementations"):
+            project.resolve_implementation()
 
     def test_loads_assertions(self, tmp_path: Path):
         intent = _make_project(tmp_path)
@@ -272,7 +324,8 @@ class TestWriteProject:
     def test_roundtrip(self, tmp_path: Path):
         intent = _make_project(tmp_path, {"alpha": [], "beta": ["alpha"]})
         _write_icv(intent / "alpha" / "validations.icv", "alpha")
-        _write_ic(intent / "implementation.ic", "impl")
+        (intent / "implementations").mkdir()
+        _write_ic(intent / "implementations" / "default.ic", "impl")
 
         original = load_project(intent)
         dest = tmp_path / "copy"
@@ -281,7 +334,8 @@ class TestWriteProject:
 
         assert reloaded.project_intent.name == original.project_intent.name
         assert set(reloaded.features) == set(original.features)
-        assert reloaded.implementation is not None
+        assert len(reloaded.implementations) == 1
+        assert reloaded.resolve_implementation() is not None
         assert reloaded.parents("beta") == ["alpha"]
 
     def test_copies_file_references(self, tmp_path: Path):

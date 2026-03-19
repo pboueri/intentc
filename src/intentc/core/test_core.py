@@ -356,9 +356,9 @@ class TestParseRealFiles:
         assert proj.name == "intentc"
 
     def test_parse_implementation_ic(self):
-        path = self.INTENT_ROOT / "implementation.ic"
+        path = self.INTENT_ROOT / "implementations" / "default.ic"
         if not path.exists():
-            pytest.skip("implementation.ic not found")
+            pytest.skip("implementations/default.ic not found")
         impl = parse_intent_file(path, as_implementation=True)
         assert isinstance(impl, Implementation)
         assert impl.name == "implementation"

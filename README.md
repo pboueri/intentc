@@ -10,7 +10,8 @@ An experimental project where you spec out what you want to build in a well defi
   ───────                          ────────────────
 
   project.ic
-  implementation.ic
+  implementations/
+    default.ic
         │
         ▼
   models/models.ic  ──────────────► models/         ✓ validated
@@ -75,13 +76,24 @@ Failed builds leave files on disk for inspection but don't get committed.
 ```
 my-project/
 ├── intent/
-│   ├── project.ic          # What this project is
-│   ├── implementation.ic   # Language, stack, conventions
+│   ├── project.ic              # What this project is
+│   ├── implementations/        # Language, stack, conventions
+│   │   ├── default.ic          # Default implementation
+│   │   └── {alt}.ic            # Alternative implementations
 │   └── {module}/
 │       └── {feature}/
-│           ├── feature.ic  # What this feature should do
-│           └── validations.icv  # How to verify it worked
-├── src/                    # Generated code (committed to git)
+│           ├── feature.ic      # What this feature should do
+│           └── validations.icv # How to verify it worked
+├── src/                        # Generated code (committed to git)
 └── .intentc/
-    └── config.yaml         # Agent and output dir config
+    └── config.yaml             # Agent and output dir config
+```
+
+Multiple implementations let you build the same specs to different targets:
+```bash
+# Build with default implementation
+intentc build
+
+# Build with a specific implementation
+intentc build --implementation rust -o src_rust/
 ```

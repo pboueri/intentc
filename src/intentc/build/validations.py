@@ -237,7 +237,7 @@ class ValidationSuite:
                 response_file = Path(self._output_dir) / f".intentc-val-{entry.name}-{uuid.uuid4().hex[:8]}.json"
             ctx = ValidationContext(
                 project_intent=self._project.project_intent,
-                implementation=self._project.implementation,
+                implementation=self._project.resolve_implementation(),
                 feature_intent=feature_intent,
                 output_dir=self._output_dir,
                 response_file_path=str(response_file.resolve()),

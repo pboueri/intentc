@@ -42,6 +42,7 @@ class BuildOptions(BaseModel):
     dry_run: bool = False
     output_dir: str = ""
     profile_override: str = ""
+    implementation: str = ""
 
 
 class Builder:
@@ -172,11 +173,15 @@ class Builder:
                 if feat_dir.is_dir():
                     sandbox_read.append(str(feat_dir.resolve()))
 
-            # project.ic and implementation.ic
+            # project.ic and implementations
             project_ic = intent_dir / "project.ic"
-            impl_ic = intent_dir / "implementation.ic"
             if project_ic.exists():
                 sandbox_read.append(str(project_ic.resolve()))
+            impl_dir = intent_dir / "implementations"
+            if impl_dir.is_dir():
+                sandbox_read.append(str(impl_dir.resolve()))
+            # Backward compat: legacy implementation.ic
+            impl_ic = intent_dir / "implementation.ic"
             if impl_ic.exists():
                 sandbox_read.append(str(impl_ic.resolve()))
 
@@ -212,6 +217,9 @@ class Builder:
         step_start = datetime.now()
         self.state_manager.build_response_dir.mkdir(parents=True, exist_ok=True)
         response_file = self.state_manager.build_response_dir / f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
+        implementation = self.project.resolve_implementation(
+            opts.implementation or None
+        )
         ctx = BuildContext(
             intent=node.intents[0] if node.intents else IntentFile(name=target),
             validations=node.validations,
@@ -219,7 +227,7 @@ class Builder:
             generation_id=generation_id,
             dependency_names=dep_names,
             project_intent=self.project.project_intent,
-            implementation=self.project.implementation,
+            implementation=implementation,
             response_file_path=str(response_file.resolve()),
         )
 
@@ -350,7 +358,7 @@ class Builder:
     # ------------------------------------------------------------------
 
     def validate(
-        self, target: str | None, output_dir: str
+        self, target: str | None, output_dir: str, *, implementation: str | None = None
     ) -> ValidationSuiteResult | list[ValidationSuiteResult]:
         """Run validations independently of the build pipeline.
 

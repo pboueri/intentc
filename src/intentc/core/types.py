@@ -134,7 +134,7 @@ class ProjectIntent(BaseModel):
 
 
 class Implementation(BaseModel):
-    """Special file at intent/implementation.ic — language, libs, conventions."""
+    """Implementation spec — language, libs, conventions. Lives in intent/implementations/."""
 
     model_config = {"extra": "ignore"}
 

@@ -121,7 +121,9 @@ def _setup_project_dir(tmp_path: Path) -> Path:
     (intent_dir / "project.ic").write_text(
         "---\nname: test\ntags: []\n---\n# Test"
     )
-    (intent_dir / "implementation.ic").write_text(
+    impl_dir = intent_dir / "implementations"
+    impl_dir.mkdir()
+    (impl_dir / "default.ic").write_text(
         "---\nname: implementation\ntags: []\n---\n# Implementation"
     )
     feat_dir = intent_dir / "a"
