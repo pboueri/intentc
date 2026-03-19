@@ -55,6 +55,27 @@ def run_differencing(
         response_file_path=response_file_path,
     )
 
+    # Compute sandbox paths for differencing
+    sandbox_read = [
+        str(Path(output_dir_a).resolve()),
+        str(Path(output_dir_b).resolve()),
+    ]
+    sandbox_write = [str(Path(response_file_path).parent.resolve())]
+
+    if project.intent_dir is not None:
+        intent_dir = project.intent_dir
+        project_ic = intent_dir / "project.ic"
+        impl_ic = intent_dir / "implementation.ic"
+        if project_ic.exists():
+            sandbox_read.append(str(project_ic.resolve()))
+        if impl_ic.exists():
+            sandbox_read.append(str(impl_ic.resolve()))
+
+    profile = profile.model_copy(update={
+        "sandbox_write_paths": sandbox_write,
+        "sandbox_read_paths": sandbox_read,
+    })
+
     agent = create_from_profile(profile)
     agent.difference(ctx)
 

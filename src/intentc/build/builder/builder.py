@@ -150,6 +150,41 @@ class Builder:
             for t in build_set
         ]
 
+    def _apply_sandbox_paths(
+        self, profile: AgentProfile, target: str, opts: BuildOptions
+    ) -> AgentProfile:
+        """Compute sandbox paths from the project DAG and attach to the profile."""
+        output_dir_abs = str(Path(opts.output_dir).resolve())
+
+        sandbox_write = [
+            output_dir_abs,
+            str(self.state_manager.build_response_dir.resolve()),
+            str(self.state_manager.val_response_dir.resolve()),
+        ]
+        sandbox_read = [output_dir_abs]
+
+        intent_dir = self.project.intent_dir
+        if intent_dir is not None:
+            # Intent directories for this target and all ancestors
+            ancestors = self.project.ancestors(target)
+            for feat in ancestors | {target}:
+                feat_dir = intent_dir / feat
+                if feat_dir.is_dir():
+                    sandbox_read.append(str(feat_dir.resolve()))
+
+            # project.ic and implementation.ic
+            project_ic = intent_dir / "project.ic"
+            impl_ic = intent_dir / "implementation.ic"
+            if project_ic.exists():
+                sandbox_read.append(str(project_ic.resolve()))
+            if impl_ic.exists():
+                sandbox_read.append(str(impl_ic.resolve()))
+
+        return profile.model_copy(update={
+            "sandbox_write_paths": sandbox_write,
+            "sandbox_read_paths": sandbox_read,
+        })
+
     def _build_target(
         self, target: str, generation_id: str, opts: BuildOptions
     ) -> BuildResult:
@@ -158,8 +193,9 @@ class Builder:
         now = datetime.now()
         node = self.project.features[target]
 
-        # Resolve agent profile
+        # Resolve agent profile and apply sandbox paths
         profile = self._resolve_profile(opts)
+        profile = self._apply_sandbox_paths(profile, target, opts)
         agent = self._create_agent(profile)
 
         # Step 1: resolve_deps
@@ -184,7 +220,7 @@ class Builder:
             dependency_names=dep_names,
             project_intent=self.project.project_intent,
             implementation=self.project.implementation,
-            response_file_path=str(response_file),
+            response_file_path=str(response_file.resolve()),
         )
 
         build_error = None

@@ -2,56 +2,51 @@
 You are working in the context of the following project {project} with the following implementation approach {implementation}
 
 ### Task
-You are evaluating whether two builds of this project are **functionally equivalent**. Functional equivalence means both builds behave the same from the perspective of a user or consumer of the software, regardless of internal implementation differences.
+Evaluate functional equivalence between two output directories produced from the same intent.
 
-- **Reference build (A):** `{output_dir_a}`
-- **Candidate build (B):** `{output_dir_b}`
+**Reference directory (A):** {output_dir_a}
+**Candidate directory (B):** {output_dir_b}
 
-### How to Evaluate
+Actively investigate both directories — read code, examine interfaces, run tests, and exercise the software. Determine whether these two builds are **functionally equivalent from the perspective of a user or consumer of the software**.
 
-You must actively investigate both directories. Do not rely on superficial textual diffs — two builds can look completely different and still be equivalent, or look nearly identical and be divergent. Use every tool at your disposal.
+### What "Functional Equivalence" Means
 
-Evaluate the following dimensions in order:
+Two builds are equivalent if a user could swap one for the other and get the same results for the same workflows. This is NOT about code identity — it is about behavioral equivalence at the boundaries.
 
-#### 1. Public API (`public_api`)
-Compare the public interfaces exposed by both builds. This includes module exports, function/method signatures, class hierarchies, CLI commands, API endpoints, or whatever constitutes the public contract.
+**Things that DO NOT break equivalence:**
+- Internal attribute naming (public vs private, `self.x` vs `self._x`)
+- Internal error handling strategy (catching vs propagating, as long as the external behavior is the same)
+- Internal data structure choices (dict ordering, list vs set, sort order of status output)
+- Internal step/phase naming conventions (e.g., `"failure"` vs `"failed"` in internal logs)
+- Code style, variable naming, comment differences
+- Test count differences (as long as both test suites pass against their own code)
+- Internal helper functions or implementation decomposition
+- Whether an internal method takes 3 or 4 parameters
+- Response file naming conventions (UUID vs deterministic)
+- How gracefully corrupt state is handled (both should work correctly with valid state)
 
-- Read source files in both directories and identify the public surface
-- Structural differences (different file layout, different internal names) are acceptable if the external contract is the same
-- Look for missing functions, changed signatures, removed exports, or altered type contracts
+**Things that DO break equivalence:**
+- CLI commands missing, having different flags, or producing different outputs for the same inputs
+- Public module imports that work in one but fail with ImportError in the other
+- Configuration files written by one that can't be read by the other
+- Different declared dependencies that would cause installation failures
+- Core workflows (build, validate, clean, plan, diff, compare) producing fundamentally different outcomes for the same project and intent files
 
-#### 2. Test Suite (`test_suite`)
-Attempt to cross-run tests between the builds.
+### Dimensions
 
-- Identify test files in both builds
-- Run build A's tests against build B's code, and vice versa
-- If tests are tightly coupled to internals and cannot be cross-run, note this and compare test coverage and intent instead
-- Report which tests pass, which fail, and why
+Evaluate the following dimensions:
 
-#### 3. Runtime Behavior (`runtime_behavior`)
-Exercise the software through its primary interface and compare outputs.
+1. **public_api** — Do both builds expose the same **user-facing** interfaces? Focus on: CLI commands and their flags, module-level imports that a consumer would use, and the configuration surface. Internal class attributes, private methods, and implementation-level signatures are NOT part of the public API.
 
-- If it's a CLI tool, run the same commands against both builds and compare output
-- If it's a library, import key modules and call key functions with the same inputs
-- If it has an API, make the same requests and compare responses
-- Use representative inputs that exercise the core functionality
-- This is the most important dimension — if the software does the same thing, it is equivalent
+2. **test_suite** — Do both builds have passing test suites? If cross-execution is possible, attempt it. If not (e.g., due to co-located tests), evaluate based on whether both suites pass against their own code and cover the same functionality. Both suites passing independently is sufficient for a pass.
 
-#### 4. Dependency Compatibility (`dependency_compatibility`)
-Compare declared dependencies.
+3. **runtime_behavior** — Does the software behave the same **when used through its intended interfaces** (CLI, public module API)? Focus on the workflows a user would actually perform: building, validating, cleaning, planning, diffing, comparing. Internal differences in error handling, logging format, or state serialization details that don't affect the user-visible outcome are acceptable.
 
-- Check requirements files, pyproject.toml, package.json, go.mod, or equivalent
-- Flag significant version mismatches or missing dependencies that could affect behavior
-- Minor version differences in pinned dependencies are acceptable
+4. **dependency_compatibility** — Do both builds declare compatible dependencies? Same pyproject.toml or equivalent dependency specifications.
 
-#### 5. Configuration Compatibility (`configuration_compatibility`)
-Compare the configuration surface.
+5. **configuration_compatibility** — Do both builds respect the same configuration surface? Can config files written by one be read by the other?
 
-- Check that both builds respect the same config files, env vars, and defaults
-- Verify default values are compatible
-
-### Decision Rule
-The overall status is `"equivalent"` only if ALL evaluated dimensions pass. If ANY dimension fails, the status is `"divergent"`. If a dimension cannot be evaluated (e.g., no tests exist), note it as passed with rationale explaining why it was skipped.
+The overall status is "equivalent" if all dimensions pass. If any dimension fails, the status is "divergent".
 
 ### Response
 When you are done, write a JSON file to `{response_file}` with the following structure:
@@ -60,32 +55,12 @@ When you are done, write a JSON file to `{response_file}` with the following str
   "status": "equivalent" or "divergent",
   "dimensions": [
     {
-      "name": "public_api",
+      "name": "dimension name",
       "status": "pass" or "fail",
-      "rationale": "what was compared and the result"
-    },
-    {
-      "name": "test_suite",
-      "status": "pass" or "fail",
-      "rationale": "what was compared and the result"
-    },
-    {
-      "name": "runtime_behavior",
-      "status": "pass" or "fail",
-      "rationale": "what was compared and the result"
-    },
-    {
-      "name": "dependency_compatibility",
-      "status": "pass" or "fail",
-      "rationale": "what was compared and the result"
-    },
-    {
-      "name": "configuration_compatibility",
-      "status": "pass" or "fail",
-      "rationale": "what was compared and the result"
+      "rationale": "explanation of what was compared and why it passed or failed"
     }
   ],
-  "summary": "overall human-readable assessment of equivalence or divergence, highlighting the key findings"
+  "summary": "human-readable overall assessment explaining the verdict"
 }
 ```
 You MUST write this file before you finish.

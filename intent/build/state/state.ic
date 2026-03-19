@@ -9,56 +9,91 @@ tags: [build, foundation]
 
 Tracks the status and history of each target across builds. State is scoped per output directory and persisted under `.intentc/state/{output-dir}/`.
 
+## Module Layout
+
+This feature generates:
+- `intentc/build/__init__.py` — Package init. Should re-export EXACTLY these symbols (no more, no less):
+  - From agents: `Agent`, `AgentError`, `AgentProfile`, `BuildContext`, `BuildResponse`, `CLIAgent`, `ClaudeAgent`, `MockAgent`, `PromptTemplates`, `ValidationResponse`, `create_from_profile`
+  - From state: `BuildResult`, `BuildStep`, `GitVersionControl`, `StateManager`, `TargetStatus`, `VersionControl`
+  - From validations: `AgentValidationRunner`, `ValidationContext`, `ValidationRunner`, `ValidationSuite`, `ValidationSuiteResult`
+  - Do NOT export: `Builder`, `BuildOptions`, `CreateFromProfile`, `DifferencingContext`, `DifferencingResponse`, `DimensionResult`, `load_default_prompts`, `render_prompt`, `render_differencing_prompt`
+- `intentc/build/state.py` — State management implementation
+- `intentc/build/test_state.py` — Tests
+
 ## TargetStatus
 
-Enum of possible states for a target:
-- `pending` — never built
-- `built` — successfully built
-- `failed` — last build failed
-- `outdated` — built, but a dependency has changed since
+A `str` enum (`class TargetStatus(str, enum.Enum)`) with UPPERCASE member names and lowercase string values:
+
+```python
+class TargetStatus(str, enum.Enum):
+    PENDING = "pending"
+    BUILT = "built"
+    FAILED = "failed"
+    OUTDATED = "outdated"
+```
+
+- `PENDING` — never built
+- `BUILT` — successfully built
+- `FAILED` — last build failed
+- `OUTDATED` — built, but a dependency has changed since
 
 ## BuildStep
 
-A single phase within a build. Captures what happened and how long it took.
+A single phase within a build. Captures what happened and how long it took. All fields are Pydantic BaseModel fields with `model_config = {"extra": "ignore"}`.
 
 - `Phase` (string) — name of the phase (e.g. "resolve_deps", "build", "validate")
 - `Status` (string) — "success" or "failure"
-- `Duration` (duration) — wall-clock time
+- `Duration` (timedelta from datetime module) — wall-clock time as a Python `timedelta`
 - `Summary` (string) — human-readable description of what happened
 
 ## BuildResult
 
-The outcome of building a single target.
+The outcome of building a single target. All fields are Pydantic BaseModel fields with `model_config = {"extra": "ignore"}`.
 
 - `Target` (string) — feature path
 - `GenerationID` (string) — unique identifier for this build run
 - `Status` (TargetStatus) — resulting status
-- `Steps` (list of BuildStep) — ordered phases
-- `CommitID` (string) — checkpoint ID from the VCS capturing all changes (new files, modifications, deletions) produced by this build
-- `TotalDuration` (duration) — sum of step durations
+- `Steps` (list of BuildStep, default empty list) — ordered phases
+- `CommitID` (string, default empty) — checkpoint ID from the VCS capturing all changes
+- `TotalDuration` (timedelta, default timedelta()) — sum of step durations as a Python `timedelta`
 - `Timestamp` (datetime) — when the build completed
 
 ## StateManager
 
-Manages per-target state for a given output directory. Depends on a `VersionControl` instance for checkpointing changes.
+Manages per-target state for a given output directory.
 
-- `GetStatus(target) -> TargetStatus` — returns current status; `pending` if unknown
-- `GetBuildResult(target) -> BuildResult or null` — last build result, null if never built
-- `SaveBuildResult(target, result)` — persist result, update status
-- `SetStatus(target, status)` — override status (e.g. mark outdated)
-- `MarkDependentsOutdated(target, project)` — walk the DAG and set all descendants to `outdated`
-- `Reset(target)` — clear all state for a target
-- `ResetAll()` — clear all state for the output directory
-- `ListTargets() -> list of (target, status)` — all tracked targets
+### Constructor
+
+```python
+StateManager(base_dir: Path, output_dir: str)
+```
+
+- `base_dir` — the project root directory (typically `Path(".")`)
+- `output_dir` — the output directory name (e.g. `"src"`, `"src_generated/"`)
+
+State files live at `base_dir / ".intentc" / "state" / output_dir / ...`. The `output_dir` string is used as-is in the path (do NOT sanitize slashes or transform the string).
+
+The StateManager also exposes `build_response_dir` and `val_response_dir` as `@property` methods that return the paths for build and validation response files respectively.
+
+### Methods (all snake_case per Python convention)
+
+- `get_status(target) -> TargetStatus` — returns current status; `pending` if unknown
+- `get_build_result(target) -> BuildResult or None` — last build result, None if never built
+- `save_build_result(target, result)` — persist result, update status
+- `set_status(target, status)` — override status (e.g. mark outdated)
+- `mark_dependents_outdated(target, project)` — walk the DAG and set all descendants to `outdated`
+- `reset(target)` — clear all state for a target
+- `reset_all()` — clear all state for the output directory
+- `list_targets() -> list of (target, status)` — all tracked targets
 
 ## VersionControl
 
 An abstract interface for checkpointing file changes. Implementations produce a unique ID (SHA, UUID, etc.) for each checkpoint that can be used to inspect or restore changes.
 
-- `Checkpoint(message) -> string` — snapshot current changes, return a unique commit/checkpoint ID
-- `Diff(fromID, toID) -> string` — return the diff between two checkpoints
-- `Restore(commitID)` — restore the output directory to the state at a given checkpoint
-- `Log(target?) -> list of commitIDs` — list checkpoints, optionally filtered by target
+- `checkpoint(message) -> string` — snapshot current changes, return a unique commit/checkpoint ID
+- `diff(from_id, to_id) -> string` — return the diff between two checkpoints
+- `restore(commit_id)` — restore the output directory to the state at a given checkpoint
+- `log(target?) -> list of commit_ids` — list checkpoints, optionally filtered by target. When target is provided, use `git log --format=%H --grep {target}` to filter by commit message containing the target name.
 
 ### GitVersionControl
 
@@ -67,6 +102,33 @@ Concrete implementation backed by git. Uses commits on a build-managed branch. T
 ## Persistence
 
 State is stored as a single JSON file per output directory at `.intentc/state/{output-dir}/state.json`. The schema is versioned. Unknown fields are tolerated on read. Missing files return empty/default state — never errors.
+
+### Implementation Details
+
+The StateManager uses an **in-memory cache** (`dict[str, _TargetEntry]`) that is loaded from disk on construction and saved after each mutation. This is NOT Pydantic-native serialization — use manual `_serialize_state` / `_result_to_dict` / `_result_from_dict` helper functions:
+
+- `timedelta` values are serialized as `total_seconds()` (float) and deserialized with `timedelta(seconds=...)`
+- `datetime` values use `.isoformat()` / `datetime.fromisoformat()`
+- `TargetStatus` uses `.value` for serialization and `TargetStatus(...)` for deserialization
+- The state file has `{"version": 1, "targets": {...}}` structure where each target entry has:
+  ```json
+  {"status": "built", "build_result": {...}}
+  ```
+  Note: the key is `"build_result"` (not `"result"`)
+
+### Build Log
+
+The build log is a separate append-only file. Use `json.dumps(_result_to_dict(result))` to serialize each entry, and `open(..., "a")` to append.
+
+### Response File Naming
+
+Response files use UUID-based unique names to avoid collisions on repeated runs:
+- Build: `f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"` under `build_response_dir`
+- Validation: `f"{entry.name}-{uuid.uuid4().hex[:8]}.json"` under `val_response_dir`
+
+### Build Log
+
+The build log is a separate append-only file. Use `json.dumps(_result_to_dict(result))` to serialize each entry, and `open(..., "a")` to append.
 
 ## Build Log
 

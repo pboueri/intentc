@@ -14,7 +14,25 @@ tags: [interface, cli]
 
 The CLI is the primary interface for intentc. It is a thin wrapper over the core workflows, wiring dependencies at the command boundary and deferring all logic to the underlying modules. Each command constructs its own agent, state manager, version control, and builder — no shared global state.
 
-Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/) for terminal output. The entry point is `intentc.cli.main:app` as declared in pyproject.toml.
+Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/) for terminal output. The entry point is `intentc.cli.main:app` as declared in pyproject.toml. The Typer app uses `no_args_is_help=True`.
+
+## Module Layout
+
+This feature generates:
+- `intentc/cli/__init__.py` — Package init (empty)
+- `intentc/cli/main.py` — CLI commands using Typer
+- `intentc/cli/config.py` — Config loading/saving
+- `intentc/cli/output.py` — Rich output formatting
+- `intentc/cli/test_cli.py` — Tests
+
+Key imports used in the CLI:
+- `from intentc.build.agents import AgentProfile, BuildContext, create_from_profile`
+- `from intentc.build.builder.builder import Builder, BuildOptions`
+- `from intentc.build.state import GitVersionControl, StateManager, TargetStatus`
+- `from intentc.build.validations import ValidationSuiteResult`
+- `from intentc.core.project import blank_project, load_project, write_project`
+- `from intentc.core.types import IntentFile`
+- `from intentc.differencing.differencing import run_differencing`
 
 ## Project Config
 
@@ -26,19 +44,14 @@ default_profile:
   provider: claude
   timeout: 3600
   retries: 3
-default_validation_profile:
-  name: default-validation
-  provider: claude
-  timeout: 3600
-  retries: 3
-  model_id: claude-sonnet-4-6   # lighter model for validations
 default_output_dir: src
-max_parallel_validations: 5
 ```
 
 If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually.
 
-`load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile`, `default_validation_profile`, `default_output_dir`, and `max_parallel_validations`. `default_validation_profile` uses a lighter model than `default_profile` to keep validations fast.
+`load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config uses `model_config = {"extra": "ignore"}`.
+
+`save_config(config: Config, project_root: Path) -> Path` writes the config. Parameter order: config FIRST, project_root SECOND.
 
 ## Commands
 
@@ -46,12 +59,13 @@ If the config file is missing, the CLI uses hardcoded sensible defaults. The con
 
 Create a new intentc project in the current directory.
 
-1. If `intent/project.ic` already exists, abort with an error — do not overwrite.
-2. Generate a blank project via `blank_project(name)`.
+1. If `intent/project.ic` already exists, abort with exit code 2 — do not overwrite.
+2. Generate a blank project via `blank_project(name or Path.cwd().name)`.
 3. Write the project to `intent/` via `write_project()`.
-4. Write a default `.intentc/config.yaml` with sensible defaults.
-5. If no `.git` directory exists, run `git init` and make an initial commit — required for `intentc build` to create checkpoints.
-6. Print a summary of created files.
+4. Write a default `.intentc/config.yaml` with sensible defaults via `save_config()`.
+5. Print a summary of created files via `render_init_summary()`.
+
+**Note:** Do NOT auto-initialize a git repo. The user is responsible for git init.
 
 **Arguments:**
 - `name` (positional, default: current directory name) — project name.
@@ -64,7 +78,7 @@ Build features using the configured agent.
 2. Load config via `load_config()`.
 3. Resolve agent profile: `--profile` flag > config default.
 4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
-5. Call `Builder.Build(opts)`.
+5. Call `builder.build(opts)` (snake_case).
 6. Print results: for each target, show status, duration, and step summaries.
 7. Exit with code 1 if any target failed.
 
@@ -83,7 +97,7 @@ Run validations independently of the build pipeline.
 
 1. Load the project and config.
 2. Resolve agent profile.
-3. Construct the `Builder` and call `Builder.Validate(target, output_dir)`.
+3. Construct the `Builder` and call `builder.validate(target, output_dir)` (snake_case).
 4. Print results: for each validation, show name, status, and reason.
 5. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
 6. Exit with code 1 if any error-severity validation failed.
@@ -100,8 +114,8 @@ Run validations independently of the build pipeline.
 Revert a target's generated code and reset its state.
 
 1. Load the project and config.
-2. If `--all` is passed, call `Builder.CleanAll(output_dir)`.
-3. Otherwise, call `Builder.Clean(target, output_dir)` for the specified target.
+2. If `--all` is passed, call `builder.clean_all(output_dir)` (snake_case).
+3. Otherwise, call `builder.clean(target, output_dir)` for the specified target.
 4. Print what was cleaned.
 
 **Arguments:**
@@ -116,9 +130,10 @@ Revert a target's generated code and reset its state.
 Enter interactive planning mode with the agent for a specific feature.
 
 1. Load the project and config.
-2. Resolve agent profile.
-3. Construct a `BuildContext` for the target.
-4. Call `agent.Plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
+2. **Validate feature exists** — If `target` is not in `project.features`, print an error listing available features and exit with code 2.
+3. Resolve agent profile.
+4. Construct a `BuildContext` for the target.
+5. Call `agent.plan(ctx)` (snake_case) which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
 
 **Arguments:**
 - `target` (positional, required) — feature path to plan.
@@ -134,7 +149,7 @@ Show the build state for all tracked targets.
 1. Load config.
 2. Construct a `StateManager` for the output directory.
 3. Call `list_targets()` and display a table with columns: target, status, last build timestamp, generation ID.
-4. If `--outdated` is passed, also run `Builder.DetectOutdated()` and annotate stale targets.
+4. If `--outdated` is passed, also run `builder.detect_outdated()` (snake_case) and annotate stale targets.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
@@ -146,8 +161,8 @@ Show the diff of what was generated for a target.
 
 1. Load config and state manager.
 2. Look up the target's last `BuildResult` to get the `commit_id`.
-3. Use `GitVersionControl.Diff()` to produce the diff from the commit's parent to the commit.
-4. Print the diff to stdout, piping through a pager if the terminal supports it.
+3. Use `GitVersionControl.diff()` to produce the diff from `{commit_id}~1` to `commit_id`.
+4. Print the diff with syntax highlighting.
 
 **Arguments:**
 - `target` (positional, required) — feature path.
@@ -155,13 +170,40 @@ Show the diff of what was generated for a target.
 **Options:**
 - `--output-dir / -o` — override the output directory.
 
+### `intentc compare <dir_a> <dir_b>`
+
+Evaluate functional equivalence between two output directories. This is defined in [differencing](../../differencing/differencing.ic) and implemented via `run_differencing()`.
+
+**Arguments:**
+- `dir_a` (positional, required) — path to the reference output directory.
+- `dir_b` (positional, required) — path to the candidate output directory.
+
+**Options:**
+- `--profile / -p` — agent profile override.
+
+Exit code 0 if equivalent, 1 if divergent.
+
 ## Output Formatting
 
-All commands use Rich for terminal output:
-- **Tables** for status and validation results.
-- **Panels** for build summaries and errors.
-- **Progress bars** for multi-target builds (if not in dry-run mode).
-- **Syntax-highlighted diffs** for the diff command.
+The output module (`intentc/cli/output.py`) uses Rich for terminal output. It defines a module-level `console = Console()` variable.
+
+Key function signatures:
+```python
+console = Console()
+
+def render_build_results(results: list[BuildResult], dry_run: bool = False) -> None: ...
+def render_validation_result(result: ValidationSuiteResult) -> None: ...
+def render_validation_results(results: list[ValidationSuiteResult]) -> None: ...
+def render_status_table(
+    targets: list[tuple[str, TargetStatus]],
+    results: dict[str, BuildResult],
+    outdated: list[str] | None = None,
+) -> None: ...
+def render_diff(diff_text: str) -> None: ...
+def render_init_summary(files: list[str]) -> None: ...
+def render_compare_result(result: DifferencingResponse) -> None: ...
+def print_error(message: str) -> None: ...
+```
 
 Errors are printed to stderr with file paths and actionable descriptions per the implementation conventions.
 
@@ -182,13 +224,10 @@ def build(target: str, force: bool, output_dir: str, profile: str):
     agent_profile = resolve_profile(profile, config)
     state_mgr = StateManager(Path("."), output_dir)
     vcs = GitVersionControl(Path(output_dir))
-    builder = Builder(
-        project, state_mgr, vcs, agent_profile,
-        validation_profile=config.default_validation_profile,
-        max_parallel_validations=config.max_parallel_validations,
-    )
-    results = builder.build(BuildOptions(...))
-    render_results(results)
+    builder = Builder(project, state_mgr, vcs, agent_profile)
+    results, err = builder.build(BuildOptions(...))
+    render_build_results(results)
+    if err: raise typer.Exit(code=1)
 ```
 
 No shared state between commands. Each invocation is self-contained.

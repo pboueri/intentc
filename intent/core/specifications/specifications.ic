@@ -14,11 +14,37 @@ Files that end with `.ic` are intent files meant to define features. They are de
 
 The metadata fields contain the following:
 - `name` (string) - Feature identifier, matches directory path.
-- `depends_on` (list of strings) - Dependency names that are the features needed to be completed before this one runs
+- `depends_on` (list of strings) - Dependency names that are the features needed to be completed before this one runs. Supports wildcards (e.g. `core/*`) which are expanded via `fnmatch` during `load_project()`.
 - `tags` (optional list of strings) - Categorization tags.
 - `authors` (optional list of strings) -- who the authors of the intent are
 
-The text is content that can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like ../../design_system/* that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build. 
+The text after the front matter is stored in a field named **`body`** (NOT `content`). It can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like ../../design_system/* that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build.
+
+### In-memory representation
+
+```python
+class IntentFile(BaseModel):
+    name: str
+    depends_on: list[str] = []
+    tags: list[str] = []
+    authors: list[str] = []
+    body: str = ""                    # field name is "body", NOT "content"
+    file_references: list[str] = []
+    source_path: Path | None = None
+```
+
+`ProjectIntent` and `Implementation` follow the same structure with `body: str = ""` as the content field. `ProjectIntent` has no `depends_on` field.
+
+### ValidationType Enum
+
+```python
+class ValidationType(str, enum.Enum):
+    AGENT_VALIDATION = "agent_validation"
+    LLM_JUDGE = "llm_judge"
+    FILE_CHECK = "file_check"
+    FOLDER_CHECK = "folder_check"
+    COMMAND_CHECK = "command_check"
+``` 
 
 ## Validation Files
 
@@ -45,4 +71,41 @@ Aside from that it follows the same `.ic` spec but cannot have a `depends_on` fl
 
 ## Implementation
 
-The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run. 
+The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run.
+
+## Module Layout
+
+This feature generates the following files:
+- `intentc/__init__.py` — Package init. Should be empty or minimal.
+- `intentc/core/__init__.py` — Package init. Should re-export the public API from types and parser:
+  - From types: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`
+  - From parser: `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`
+- `intentc/core/types.py` — Core data models
+- `intentc/core/parser.py` — File I/O (parse and write .ic/.icv files)
+- `intentc/core/test_core.py` — Tests
+
+### Parser Function Signatures
+
+```python
+def parse_intent_file(
+    path: Path,
+    *,
+    as_project: bool = False,        # returns ProjectIntent when True
+    as_implementation: bool = False,  # returns Implementation when True
+) -> IntentFile | ProjectIntent | Implementation:
+    """Parse a .ic file. The as_project and as_implementation kwargs control the return type."""
+
+def parse_validation_file(path: Path) -> ValidationFile: ...
+
+def write_intent_file(
+    intent: IntentFile | ProjectIntent | Implementation,  # intent object FIRST
+    path: Path | None = None,                              # path SECOND (optional, defaults to source_path)
+) -> Path: ...
+
+def write_validation_file(
+    vf: ValidationFile,     # validation file FIRST
+    path: Path | None = None,  # path SECOND
+) -> Path: ...
+```
+
+Note the parameter order: the data object is always the FIRST parameter, the path is SECOND.

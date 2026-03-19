@@ -240,7 +240,7 @@ class ValidationSuite:
                 implementation=self._project.implementation,
                 feature_intent=feature_intent,
                 output_dir=self._output_dir,
-                response_file_path=str(response_file),
+                response_file_path=str(response_file.resolve()),
             )
             resp = runner.run(entry, ctx)
             responses.append(resp)
