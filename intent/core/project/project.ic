@@ -98,6 +98,28 @@ def blank_project(name: str) -> Project:
     """Create a minimal starter project with project.ic and one starter feature."""
 ```
 
+## Wildcard Dependency Expansion
+
+`load_project()` expands wildcard patterns in `depends_on` using `fnmatch.filter()`. For example, `depends_on: [core/*]` matches all feature paths under `core/`. The expansion happens in-place during loading, mutating each intent's `depends_on` list to replace patterns with matched feature names. If a wildcard matches no features, a parse error is accumulated.
+
+```python
+import fnmatch
+
+all_feature_paths = sorted(features)
+for fp, node in features.items():
+    for intent in node.intents:
+        expanded: list[str] = []
+        for dep in intent.depends_on:
+            if any(c in dep for c in "*?["):
+                matches = fnmatch.filter(all_feature_paths, dep)
+                if not matches:
+                    errors.append(...)
+                expanded.extend(matches)
+            else:
+                expanded.append(dep)
+        intent.depends_on = expanded
+```
+
 ## Requirements
 
 1. The intentc project should be able to be read from its entirety into working memory

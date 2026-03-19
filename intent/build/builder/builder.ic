@@ -29,12 +29,13 @@ Imports used:
 
 ## Builder
 
-```
-Builder:
-    project: Project
-    stateManager: StateManager
-    versionControl: VersionControl
-    agentProfile: AgentProfile
+```python
+# All attributes use snake_case with leading underscore (private)
+class Builder:
+    _project: Project
+    _state_manager: StateManager
+    _version_control: VersionControl
+    _agent_profile: AgentProfile
 ```
 
 Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing.
@@ -47,13 +48,15 @@ class Builder:
 
 ## BuildOptions
 
-```
-BuildOptions:
-    target: string          # Specific feature path, or empty for all unbuilt
-    force: bool             # Rebuild even if already built
-    dryRun: bool            # Print build plan without executing
-    outputDir: string       # Where generated code lives
-    profileOverride: string # Agent profile name override (takes precedence over agentProfile)
+All fields use snake_case per Python convention:
+
+```python
+class BuildOptions(BaseModel):
+    target: str = ""              # Specific feature path, or empty for all unbuilt
+    force: bool = False           # Rebuild even if already built
+    dry_run: bool = False         # Print build plan without executing (snake_case, NOT dryRun)
+    output_dir: str = ""          # Where generated code lives (snake_case, NOT outputDir)
+    profile_override: str = ""    # Agent profile name override (snake_case, NOT profileOverride)
 ```
 
 ## GenerationID
@@ -77,16 +80,58 @@ Returns a tuple of (results, error). Error is non-None if any target failed. The
 For each target in the build set:
 
    - **Skip check** — If the target is already `built` and `force` is false, skip it.
-   - **Resolve agent profile** — Priority: `opts.profileOverride` > builder's `agentProfile`. Use `CreateFromProfile` to get an agent instance.
+   - **Resolve agent profile** — Priority: `opts.profile_override` > builder's `agent_profile`.
+   - **Apply sandbox paths** — Compute filesystem boundaries from the project DAG and attach to the profile before creating the agent:
+
+     ```python
+     def _apply_sandbox_paths(self, profile, target, opts):
+         output_dir_abs = str(Path(opts.output_dir).resolve())
+         sandbox_write = [
+             output_dir_abs,
+             str(self._state_manager.build_response_dir.resolve()),
+             str(self._state_manager.val_response_dir.resolve()),
+         ]
+         sandbox_read = [output_dir_abs]
+         intent_dir = self._project.intent_dir
+         if intent_dir is not None:
+             ancestors = self._project.ancestors(target)
+             for feat in ancestors | {target}:
+                 feat_dir = intent_dir / feat
+                 if feat_dir.is_dir():
+                     sandbox_read.append(str(feat_dir.resolve()))
+             for f in ["project.ic", "implementation.ic"]:
+                 p = intent_dir / f
+                 if p.exists():
+                     sandbox_read.append(str(p.resolve()))
+         return profile.model_copy(update={
+             "sandbox_write_paths": sandbox_write,
+             "sandbox_read_paths": sandbox_read,
+         })
+     ```
+
+   - Use `create_from_profile` to get an agent instance from the sandboxed profile.
    - **Execute build steps**, each timed and recorded as a `BuildStep`:
 
-     1. `resolve_deps` — Gather the target's dependency names from the DAG. This is context for the agent, not a build action.
-     2. `build` — Construct a `BuildContext` from the target's intent, validations, output dir, generation ID, dependency names, project intent, and a response file path. Invoke `agent.Build(ctx)`. On agent error (crash, timeout, malformed response), retry up to `AgentProfile.Retries` times. If all retries exhausted, this step fails.
-     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, and the output dir. Call `suite.ValidateFeature(target)`. If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
-     4. `checkpoint` — Call `versionControl.Checkpoint()` with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`.
+     1. `resolve_deps` — Gather the target's dependency names from the DAG via `node.depends_on`. This is context for the agent, not a build action.
+     2. `build` — Construct a `BuildContext`:
+        ```python
+        ctx = BuildContext(
+            intent=node.intents[0] if node.intents else IntentFile(name=target),
+            validations=node.validations,       # pass the target's validations
+            output_dir=opts.output_dir,
+            generation_id=generation_id,
+            dependency_names=dep_names,          # from resolve_deps step
+            project_intent=self._project.project_intent,
+            implementation=self._project.implementation,
+            response_file_path=str(response_file.resolve()),
+        )
+        ```
+        Invoke `agent.build(ctx)` (snake_case). On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
+     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, and the output dir. Call `suite.validate_feature(target)` (snake_case). If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
+     4. `checkpoint` — Call `version_control.checkpoint()` (snake_case) with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`.
 
    - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), and timestamp. If all steps succeeded, status is `built`. If any step failed, status is `failed`.
-   - **Save** — `stateManager.SaveBuildResult(target, result)`.
+   - **Save** — `state_manager.save_build_result(target, result)` (snake_case).
    - **On failure** — If the target's status is `failed`, stop the DAG walk immediately and return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
 
 ### Atomicity
@@ -95,11 +140,26 @@ The checkpoint happens only after both build and validation succeed. This means 
 
 ### Retries
 
-Retries apply only to agent execution errors (crashes, timeouts, malformed response files). They do **not** apply to validation failures. The retry loop is `for attempt in range(profile.retries)` — so `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
+Retries apply only to `AgentError` exceptions (crashes, timeouts, malformed response files). They do **not** apply to validation failures or generic exceptions. The retry loop catches specifically `AgentError`:
+
+```python
+build_error = None
+for attempt in range(profile.retries):
+    try:
+        agent.build(ctx)
+        build_error = None
+        break
+    except AgentError as exc:
+        build_error = exc
+        if attempt < profile.retries - 1:
+            continue
+```
+
+So `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
 
 ## Clean
 
-`Clean(target, outputDir)`:
+`clean(target, output_dir)` (snake_case):
 
 Reverts a target's generated code and resets its state. This is not a destructive rollback — it creates a new revert commit in the linear version control history.
 
@@ -108,26 +168,26 @@ Reverts a target's generated code and resets its state. This is not a destructiv
 3. Reset the target's state to `pending` via `state_manager.reset(target)`.
 4. Mark all descendants of the target as `outdated` via `state_manager.mark_dependents_outdated(target, project)`.
 
-`CleanAll(outputDir)`:
+`clean_all(output_dir)` (snake_case):
 
-Resets all state for the output directory via `stateManager.ResetAll()`. Does not modify files — the version control history is preserved.
+Resets all state for the output directory via `state_manager.reset_all()`. Does not modify files — the version control history is preserved.
 
 ## Validate
 
-`Validate(target, outputDir) -> ValidationSuiteResult`:
+`validate(target, output_dir) -> ValidationSuiteResult` (snake_case):
 
 Runs validations independently of the build pipeline. Useful for checking a target's current state at any time.
 
 1. Resolve the agent profile (same priority as build).
 2. Construct a `ValidationSuite` with the project, resolved profile, and output dir.
-3. If `target` is specified, call `suite.ValidateFeature(target)`.
-4. If no target, call `suite.ValidateProject()`.
+3. If `target` is specified, call `suite.validate_feature(target)`.
+4. If no target, call `suite.validate_project()`.
 5. Return the result. This does not modify any state.
 
 ## Invalidation
 
 When a user modifies a `.ic` or `.icv` file for a target that was previously built, that target and its descendants are stale. The builder detects this by comparing the target's `BuildResult.timestamp` against the modification time of its intent and validation files. If any source file is newer than the last build, the target is `outdated`.
 
-`DetectOutdated() -> list[string]`:
+`detect_outdated() -> list[str]` (snake_case):
 
 Walks all targets tracked by the state manager. For each target with status `built`, checks if any of its `.ic` or `.icv` files have been modified since the build timestamp. Returns the list of targets that are outdated. Does **not** automatically update state — the caller decides whether to mark them (via `stateManager.SetStatus`) or rebuild.

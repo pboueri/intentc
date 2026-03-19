@@ -83,11 +83,11 @@ The suite receives an AgentProfile (the default validation profile, typically a 
 
 Profile resolution order for each validation: per-validation `agent_profile` override > suite's agentProfile > config default.
 
-### Methods
+### Methods (all snake_case per Python convention)
 
-- `ValidateFeature(feature: string) -> ValidationSuiteResult` — Loads the .icv files for the given feature from the project, runs each validation entry through the appropriate runner, collects ValidationResponses, and returns a ValidationSuiteResult.
-- `ValidateProject() -> list of ValidationSuiteResult` — Runs ValidateFeature for every feature in the project (in topological order), plus project-level assertions. Returns one result per feature/assertion set.
-- `ValidateEntries(target: string, entries: list of Validation) -> ValidationSuiteResult` — Lower-level method that runs a specific list of validation entries against a target. Used by ValidateFeature and available for the builder to pass a subset.
+- `validate_feature(feature: str) -> ValidationSuiteResult` — Loads the .icv files for the given feature from the project, runs each validation entry through the appropriate runner, collects ValidationResponses, and returns a ValidationSuiteResult.
+- `validate_project() -> list[ValidationSuiteResult]` — Runs validate_feature for every feature in the project (in topological order), plus project-level assertions. Returns one result per feature/assertion set.
+- `validate_entries(target: str, entries: list[Validation]) -> ValidationSuiteResult` — Lower-level method that runs a specific list of validation entries against a target. Used by validate_feature and available for the builder to pass a subset.
 
 ### Validation Lifecycle
 
@@ -146,7 +146,22 @@ class AgentValidationRunner(ValidationRunner):
         """Takes an already-created Agent instance (not an AgentProfile)."""
 ```
 
-The runner uses the provided Agent to call `agent.validate()`. It constructs a `BuildContext` from the `ValidationContext`, invokes the agent's Validate method, reads the response file, and returns the parsed `ValidationResponse`. If the agent raises an error or returns an invalid response, returns a failure response.
+The runner uses the provided Agent to call `agent.validate()`. It constructs a `BuildContext` from the `ValidationContext` with these exact fields:
+
+```python
+build_ctx = BuildContext(
+    intent=ctx.feature_intent,
+    validations=[],              # explicitly empty for validation runs
+    output_dir=ctx.output_dir,
+    generation_id=f"val-{uuid.uuid4().hex[:8]}",
+    dependency_names=[],         # explicitly empty for validation runs
+    project_intent=ctx.project_intent,
+    implementation=ctx.implementation,
+    response_file_path=ctx.response_file_path,
+)
+```
+
+It then invokes `agent.validate(build_ctx, validation)`, reads the response file, and returns the parsed `ValidationResponse`. If the agent raises an error or returns an invalid response, returns a failure response.
 
 The **ValidationSuite** is responsible for creating the agent via `create_from_profile(agent_profile)` and passing it to the `AgentValidationRunner`. The runner does not create agents itself.
 

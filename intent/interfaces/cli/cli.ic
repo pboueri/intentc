@@ -51,6 +51,8 @@ If the config file is missing, the CLI uses hardcoded sensible defaults. The con
 
 `load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config uses `model_config = {"extra": "ignore"}`.
 
+`save_config(config: Config, project_root: Path) -> Path` writes the config. Parameter order: config FIRST, project_root SECOND.
+
 ## Commands
 
 ### `intentc init [name]`
@@ -76,7 +78,7 @@ Build features using the configured agent.
 2. Load config via `load_config()`.
 3. Resolve agent profile: `--profile` flag > config default.
 4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
-5. Call `Builder.Build(opts)`.
+5. Call `builder.build(opts)` (snake_case).
 6. Print results: for each target, show status, duration, and step summaries.
 7. Exit with code 1 if any target failed.
 
@@ -95,7 +97,7 @@ Run validations independently of the build pipeline.
 
 1. Load the project and config.
 2. Resolve agent profile.
-3. Construct the `Builder` and call `Builder.Validate(target, output_dir)`.
+3. Construct the `Builder` and call `builder.validate(target, output_dir)` (snake_case).
 4. Print results: for each validation, show name, status, and reason.
 5. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
 6. Exit with code 1 if any error-severity validation failed.
@@ -112,8 +114,8 @@ Run validations independently of the build pipeline.
 Revert a target's generated code and reset its state.
 
 1. Load the project and config.
-2. If `--all` is passed, call `Builder.CleanAll(output_dir)`.
-3. Otherwise, call `Builder.Clean(target, output_dir)` for the specified target.
+2. If `--all` is passed, call `builder.clean_all(output_dir)` (snake_case).
+3. Otherwise, call `builder.clean(target, output_dir)` for the specified target.
 4. Print what was cleaned.
 
 **Arguments:**
@@ -128,9 +130,10 @@ Revert a target's generated code and reset its state.
 Enter interactive planning mode with the agent for a specific feature.
 
 1. Load the project and config.
-2. Resolve agent profile.
-3. Construct a `BuildContext` for the target.
-4. Call `agent.Plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
+2. **Validate feature exists** — If `target` is not in `project.features`, print an error listing available features and exit with code 2.
+3. Resolve agent profile.
+4. Construct a `BuildContext` for the target.
+5. Call `agent.plan(ctx)` (snake_case) which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
 
 **Arguments:**
 - `target` (positional, required) — feature path to plan.
@@ -146,7 +149,7 @@ Show the build state for all tracked targets.
 1. Load config.
 2. Construct a `StateManager` for the output directory.
 3. Call `list_targets()` and display a table with columns: target, status, last build timestamp, generation ID.
-4. If `--outdated` is passed, also run `Builder.DetectOutdated()` and annotate stale targets.
+4. If `--outdated` is passed, also run `builder.detect_outdated()` (snake_case) and annotate stale targets.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
