@@ -90,6 +90,7 @@ Build features using the configured agent.
 - `--dry-run / -n` — print the build plan without executing.
 - `--output-dir / -o` — override the output directory (default from config).
 - `--profile / -p` — agent profile name override.
+- `--implementation / -i` — implementation name to use (from implementations/ directory).
 
 ### `intentc validate [target]`
 
@@ -108,6 +109,7 @@ Run validations independently of the build pipeline.
 **Options:**
 - `--output-dir / -o` — override the output directory.
 - `--profile / -p` — agent profile override.
+- `--implementation / -i` — implementation name to use.
 
 ### `intentc clean [target]`
 
@@ -141,6 +143,7 @@ Enter interactive planning mode with the agent for a specific feature.
 **Options:**
 - `--output-dir / -o` — override the output directory.
 - `--profile / -p` — agent profile override.
+- `--implementation / -i` — implementation name to use.
 
 ### `intentc status`
 
@@ -180,6 +183,7 @@ Evaluate functional equivalence between two output directories. This is defined 
 
 **Options:**
 - `--profile / -p` — agent profile override.
+- `--implementation / -i` — implementation name to use.
 
 Exit code 0 if equivalent, 1 if divergent.
 

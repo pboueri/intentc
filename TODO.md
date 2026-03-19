@@ -30,7 +30,7 @@ Personal running notes — not for Claude to act on independently.
 
 ## New Capabilities
 
-- [ ] Multi-language/multi-target builds — support multiple implementation.ic files (e.g. implementation.python.ic, implementation.typescript.ic) and select which one at build time
+- [x] Multi-language/multi-target builds — implementations/ directory with multiple .ic files, selected via `--implementation` flag
 - [ ] Add a planning mode to `init` to help seed the DAG in an interactive manner
 - [ ] Add a `refactor` mode that takes instructions to refactor all intent files, e.g. removing all language references or adding critical features
 - [ ] Add a tool that makes responses from the agent easier than writing a file to disk (if it makes sense to)

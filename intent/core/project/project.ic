@@ -14,13 +14,15 @@ The project structure is below
 ```
  intent/
     project.ic             # What this project is and why
-    implementation.ic      # How it's built (language, libs, conventions, infrastructure)
+    implementations/       # How it's built — one or more implementation specs
+      default.ic           # Default implementation (language, libs, conventions)
+      *.ic                 # Alternative implementations for cross-language/target builds
     assertions/
-      *.icv                # A project level assertion that is not tied to any particular feature. 
+      *.icv                # A project level assertion that is not tied to any particular feature.
     {module}/              # Can be arbitrarily nested
        {feature}/
         *.ic               # Feature intent(s) -- can be dependent on other feature intents by referencing {module / feature}
-        *.icv              # Feature validations -- different types and different conventions. Think of them as tests or validation to be run after the feature is completed and iterated on until they pass. 
+        *.icv              # Feature validations -- different types and different conventions. Think of them as tests or validation to be run after the feature is completed and iterated on until they pass.
         *.*                # Any supporitng materials referenced in the intent files via relative local paths (can reference files elsewhere)
 ```
 
@@ -55,10 +57,15 @@ No `supporting_files` field — only `path`, `intents`, and `validations`.
 class Project(BaseModel):
     model_config = {"extra": "ignore"}
     project_intent: ProjectIntent
-    implementation: Implementation | None = None
+    implementations: dict[str, Implementation] = {}  # name -> Implementation
     assertions: list[ValidationFile] = []
     features: dict[str, FeatureNode] = {}
     intent_dir: Path | None = None   # the Path to the intent/ directory, set by load_project
+
+    def resolve_implementation(self, name: str | None = None) -> Implementation | None:
+        """Resolve which implementation to use.
+        If name is given, look it up. If None, use the single one or 'default'.
+        Raises KeyError if name not found, ValueError if ambiguous."""
 ```
 
 ### DAG Traversal Methods

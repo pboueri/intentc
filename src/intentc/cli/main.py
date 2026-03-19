@@ -126,6 +126,7 @@ def build(
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Print the build plan without executing.")] = False,
     output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
     profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile name override.")] = None,
+    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use (from implementations/ directory).")] = None,
 ) -> None:
     """Build features using the configured agent."""
     project = _load_project_or_exit()
@@ -137,6 +138,7 @@ def build(
         force=force,
         dry_run=dry_run,
         output_dir=resolved_output,
+        implementation=implementation or "",
     )
     results, err = builder.build(opts)
     render_build_results(results, dry_run=dry_run)
@@ -154,13 +156,14 @@ def validate(
     ] = None,
     output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
     profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
+    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
 ) -> None:
     """Run validations independently of the build pipeline."""
     project = _load_project_or_exit()
     config = load_config(Path("."))
     builder, resolved_output = _make_builder(project, config, profile, output_dir)
 
-    result = builder.validate(target, resolved_output)
+    result = builder.validate(target, resolved_output, implementation=implementation)
 
     if isinstance(result, list):
         render_validation_results(result)
@@ -207,6 +210,7 @@ def plan(
     ],
     output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
     profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
+    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
 ) -> None:
     """Enter interactive planning mode with the agent for a specific feature."""
     project = _load_project_or_exit()
@@ -222,6 +226,7 @@ def plan(
         )
         raise typer.Exit(code=2)
 
+    resolved_impl = project.resolve_implementation(implementation)
     node = project.features[target]
     intent = node.intents[0] if node.intents else IntentFile(name=target)
     ctx = BuildContext(
@@ -231,7 +236,7 @@ def plan(
         generation_id="plan",
         dependency_names=list(node.depends_on),
         project_intent=project.project_intent,
-        implementation=project.implementation,
+        implementation=resolved_impl,
         response_file_path="",
     )
     agent.plan(ctx)
@@ -308,6 +313,7 @@ def compare(
         typer.Argument(help="Path to the candidate output directory."),
     ],
     profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
+    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
 ) -> None:
     """Evaluate functional equivalence between two output directories."""
     from intentc.differencing.differencing import run_differencing
@@ -327,7 +333,7 @@ def compare(
     agent_profile = _resolve_profile(profile, config)
 
     try:
-        result = run_differencing(dir_a, dir_b, project, agent_profile)
+        result = run_differencing(dir_a, dir_b, project, agent_profile, implementation=implementation)
     except Exception as exc:
         print_error(str(exc))
         raise typer.Exit(code=1)
