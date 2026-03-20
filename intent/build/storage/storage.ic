@@ -1,7 +1,7 @@
 ---
 name: storage
 version: 1
-depends_on: [core/specifications, core/project, build/state, build/agents, build/validations]
+depends_on: [core/specifications, core/project]
 tags: [build, storage, foundation]
 ---
 

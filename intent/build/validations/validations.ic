@@ -1,6 +1,6 @@
 ---
 name: validations
-version: 2
+version: 1
 depends_on: [core/specifications, core/project, build/agents, build/storage]
 tags: [build, validation]
 ---

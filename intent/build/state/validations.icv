@@ -1,5 +1,5 @@
 target: build/state
-version: 2
+version: 1
 validations:
   - name: state-types-and-interfaces
     type: agent_validation

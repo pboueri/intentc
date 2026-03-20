@@ -1,6 +1,6 @@
 ---
 name: cli
-version: 2
+version: 1
 depends_on:
   - core/*
   - build/agents
