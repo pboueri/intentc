@@ -27,6 +27,7 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
+from intentc.build.storage.backend import GenerationStatus, StorageBackend
 from intentc.build.validations import ValidationSuite, ValidationSuiteResult
 from intentc.core.project import Project
 from intentc.core.types import IntentFile
@@ -58,6 +59,7 @@ class Builder:
         self.state_manager = state_manager
         self.version_control = version_control
         self.agent_profile = agent_profile
+        self._storage: StorageBackend = state_manager.backend
         self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
         self._named_profiles: dict[str, AgentProfile] = {}
 
@@ -80,34 +82,69 @@ class Builder:
         if opts.dry_run:
             return self._dry_run_results(build_set), None
 
-        # 3. Generate generation ID
+        # 3. Generate generation ID and create generation record
         generation_id = str(uuid.uuid4())
+        self._storage.create_generation(
+            generation_id,
+            opts.output_dir,
+            self.agent_profile.name,
+            opts.model_dump(),
+        )
 
         # 4. Resolve output directory
         output_dir = Path(opts.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # 5. Build each target in topological order
+        self._storage.log_generation_event(
+            generation_id,
+            f"Build plan: {', '.join(build_set)} ({len(build_set)} targets)",
+        )
         results: list[BuildResult] = []
-        for target in build_set:
-            # Skip if already built and not forcing
-            if not opts.force and self.state_manager.get_status(target) == TargetStatus.BUILT:
-                continue
+        build_failed = False
+        try:
+            for target in build_set:
+                # Skip if already built and not forcing
+                if not opts.force and self.state_manager.get_status(target) == TargetStatus.BUILT:
+                    self._storage.log_generation_event(generation_id, f"Skipping {target} (already built)")
+                    continue
 
-            result = self._build_target(target, generation_id, opts)
-            results.append(result)
+                result = self._build_target(target, generation_id, opts)
+                results.append(result)
 
-            # Save result
-            self.state_manager.save_build_result(target, result)
+                # Save result
+                self.state_manager.save_build_result(target, result)
 
-            # On failure, stop immediately
-            if result.status == TargetStatus.FAILED:
-                return results, RuntimeError(
-                    f"Build failed for target '{target}': "
-                    + (result.steps[-1].summary if result.steps else "unknown error")
-                )
+                # Clean up build response file
+                response_file = self._last_response_file
+                if response_file and response_file.exists():
+                    try:
+                        import json
+                        response_json = json.loads(response_file.read_text())
+                        self._storage.save_agent_response(None, None, "build", response_json)
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                    try:
+                        response_file.unlink()
+                    except OSError:
+                        pass
 
-        return results, None
+                # On failure, stop immediately
+                if result.status == TargetStatus.FAILED:
+                    build_failed = True
+                    self._storage.log_generation_event(
+                        generation_id, f"Build failed for target '{target}'"
+                    )
+                    return results, RuntimeError(
+                        f"Build failed for target '{target}': "
+                        + (result.steps[-1].summary if result.steps else "unknown error")
+                    )
+
+            return results, None
+        finally:
+            # 6. Complete generation
+            status = GenerationStatus.FAILED if build_failed else GenerationStatus.COMPLETED
+            self._storage.complete_generation(generation_id, status)
 
     def _determine_build_set(self, opts: BuildOptions) -> list[str]:
         """Determine which targets to build, in topological order."""
@@ -185,6 +222,8 @@ class Builder:
             "sandbox_read_paths": sandbox_read,
         })
 
+    _last_response_file: Path | None = None
+
     def _build_target(
         self, target: str, generation_id: str, opts: BuildOptions
     ) -> BuildResult:
@@ -212,6 +251,7 @@ class Builder:
         step_start = datetime.now()
         self.state_manager.build_response_dir.mkdir(parents=True, exist_ok=True)
         response_file = self.state_manager.build_response_dir / f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
+        self._last_response_file = response_file
         ctx = BuildContext(
             intent=node.intents[0] if node.intents else IntentFile(name=target),
             validations=node.validations,
@@ -268,6 +308,7 @@ class Builder:
                 agent_profile=profile,
                 output_dir=opts.output_dir,
                 val_response_dir=self.state_manager.val_response_dir,
+                storage_backend=self._storage,
             )
             suite_result = suite.validate_feature(target)
 
@@ -298,6 +339,13 @@ class Builder:
         step_start = datetime.now()
         commit_msg = f"build {target} [gen:{generation_id}]"
         commit_id = self.version_control.checkpoint(commit_msg)
+
+        # Capture git diff
+        try:
+            git_diff = self.version_control.diff(f"{commit_id}~1", commit_id)
+        except Exception:
+            git_diff = None
+
         steps.append(BuildStep(
             phase="checkpoint",
             status="success",
@@ -364,6 +412,7 @@ class Builder:
             agent_profile=profile,
             output_dir=output_dir,
             val_response_dir=self.state_manager.val_response_dir,
+            storage_backend=self._storage,
         )
         if target is not None:
             return suite.validate_feature(target)

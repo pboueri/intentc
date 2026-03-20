@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import abc
 import enum
-import json
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
 
+from intentc.build.storage.backend import StorageBackend
+from intentc.build.storage.sqlite import SQLiteBackend
 from intentc.core.project import Project
 
 
@@ -56,22 +57,6 @@ def _state_dir(base_dir: Path, output_dir: str) -> Path:
     return base_dir / ".intentc" / "state" / output_dir
 
 
-def _serialize_state(targets: dict[str, _TargetEntry]) -> dict:
-    """Convert internal state to JSON-serializable dict."""
-    return {
-        "version": 1,
-        "targets": {
-            name: {
-                "status": entry.status.value,
-                "build_result": _result_to_dict(entry.build_result)
-                if entry.build_result
-                else None,
-            }
-            for name, entry in targets.items()
-        },
-    }
-
-
 def _result_to_dict(r: BuildResult) -> dict:
     return {
         "target": r.target,
@@ -112,20 +97,6 @@ def _result_from_dict(d: dict) -> BuildResult:
     )
 
 
-class _TargetEntry:
-    """Internal bookkeeping for a single target."""
-
-    __slots__ = ("status", "build_result")
-
-    def __init__(
-        self,
-        status: TargetStatus = TargetStatus.PENDING,
-        build_result: BuildResult | None = None,
-    ):
-        self.status = status
-        self.build_result = build_result
-
-
 # ---------------------------------------------------------------------------
 # StateManager
 # ---------------------------------------------------------------------------
@@ -134,49 +105,43 @@ class _TargetEntry:
 class StateManager:
     """Manages per-target state for a given output directory.
 
-    State is persisted as versioned JSON at
-    ``.intentc/state/{output_dir}/state.json``.  An append-only build log
-    lives alongside at ``build-log.jsonl``.
+    Delegates all persistence to a ``StorageBackend``.
     """
 
-    def __init__(self, base_dir: Path, output_dir: str) -> None:
+    def __init__(
+        self, base_dir: Path, output_dir: str, backend: StorageBackend | None = None
+    ) -> None:
         self._dir = _state_dir(base_dir, output_dir)
-        self._state_path = self._dir / "state.json"
-        self._log_path = self._dir / "build-log.jsonl"
-        self._targets: dict[str, _TargetEntry] = {}
-        self._load()
+        self._backend = backend or SQLiteBackend(base_dir, output_dir)
+
+    @property
+    def backend(self) -> StorageBackend:
+        return self._backend
 
     # -- public API --------------------------------------------------------
 
     def get_status(self, target: str) -> TargetStatus:
         """Return current status; ``pending`` if unknown."""
-        entry = self._targets.get(target)
-        return entry.status if entry else TargetStatus.PENDING
+        return TargetStatus(self._backend.get_status(target))
 
     def get_build_result(self, target: str) -> BuildResult | None:
         """Last build result, or ``None`` if never built."""
-        entry = self._targets.get(target)
-        return entry.build_result if entry else None
+        d = self._backend.get_build_result(target)
+        if d is None:
+            return None
+        return _result_from_dict(d)
 
     def save_build_result(self, target: str, result: BuildResult) -> None:
-        """Persist a build result, update status, and append to the build log."""
-        entry = self._targets.get(target)
-        if entry is None:
-            entry = _TargetEntry()
-            self._targets[target] = entry
-        entry.status = result.status
-        entry.build_result = result
-        self._save()
-        self._append_log(result)
+        """Persist a build result and update status."""
+        self._backend.save_build_result(
+            target,
+            _result_to_dict(result),
+            result.generation_id,
+        )
 
     def set_status(self, target: str, status: TargetStatus) -> None:
         """Override the status for a target."""
-        entry = self._targets.get(target)
-        if entry is None:
-            entry = _TargetEntry()
-            self._targets[target] = entry
-        entry.status = status
-        self._save()
+        self._backend.set_status(target, status.value)
 
     def mark_dependents_outdated(self, target: str, project: Project) -> None:
         """Walk the project DAG and set all descendants to ``outdated``."""
@@ -185,17 +150,15 @@ class StateManager:
 
     def reset(self, target: str) -> None:
         """Clear all state for a single target."""
-        self._targets.pop(target, None)
-        self._save()
+        self._backend.reset(target)
 
     def reset_all(self) -> None:
         """Clear all state for this output directory."""
-        self._targets.clear()
-        self._save()
+        self._backend.reset_all()
 
     def list_targets(self) -> list[tuple[str, TargetStatus]]:
         """All tracked targets and their statuses."""
-        return [(name, entry.status) for name, entry in sorted(self._targets.items())]
+        return [(name, TargetStatus(status)) for name, status in self._backend.list_targets()]
 
     @property
     def build_response_dir(self) -> Path:
@@ -206,35 +169,6 @@ class StateManager:
     def val_response_dir(self) -> Path:
         """Directory for validation response files."""
         return self._dir / "responses" / "val"
-
-    # -- persistence -------------------------------------------------------
-
-    def _load(self) -> None:
-        if not self._state_path.exists():
-            return
-        try:
-            data = json.loads(self._state_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return
-        for name, entry_data in data.get("targets", {}).items():
-            br = None
-            if entry_data.get("build_result"):
-                br = _result_from_dict(entry_data["build_result"])
-            self._targets[name] = _TargetEntry(
-                status=TargetStatus(entry_data["status"]),
-                build_result=br,
-            )
-
-    def _save(self) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(
-            json.dumps(_serialize_state(self._targets), indent=2) + "\n"
-        )
-
-    def _append_log(self, result: BuildResult) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
-        with self._log_path.open("a") as f:
-            f.write(json.dumps(_result_to_dict(result)) + "\n")
 
 
 # ---------------------------------------------------------------------------

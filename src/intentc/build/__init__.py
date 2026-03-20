@@ -19,6 +19,7 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
+from intentc.build.storage import SQLiteBackend, StorageBackend
 from intentc.build.validations import (
     AgentValidationRunner,
     ValidationContext,
@@ -41,7 +42,9 @@ __all__ = [
     "GitVersionControl",
     "MockAgent",
     "PromptTemplates",
+    "SQLiteBackend",
     "StateManager",
+    "StorageBackend",
     "TargetStatus",
     "ValidationContext",
     "ValidationResponse",
