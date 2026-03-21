@@ -15,12 +15,12 @@ Differencing answers the core question of intentc's philosophy: are two builds *
 ## Module Layout
 
 This feature generates:
-- `intentc/differencing/__init__.py` — Package init, re-exports `run_differencing`
-- `intentc/differencing/differencing.py` — The differencing workflow
+- A package init module — re-exports `run_differencing`
+- A differencing workflow module — the differencing workflow
 
-Key imports:
-- `from intentc.build.agents import AgentError, AgentProfile, DifferencingContext, DifferencingResponse, create_from_profile`
-- `from intentc.core.project import Project`
+Key dependencies:
+- `AgentError`, `AgentProfile`, `DifferencingContext`, `DifferencingResponse`, `create_from_profile` from the agents module
+- `Project` from the project module
 
 This is distinct from a textual diff. Two codebases can have entirely different implementations and still be functionally equivalent. Conversely, a one-line change can break equivalence. The evaluation requires judgment, which is why it is agent-driven.
 
@@ -112,20 +112,24 @@ The command is a thin wrapper over the `run_differencing` workflow function, fol
 
 The `run_differencing` function signature:
 
-```python
-def run_differencing(
-    output_dir_a: str,
-    output_dir_b: str,
+```
+function run_differencing(
+    output_dir_a: string,
+    output_dir_b: string,
     project: Project,
     profile: AgentProfile,
-) -> DifferencingResponse:
+    implementation: string or null = null,
+) -> DifferencingResponse
 ```
+
+The `implementation` keyword argument allows selecting which implementation to use. If null, the project's default implementation is used via `project.resolve_implementation(implementation)`.
 
 It returns a `DifferencingResponse` directly. On error (missing/malformed response file), it raises `AgentError` with a descriptive message.
 
 Steps:
-1. Create a temporary response file path (using `tempfile.NamedTemporaryFile` with `delete=False`).
-2. Construct a `DifferencingContext` with both output directories, the project intent, the implementation intent, and the response file path.
+1. Resolve the implementation via `project.resolve_implementation(implementation)`.
+2. Create a temporary response file path (using a platform temporary file that is not auto-deleted).
+3. Construct a `DifferencingContext` with both output directories, the project intent, the resolved implementation, and the response file path.
 3. Create an agent via `create_from_profile` and call `agent.difference(ctx)`.
 4. **Manually read and parse the response file** (do NOT rely on the agent's return value). If the file doesn't exist, raise `AgentError("Differencing response file not found: ...")`. If empty, raise `AgentError("Differencing response file is empty: ...")`. If JSON is malformed, raise `AgentError("Malformed JSON in differencing response file ...")`.
 5. Parse into `DifferencingResponse(**data)` and return it. No build state is modified — differencing is a pure evaluation.

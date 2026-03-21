@@ -6,7 +6,7 @@ tags: [foundation]
 
 # Core Data Structures
 
-This file defines the foundation file types and their schemas and intents within intentc, as well as key data fields for each and the resulting representation in memory for use within the system. Each file should be parseable from on disk, and writable back to disk. 
+This file defines the foundation file types and their schemas and intents within intentc, as well as key data fields for each and the resulting representation in memory for use within the system. Each file should be parseable from on disk, and writable back to disk.
 
 ## Intent Files
 
@@ -14,7 +14,7 @@ Files that end with `.ic` are intent files meant to define features. They are de
 
 The metadata fields contain the following:
 - `name` (string) - Feature identifier, matches directory path.
-- `depends_on` (list of strings) - Dependency names that are the features needed to be completed before this one runs. Supports wildcards (e.g. `core/*`) which are expanded via `fnmatch` during `load_project()`.
+- `depends_on` (list of strings) - Dependency names that are the features needed to be completed before this one runs. Supports wildcards (e.g. `core/*`) which are expanded via glob-style pattern matching during `load_project()`.
 - `tags` (optional list of strings) - Categorization tags.
 - `authors` (optional list of strings) -- who the authors of the intent are
 
@@ -22,29 +22,29 @@ The text after the front matter is stored in a field named **`body`** (NOT `cont
 
 ### In-memory representation
 
-```python
-class IntentFile(BaseModel):
-    name: str
-    depends_on: list[str] = []
-    tags: list[str] = []
-    authors: list[str] = []
-    body: str = ""                    # field name is "body", NOT "content"
-    file_references: list[str] = []
-    source_path: Path | None = None
+```
+Type IntentFile:
+    name: string
+    depends_on: list of string = []
+    tags: list of string = []
+    authors: list of string = []
+    body: string = ""                    # field name is "body", NOT "content"
+    file_references: list of string = []
+    source_path: path or null = null
 ```
 
-`ProjectIntent` and `Implementation` follow the same structure with `body: str = ""` as the content field. `ProjectIntent` has no `depends_on` field.
+`ProjectIntent` and `Implementation` follow the same structure with `body: string = ""` as the content field. `ProjectIntent` has no `depends_on` field.
 
 ### ValidationType Enum
 
-```python
-class ValidationType(str, enum.Enum):
+```
+Enum ValidationType (string-valued):
     AGENT_VALIDATION = "agent_validation"
     LLM_JUDGE = "llm_judge"
     FILE_CHECK = "file_check"
     FOLDER_CHECK = "folder_check"
     COMMAND_CHECK = "command_check"
-``` 
+```
 
 ## Validation Files
 
@@ -65,9 +65,9 @@ The full validation lifecycle and extensibility model are defined in [build/vali
 
 ## Project Intent
 
-The project intent is guiding document for the project meant for cohesion. It is a special document at `intent/project.ic` and marked as such -- a singleton. 
+The project intent is guiding document for the project meant for cohesion. It is a special document at `intent/project.ic` and marked as such -- a singleton.
 
-Aside from that it follows the same `.ic` spec but cannot have a `depends_on` flag. 
+Aside from that it follows the same `.ic` spec but cannot have a `depends_on` flag.
 
 ## Implementations
 
@@ -77,37 +77,49 @@ The selected implementation is injected in every build and validation run. When 
 
 ## Module Layout
 
-This feature generates the following files:
-- `intentc/__init__.py` — Package init. Should be empty or minimal.
-- `intentc/core/__init__.py` — Package init. Should re-export the public API from types and parser:
-  - From types: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`
-  - From parser: `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`
-- `intentc/core/types.py` — Core data models
-- `intentc/core/parser.py` — File I/O (parse and write .ic/.icv files)
-- `intentc/core/test_core.py` — Tests
+This feature produces the following modules:
+- Package init module — should be empty or minimal.
+- Core package init module — should re-export the public API from the data models and parser modules. The public API includes: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`, `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`.
+- Core data models module — defines all types described in this spec.
+- File I/O module — parse and write `.ic`/`.icv` files.
+- Tests module — tests for parsing, writing, and round-tripping.
+
+### ParseError and ParseErrors
+
+`ParseError` is a simple data type (not an exception) representing a single parse error with location context:
+
+```
+Type ParseError:
+    path: path
+    field: string or null
+    message: string
+```
+
+Its string representation formats as `"<path>: <message>"` when `field` is null, or `"<path> [<field>]: <message>"` when `field` is set.
+
+`ParseErrors` is an exception type that holds a list of `ParseError` instances and raises them together. Its message reads `"<count> parse error(s):\n<each error on its own line>"`.
 
 ### Parser Function Signatures
 
-```python
-def parse_intent_file(
-    path: Path,
-    *,
-    as_project: bool = False,        # returns ProjectIntent when True
-    as_implementation: bool = False,  # returns Implementation when True
-) -> IntentFile | ProjectIntent | Implementation:
-    """Parse a .ic file. The as_project and as_implementation kwargs control the return type."""
+```
+function parse_intent_file(
+    path: path,
+    as_project: boolean = false,        # returns ProjectIntent when true
+    as_implementation: boolean = false,  # returns Implementation when true
+) -> IntentFile or ProjectIntent or Implementation
+    # Parse a .ic file. The as_project and as_implementation flags control the return type.
 
-def parse_validation_file(path: Path) -> ValidationFile: ...
+function parse_validation_file(path: path) -> ValidationFile
 
-def write_intent_file(
-    intent: IntentFile | ProjectIntent | Implementation,  # intent object FIRST
-    path: Path | None = None,                              # path SECOND (optional, defaults to source_path)
-) -> Path: ...
+function write_intent_file(
+    intent: IntentFile or ProjectIntent or Implementation,  # intent object FIRST
+    path: path or null = null,                               # path SECOND (optional, defaults to source_path)
+) -> path
 
-def write_validation_file(
-    vf: ValidationFile,     # validation file FIRST
-    path: Path | None = None,  # path SECOND
-) -> Path: ...
+function write_validation_file(
+    vf: ValidationFile,        # validation file FIRST
+    path: path or null = null, # path SECOND
+) -> path
 ```
 
 Note the parameter order: the data object is always the FIRST parameter, the path is SECOND.

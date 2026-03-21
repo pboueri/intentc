@@ -59,3 +59,56 @@ State is persisted via a `StorageBackend` interface. The default implementation 
 ## Project Structure
 
 Follow standard Go project layout conventions: `cmd/` for entry points, `internal/` for private packages. Organize packages by domain responsibility, keeping each package focused and cohesive. Tests live alongside the code they test (`*_test.go` in the same package).
+
+## Module Layout
+
+The Go implementation uses the following file structure. Each intent feature maps to specific Go packages:
+
+### core/specifications
+- `internal/core/types.go` — Core data models (IntentFile, ProjectIntent, Implementation, ValidationFile, etc.) as Go structs with json/yaml tags
+- `internal/core/parser.go` — File I/O (parse and write .ic/.icv files)
+- `internal/core/core_test.go` — Tests
+
+### core/project
+- `internal/core/project.go` — Project, FeatureNode, LoadProject, WriteProject, BlankProject
+- `internal/core/project_test.go` — Tests
+
+### build/agents
+- `internal/build/agents/agents.go` — All types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers
+- `internal/build/agents/agents_test.go` — Tests
+- `agent/` — Standalone copy for external use
+
+### build/state
+- `internal/build/state.go` — State management (StateManager, BuildResult, BuildStep, TargetStatus, VersionControl, GitVersionControl)
+- `internal/build/state_test.go` — Tests
+
+### build/storage
+- `internal/build/storage/backend.go` — StorageBackend interface and GenerationStatus
+- `internal/build/storage/sqlite.go` — SQLite implementation using modernc.org/sqlite
+- `internal/build/storage/storage_test.go` — Tests
+
+### build/validations
+- `internal/build/validations.go` — ValidationSuite, ValidationRunner, AgentValidationRunner, etc.
+- `internal/build/validations_test.go` — Tests
+
+### build/builder
+- `internal/build/builder/builder.go` — Builder and BuildOptions
+- `internal/build/builder/builder_test.go` — Tests
+
+### build/end_to_end
+- `internal/build/end_to_end_test.go` — Integration test
+
+### interfaces/cli
+- `cmd/intentc/main.go` — Entry point
+- `internal/cli/commands.go` — CLI commands using Cobra
+- `internal/cli/config.go` — Config loading/saving
+- `internal/cli/output.go` — Terminal output formatting
+- `internal/cli/cli_test.go` — Tests
+
+### differencing
+- `internal/differencing/differencing.go` — RunDifferencing workflow
+- `internal/differencing/differencing_test.go` — Tests
+
+## Data Modeling
+
+All data types use Go structs with `json` and `yaml` struct tags. Enum-like values are typed string constants. Error types use sentinel errors (`var ErrAgentFailed = errors.New(...)`) or custom error types implementing the `error` interface. Use `encoding/json` for JSON marshaling/unmarshaling.

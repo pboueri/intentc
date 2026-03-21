@@ -6,7 +6,7 @@ validations:
     severity: error
     args:
       rubric: |
-        Run `python -m pytest src/intentc/build/test_end_to_end.py -v` from
-        the repository root. The validation passes if and only if all tests
-        exit with code 0 and no failures or errors are reported.
-      context_files: ["intentc/build/test_end_to_end.py"]
+        Run the end-to-end test suite for the build pipeline and verify all tests pass
+        with exit code 0. Use the implementation's test runner (e.g., pytest for Python,
+        go test for Go). Look for the end-to-end test file within the build module of
+        the output directory.

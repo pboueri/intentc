@@ -12,21 +12,21 @@ Tracks the status and history of each target across builds. State is scoped per 
 ## Module Layout
 
 This feature generates:
-- `intentc/build/__init__.py` — Package init. Should re-export EXACTLY these symbols (no more, no less):
+- The build package init module re-exports EXACTLY these symbols (no more, no less):
   - From agents: `Agent`, `AgentError`, `AgentProfile`, `BuildContext`, `BuildResponse`, `CLIAgent`, `ClaudeAgent`, `MockAgent`, `PromptTemplates`, `ValidationResponse`, `create_from_profile`
   - From state: `BuildResult`, `BuildStep`, `GitVersionControl`, `StateManager`, `TargetStatus`, `VersionControl`
   - From validations: `AgentValidationRunner`, `ValidationContext`, `ValidationRunner`, `ValidationSuite`, `ValidationSuiteResult`
   - From storage: `StorageBackend`, `SQLiteBackend`
   - Do NOT export: `Builder`, `BuildOptions`, `CreateFromProfile`, `DifferencingContext`, `DifferencingResponse`, `DimensionResult`, `load_default_prompts`, `render_prompt`, `render_differencing_prompt`
-- `intentc/build/state.py` — State management implementation
-- `intentc/build/test_state.py` — Tests
+- State management implementation module
+- Tests module
 
 ## TargetStatus
 
-A `str` enum (`class TargetStatus(str, enum.Enum)`) with UPPERCASE member names and lowercase string values:
+A string-valued enum with UPPERCASE member names and lowercase string values:
 
-```python
-class TargetStatus(str, enum.Enum):
+```
+Enum TargetStatus (string-valued):
     PENDING = "pending"
     BUILT = "built"
     FAILED = "failed"
@@ -40,24 +40,24 @@ class TargetStatus(str, enum.Enum):
 
 ## BuildStep
 
-A single phase within a build. Captures what happened and how long it took. All fields are Pydantic BaseModel fields with `model_config = {"extra": "ignore"}`.
+A single phase within a build. Captures what happened and how long it took.
 
 - `Phase` (string) — name of the phase (e.g. "resolve_deps", "build", "validate")
 - `Status` (string) — "success" or "failure"
-- `Duration` (timedelta from datetime module) — wall-clock time as a Python `timedelta`
+- `Duration` (duration) — wall-clock time as a duration value
 - `Summary` (string) — human-readable description of what happened
 
 ## BuildResult
 
-The outcome of building a single target. All fields are Pydantic BaseModel fields with `model_config = {"extra": "ignore"}`.
+The outcome of building a single target.
 
 - `Target` (string) — feature path
 - `GenerationID` (string) — unique identifier for this build run
 - `Status` (TargetStatus) — resulting status
 - `Steps` (list of BuildStep, default empty list) — ordered phases
 - `CommitID` (string, default empty) — checkpoint ID from the VCS capturing all changes
-- `TotalDuration` (timedelta, default timedelta()) — sum of step durations as a Python `timedelta`
-- `Timestamp` (datetime) — when the build completed
+- `TotalDuration` (duration, default zero) — sum of step durations as a duration value
+- `Timestamp` (timestamp) — when the build completed
 
 ## StateManager
 
@@ -65,17 +65,17 @@ Manages per-target state for a given output directory. Delegates all persistence
 
 ### Constructor
 
-```python
-StateManager(base_dir: Path, output_dir: str, backend: StorageBackend | None = None)
+```
+StateManager(base_dir: path, output_dir: string, backend: StorageBackend or null = null)
 ```
 
-- `base_dir` — the project root directory (typically `Path(".")`)
+- `base_dir` — the project root directory (typically `"."`)
 - `output_dir` — the output directory name (e.g. `"src"`, `"src_generated/"`)
-- `backend` — optional storage backend. If `None`, a `SQLiteBackend(base_dir, output_dir)` is created.
+- `backend` — optional storage backend. If null, a `SQLiteBackend(base_dir, output_dir)` is created.
 
-The StateManager also exposes `build_response_dir` and `val_response_dir` as `@property` methods that return temporary directories for agent response file exchange. These are staging areas — response files are read, stored in the database via the backend, then deleted.
+The StateManager also exposes `build_response_dir` and `val_response_dir` as read-only properties that return temporary directories for agent response file exchange. These are staging areas — response files are read, stored in the database via the backend, then deleted. The directories are under `{base_dir}/.intentc/state/{output_dir}/responses/build` and `{base_dir}/.intentc/state/{output_dir}/responses/val` respectively (note: `val`, not `validation`).
 
-### Methods (all snake_case per Python convention)
+### Methods (following implementation naming conventions)
 
 - `get_status(target) -> TargetStatus` — returns current status; `pending` if unknown
 - `get_build_result(target) -> BuildResult or None` — last build result, None if never built
@@ -99,20 +99,29 @@ An abstract interface for checkpointing file changes. Implementations produce a 
 
 Concrete implementation backed by git. Uses commits on a build-managed branch. The checkpoint ID is the git SHA.
 
+## Testing
+
+The state module tests MUST use a real `SQLiteBackend` (not a mock) for the roundtrip tests. This is critical because the serialization and deserialization of `BuildResult`, `BuildStep`, `TargetStatus`, timestamps, and durations through the database is the core contract. A mock backend that stores in memory does not verify that the data survives SQL serialization. Specifically:
+
+- The roundtrip test creates a `StateManager` with a real `SQLiteBackend`, saves a `BuildResult`, creates a **new** `StateManager` from the same database path, and confirms all fields survive.
+- DAG-aware operations (`mark_dependents_outdated`, `reset`) should also use a real backend.
+
+Mock backends are acceptable for testing the builder's orchestration logic, but the state module's own tests must use real storage.
+
 ## Persistence
 
 All state is persisted via the `StorageBackend` (see [build/storage](../storage/storage.ic)). The default backend is SQLite, with the database at `.intentc/state/{output-dir}/intentc.db`.
 
-The `_result_to_dict` and `_result_from_dict` helper functions remain for serialization between the in-memory Pydantic models and the storage backend:
+Helper functions for serialization between in-memory models and the storage backend:
 
-- `timedelta` values are serialized as `total_seconds()` (float) and deserialized with `timedelta(seconds=...)`
-- `datetime` values use `.isoformat()` / `datetime.fromisoformat()`
-- `TargetStatus` uses `.value` for serialization and `TargetStatus(...)` for deserialization
+- `duration` values are serialized as total seconds (float) and deserialized back to a duration
+- `timestamp` values use ISO 8601 string format for serialization and deserialization
+- `TargetStatus` uses its string value for serialization and is parsed from string value for deserialization
 
 ### Response File Lifecycle
 
 Response files are **temporary**. The exchange works as follows:
-1. The caller creates a response file path under `build_response_dir` or `val_response_dir` using UUID-based naming: `f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"`
+1. The caller creates a response file path under `build_response_dir` or `val_response_dir` using UUID-based naming: target name with slashes replaced by underscores, dash, 8-char random hex, `.json` extension
 2. The agent writes its JSON response to that path.
 3. The caller reads the response file, stores the JSON in the database via `backend.save_agent_response(...)`, then **deletes the file**.
 

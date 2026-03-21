@@ -36,16 +36,15 @@ For `agent_validation`, the agent writes a temporary response file per the mecha
 
 ## ValidationSuiteResult
 
-```python
-class ValidationSuiteResult(BaseModel):
-    model_config = {"extra": "ignore"}
-    target: str
-    results: list[ValidationResponse] = []
-    passed: bool = True          # default True, set False if any error-severity fails
-    summary: str = ""            # default empty, filled by the suite
+```
+class ValidationSuiteResult:
+    target: string
+    results: list of ValidationResponse = []
+    passed: boolean = true          # default true, set false if any error-severity fails
+    summary: string = ""            # default empty, filled by the suite
 ```
 
-The summary string uses the format: `f"{passed}/{total} passed, {errors} error(s), {warnings} warning(s)"` where passed/total/errors/warnings are counts. The `_build_summary` helper computes this from the results and their severities.
+The summary string uses the format: `"{passed}/{total} passed, {errors} error(s), {warnings} warning(s)"` where passed/total/errors/warnings are counts. The `_build_summary` helper computes this from the results and their severities.
 
 Important implementation details for counting:
 - A validation **passes** when `r.status == "pass"`
@@ -55,41 +54,40 @@ Important implementation details for counting:
 
 ## Module Layout
 
-This feature generates a single module file at `intentc/build/validations.py` (not a separate package). The test file is at `intentc/build/test_validations.py`.
+This feature generates a single module file (not a separate package), along with a corresponding test file.
 
 ## ValidationSuite
 
 The ValidationSuite is the core orchestrator for running validations. It takes a project, an agent profile, an output directory, and an optional runner registry.
 
-```python
+```
 class ValidationSuite:
-    def __init__(
-        self,
+    constructor(
         project: Project,
         agent_profile: AgentProfile,
-        output_dir: str,
-        runner_registry: dict[str, ValidationRunner] | None = None,
-        val_response_dir: Path | None = None,
-        storage_backend: StorageBackend | None = None,
-    ):
+        output_dir: string,
+        runner_registry: map of string to ValidationRunner or null = null,
+        val_response_dir: Path or null = null,
+        storage_backend: StorageBackend or null = null,
+    )
 ```
 
 - `project` — the loaded Project
 - `agent_profile` — default validation profile
 - `output_dir` — the output directory
-- `runner_registry` — optional dict of custom runners (merged with defaults)
-- `val_response_dir` — optional directory for writing temporary validation response files. If None, response files are written under the output directory.
+- `runner_registry` — optional map of custom runners (merged with defaults)
+- `val_response_dir` — optional directory for writing temporary validation response files. If null, response files are written under the output directory.
 - `storage_backend` — optional storage backend for persisting validation results and agent responses. When provided, each `ValidationResponse` is saved via `backend.save_validation_result(...)` and the raw agent response JSON is saved via `backend.save_agent_response(...)` after the response file is read. The response file is then deleted.
 
 The suite receives an AgentProfile (the default validation profile, typically a lighter/faster model than the build profile). It passes this to `AgentValidationRunner`, which creates agents on demand per validation call, merging any per-validation `agent_profile` override.
 
 Profile resolution order for each validation: per-validation `agent_profile` override > suite's agentProfile > config default.
 
-### Methods (all snake_case per Python convention)
+### Methods (following implementation naming conventions)
 
-- `validate_feature(feature: str) -> ValidationSuiteResult` — Loads the .icv files for the given feature from the project, runs each validation entry through the appropriate runner, collects ValidationResponses, and returns a ValidationSuiteResult.
-- `validate_project() -> list[ValidationSuiteResult]` — Runs validate_feature for every feature in the project (in topological order), plus project-level assertions. Returns one result per feature/assertion set.
-- `validate_entries(target: str, entries: list[Validation]) -> ValidationSuiteResult` — Lower-level method that runs a specific list of validation entries against a target. Used by validate_feature and available for the builder to pass a subset.
+- `validate_feature(feature: string) -> ValidationSuiteResult` — Loads the .icv files for the given feature from the project, runs each validation entry through the appropriate runner, collects ValidationResponses, and returns a ValidationSuiteResult.
+- `validate_project() -> list of ValidationSuiteResult` — Runs validate_feature for every feature in the project (in topological order), plus project-level assertions. Returns one result per feature/assertion set.
+- `validate_entries(target: string, entries: list of Validation) -> ValidationSuiteResult` — Lower-level method that runs a specific list of validation entries against a target. Used by validate_feature and available for the builder to pass a subset.
 
 ### Validation Lifecycle
 
@@ -104,15 +102,12 @@ Profile resolution order for each validation: per-validation `agent_profile` ove
 
 ## ValidationRunner
 
-The runner interface. Each runner handles one validation type. Methods use Python snake_case:
+The runner interface. Each runner handles one validation type:
 
-```python
-class ValidationRunner(abc.ABC):
-    @abc.abstractmethod
-    def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse: ...
-
-    @abc.abstractmethod
-    def type(self) -> str: ...   # NOTE: method name is `type`, not `get_type`
+```
+abstract class ValidationRunner:
+    method run(validation: Validation, ctx: ValidationContext) -> ValidationResponse
+    method type() -> string   # NOTE: method name is `type`, not `get_type`
 ```
 
 The suite also exposes `register_runner(runner: ValidationRunner)` for post-construction registration of custom runners.
@@ -136,26 +131,26 @@ When constructing a `ValidationContext`, the suite resolves the feature intent:
 
 ### Generation ID for Validation Runs
 
-When `AgentValidationRunner` constructs a `BuildContext` for a validation call, it uses `generation_id=f"val-{uuid.uuid4().hex[:8]}"` — a unique ID prefixed with `val-`.
+When `AgentValidationRunner` constructs a `BuildContext` for a validation call, it uses `generation_id="val-{random_hex_8}"` — a unique ID prefixed with `val-`.
 
 ### AgentValidationRunner
 
 The built-in runner for `type: agent_validation`.
 
-```python
-class AgentValidationRunner(ValidationRunner):
-    def __init__(self, agent: Agent) -> None:
-        """Takes an already-created Agent instance (not an AgentProfile)."""
+```
+class AgentValidationRunner implements ValidationRunner:
+    constructor(agent: Agent)
+        # Takes an already-created Agent instance (not an AgentProfile).
 ```
 
 The runner uses the provided Agent to call `agent.validate()`. It constructs a `BuildContext` from the `ValidationContext` with these exact fields:
 
-```python
+```
 build_ctx = BuildContext(
     intent=ctx.feature_intent,
     validations=[],              # explicitly empty for validation runs
     output_dir=ctx.output_dir,
-    generation_id=f"val-{uuid.uuid4().hex[:8]}",
+    generation_id="val-{random_hex_8}",
     dependency_names=[],         # explicitly empty for validation runs
     project_intent=ctx.project_intent,
     implementation=ctx.implementation,
