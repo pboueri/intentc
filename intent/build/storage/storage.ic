@@ -1,0 +1,201 @@
+---
+name: storage
+version: 1
+depends_on: [core/specifications, core/project]
+tags: [build, storage, foundation]
+---
+
+# Storage
+
+Persistent storage for all build state, results, logs, and agent responses. The storage layer replaces the flat-file persistence (state.json, build-log.jsonl, response files) with a database-backed system. SQLite is the first implementation, but the interface is designed so that other databases (PostgreSQL, DynamoDB, etc.) can be plugged in by implementing the `StorageBackend` ABC.
+
+## Module Layout
+
+This feature generates:
+- `intentc/build/storage/__init__.py` — Package init. Re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`
+- `intentc/build/storage/backend.py` — `StorageBackend` ABC and `GenerationStatus` enum
+- `intentc/build/storage/sqlite.py` — SQLite implementation
+- `intentc/build/storage/test_storage.py` — Tests
+
+## Design Principles
+
+- **Backend-agnostic interface.** All persistence goes through `StorageBackend`. No code outside this module knows it's SQLite.
+- **Append-only audit trail.** Build results, logs, and validation results are never deleted or mutated. The `target_state` table is the only mutable surface — it tracks "current" status.
+- **Agent responses stored in DB.** Raw agent JSON responses are stored in the database. Response files on disk are temporary — the caller writes them for the agent, reads them back, stores them in the DB, then deletes the file.
+- **No intent/validation file content in the DB.** The database stores a reference (path + content hash) to intent and validation files, not their full text. Git remains the source of truth for file content.
+
+## Database Location
+
+The SQLite database lives at `.intentc/state/{output_dir}/intentc.db`. This parallels the existing state directory structure and keeps per-output-dir isolation.
+
+## Schema
+
+All tables use snake_case. `?` denotes nullable. `PK` = primary key, `FK→table` = foreign key reference. `json` columns store JSON-encoded text.
+
+### intent_file_versions
+- id: integer PK autoincrement
+- name: text not null
+- source_path: text not null
+- content_hash: text not null
+- created_at: datetime not null
+
+Tracks each unique version of an intent file by its content hash (SHA-256 of file bytes). A new row is inserted when the hash changes. No file content is stored — git is the source of truth. The `content_hash` enables the build system to detect when a file has changed without comparing timestamps.
+
+Unique constraint on `(name, content_hash)`.
+
+### validation_file_versions
+- id: integer PK autoincrement
+- target: text not null
+- source_path: text not null
+- content_hash: text not null
+- created_at: datetime not null
+
+Same versioning approach as intent files — one row per unique content hash. No file content stored.
+
+Unique constraint on `(target, source_path, content_hash)`.
+
+### generations
+- id: text PK (UUID)
+- created_at: datetime not null
+- output_dir: text not null
+- profile_name: text?
+- options_json: json?
+- status: text not null (running, completed, failed)
+
+A generation represents a single `build()` invocation. All targets built in one call share the same generation ID. `options_json` is a snapshot of the `BuildOptions` used.
+
+### generation_logs
+- id: integer PK autoincrement
+- generation_id: text not null FK->generations
+- message: text not null
+- timestamp: datetime not null
+
+Append-only log at the generation level. Captures cross-target events: build plan, ordering decisions, early termination, summary. One row per meaningful event (not per line of output — see `build_steps.log` for verbose phase output).
+
+### build_results
+- id: integer PK autoincrement
+- generation_id: text not null FK->generations
+- target: text not null
+- intent_file_version_id: integer? FK->intent_file_versions
+- status: text not null (pending, built, failed, outdated)
+- commit_id: text?
+- total_duration_secs: real not null
+- timestamp: datetime not null
+- git_diff: text?
+- files_created_json: json?
+- files_modified_json: json?
+
+One row per target per build. `git_diff` captures the full diff output from the checkpoint. `files_created_json` and `files_modified_json` are JSON arrays of relative paths from the `BuildResponse`.
+
+### build_steps
+- id: integer PK autoincrement
+- build_result_id: integer not null FK->build_results
+- phase: text not null
+- status: text not null (success, failure)
+- duration_secs: real not null
+- summary: text not null
+- log: text?
+- step_order: integer not null
+
+One row per phase (resolve_deps, build, validate, checkpoint) per build result. `log` is the full captured output for this phase — agent streaming output, validation runner output, error traces — as a single text blob. `step_order` preserves execution ordering.
+
+### validation_results
+- id: integer PK autoincrement
+- build_result_id: integer? FK->build_results
+- generation_id: text not null FK->generations
+- target: text not null
+- validation_file_version_id: integer? FK->validation_file_versions
+- validation_name: text not null
+- validation_type: text not null
+- severity: text not null (error, warning)
+- status: text not null (pass, fail)
+- reason: text not null
+- duration_secs: real?
+- timestamp: datetime not null
+
+Every validation execution is recorded. `build_result_id` is null for standalone validation runs (not triggered by a build). Links to the specific validation file version used.
+
+### agent_responses
+- id: integer PK autoincrement
+- build_result_id: integer? FK->build_results
+- validation_result_id: integer? FK->validation_results
+- response_type: text not null (build, validation)
+- response_json: json not null
+- created_at: datetime not null
+
+Raw agent JSON responses stored for audit and debugging. Exactly one of `build_result_id` or `validation_result_id` is non-null. The response file on disk is deleted after the JSON is stored here.
+
+### target_state
+- target: text not null
+- output_dir: text not null
+- status: text not null (pending, built, failed, outdated)
+- last_build_result_id: integer? FK->build_results
+- updated_at: datetime not null
+
+Composite PK: `(target, output_dir)`. This is the only mutable table — it tracks the current status of each target. Replaces `state.json`. `last_build_result_id` points to the most recent build result for quick lookup.
+
+## GenerationStatus
+
+```python
+class GenerationStatus(str, enum.Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+```
+
+## StorageBackend
+
+Abstract interface. All methods use snake_case. The backend is scoped to a single output directory (set at construction).
+
+```python
+class StorageBackend(abc.ABC):
+    @abc.abstractmethod
+    def __init__(self, base_dir: Path, output_dir: str) -> None: ...
+```
+
+### Generation Methods
+- `create_generation(generation_id: str, output_dir: str, profile_name: str | None, options: dict | None) -> None` — Insert a new generation row with status `running`.
+- `complete_generation(generation_id: str, status: GenerationStatus) -> None` — Update generation status to `completed` or `failed`.
+- `log_generation_event(generation_id: str, message: str) -> None` — Append a log entry to the generation.
+- `get_generation(generation_id: str) -> dict | None` — Retrieve generation metadata and logs.
+
+### Intent/Validation File Version Methods
+- `record_intent_version(name: str, source_path: str, content_hash: str) -> int` — Insert if new hash, return the version ID. Idempotent — returns existing ID if hash already recorded.
+- `record_validation_version(target: str, source_path: str, content_hash: str) -> int` — Same for validation files.
+
+### Build Result Methods
+- `save_build_result(target: str, result: BuildResult, intent_version_id: int | None, git_diff: str | None, files_created: list[str] | None, files_modified: list[str] | None) -> int` — Insert build result and its steps. Returns the build_result ID.
+- `get_build_result(target: str) -> BuildResult | None` — Get the latest build result for a target (via `target_state`).
+- `get_build_history(target: str, limit: int = 50) -> list[BuildResult]` — All build results for a target, newest first.
+
+### Build Step Methods
+- `save_build_step(build_result_id: int, step: BuildStep, log: str, step_order: int) -> None` — Insert a build step with its log output.
+
+### Validation Result Methods
+- `save_validation_result(build_result_id: int | None, generation_id: str, target: str, validation_file_version_id: int | None, name: str, type: str, severity: str, status: str, reason: str, duration_secs: float | None) -> int` — Insert and return the ID.
+
+### Agent Response Methods
+- `save_agent_response(build_result_id: int | None, validation_result_id: int | None, response_type: str, response_json: dict) -> None` — Store raw agent response JSON.
+
+### Target State Methods
+- `get_status(target: str) -> TargetStatus` — Current status; `pending` if unknown.
+- `set_status(target: str, status: TargetStatus) -> None` — Update current status.
+- `list_targets() -> list[tuple[str, TargetStatus]]` — All tracked targets.
+- `reset(target: str) -> None` — Remove target state entry.
+- `reset_all() -> None` — Remove all target state entries for this output directory.
+
+## SQLiteBackend
+
+Concrete implementation of `StorageBackend` using Python's built-in `sqlite3` module (no external dependencies). The database file is created lazily on first write. All tables are created via `CREATE TABLE IF NOT EXISTS` on connection.
+
+### Connection Management
+- Uses `sqlite3.connect()` with `check_same_thread=False`.
+- WAL mode enabled for concurrent read access: `PRAGMA journal_mode=WAL`.
+- Foreign keys enforced: `PRAGMA foreign_keys=ON`.
+- One connection per `SQLiteBackend` instance, opened on construction, closed explicitly or via context manager.
+
+### Migration
+- On construction, if `state.json` exists alongside the database, migrate existing state into the database and rename `state.json` to `state.json.migrated`.
+- The migration reads the flat-file state and inserts equivalent rows into `target_state` and `build_results`.
+- `build-log.jsonl` entries are migrated into `build_results` and `build_steps`.
+- Migration is idempotent — if the `.migrated` marker exists, skip.

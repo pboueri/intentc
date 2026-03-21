@@ -6,6 +6,7 @@ depends_on:
   - build/agents
   - build/state
   - build/validations
+  - build/storage
 tags: [orchestration]
 ---
 
@@ -24,6 +25,7 @@ Imports used:
 - `from intentc.build.agents import Agent, AgentError, AgentProfile, BuildContext, create_from_profile`
 - `from intentc.build.state import BuildResult, BuildStep, StateManager, TargetStatus, VersionControl`
 - `from intentc.build.validations import ValidationSuite, ValidationSuiteResult`
+- `from intentc.build.storage import StorageBackend`
 - `from intentc.core.project import Project`
 - `from intentc.core.types import IntentFile`
 
@@ -36,14 +38,16 @@ class Builder:
     _state_manager: StateManager
     _version_control: VersionControl
     _agent_profile: AgentProfile
+    _storage: StorageBackend
 ```
 
-Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing.
+Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing. The `StorageBackend` is obtained from the `StateManager` (which creates a default `SQLiteBackend` if none is provided).
 
 ```python
 class Builder:
     def __init__(self, project, state_manager, version_control, agent_profile):
         self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
+        self._storage: StorageBackend = state_manager.backend
 ```
 
 ## BuildOptions
@@ -73,9 +77,9 @@ Returns a tuple of (results, error). Error is non-None if any target failed. The
 
 1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending` or `outdated` only (NOT `failed`) — or all if `force`. Always in topological order. If the build set is empty, return `([], None)` early.
 2. **Dry run check** — If `dryRun`, return the build set with their current statuses. No side effects.
-3. **Generate generation ID** — A single UUID for this entire build invocation.
+3. **Generate generation ID** — A single UUID for this entire build invocation. Create a generation record via `storage.create_generation(generation_id, output_dir, profile_name, opts_dict)` with status `running`.
 4. **Resolve output directory** — Use `opts.outputDir`. Create if it doesn't exist.
-5. **Build each target** in topological order:
+5. **Build each target** in topological order. Log generation-level events (build plan, ordering, skip decisions) via `storage.log_generation_event(generation_id, message)`:
 
 For each target in the build set:
 
@@ -133,12 +137,14 @@ For each target in the build set:
         )
         ```
         Invoke `agent.build(ctx)` (snake_case). On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
-     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, and the output dir. Call `suite.validate_feature(target)` (snake_case). If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
-     4. `checkpoint` — Call `version_control.checkpoint()` (snake_case) with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`.
+     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, the output dir, and the storage backend. Call `suite.validate_feature(target)` (snake_case). If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
+     4. `checkpoint` — Call `version_control.checkpoint()` (snake_case) with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`. Capture the git diff via `version_control.diff("{commit_id}~1", commit_id)` and store it on the build result.
 
    - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), and timestamp. If all steps succeeded, status is `built`. If any step failed, status is `failed`.
-   - **Save** — `state_manager.save_build_result(target, result)` (snake_case).
-   - **On failure** — If the target's status is `failed`, stop the DAG walk immediately and return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
+   - **Save** — `state_manager.save_build_result(target, result)` (snake_case). The storage backend records the build result, all build steps (with their `log` output), the git diff, and the file manifest (files_created, files_modified from the `BuildResponse`). The build agent response file is read, stored via `storage.save_agent_response(...)`, then deleted from disk.
+   - **On failure** — If the target's status is `failed`, stop the DAG walk immediately. Log the failure via `storage.log_generation_event(...)`. Return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
+
+6. **Complete generation** — After the build loop (whether all targets succeeded or one failed), call `storage.complete_generation(generation_id, status)` where status is `completed` or `failed`.
 
 ### Atomicity
 

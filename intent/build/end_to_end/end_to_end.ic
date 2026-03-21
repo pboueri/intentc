@@ -1,0 +1,126 @@
+---
+name: end_to_end
+version: 1
+depends_on:
+  - core/*
+  - build/agents
+  - build/state
+  - build/storage
+  - build/builder
+  - build/validations
+tags: [build, testing]
+---
+
+# End-to-End Build Pipeline Test
+
+A pytest-based integration test that exercises the full `intentc build` pipeline in an isolated temporary directory with a clean git repository. The agent is mocked — this test validates the orchestration, not the agent output.
+
+## Module Layout
+
+This feature generates a single test file:
+- `intentc/build/test_end_to_end.py`
+
+No production code is generated — this is a test-only feature.
+
+## Test Setup
+
+Each test operates in a fresh `tmp_path` (pytest fixture). The setup must:
+
+1. **Initialize a git repo** in `tmp_path` — run `git init`, configure a dummy user name/email, and create an initial empty commit so that the version control layer has a baseline.
+2. **Create an intentc project on disk** under `tmp_path/intent/`:
+   - `intent/project.ic` — a minimal project intent (name + body)
+   - `intent/implementation.ic` — implementation spec (e.g., Python 3.11, output to `src/`)
+   - At least **three features** forming a dependency chain, e.g.:
+     - `intent/models/models.ic` — no dependencies
+     - `intent/store/store.ic` — `depends_on: [models]`
+     - `intent/api/api.ic` — `depends_on: [store]`
+   - At least one feature should have a `.icv` validation file with an `agent_validation` entry
+3. **Create `.intentc/config.yaml`** with a default profile pointing to `cli` provider
+4. **Load the project** via `load_project(tmp_path / "intent")` to get a real `Project` object with a real DAG
+5. **Wire up the Builder** with:
+   - A real `StateManager` pointed at `tmp_path`
+   - A `MockVersionControl` (from the existing test helpers in `test_builder.py`)
+   - A `MockAgent` (from `intentc.build.agents`)
+   - Inject the mock agent via `builder._create_agent = lambda p: mock_agent`
+
+## Test Cases (class TestEndToEnd)
+
+### test_full_build_pipeline
+
+Run `builder.build(BuildOptions(output_dir=...))` with no target (build all). Assert:
+
+- No error returned (second tuple element is None)
+- 3 results returned, one per feature
+- All results have `status == TargetStatus.BUILT`
+- Build order respects the dependency chain: `models` before `store` before `api`
+- Each result has build steps including `resolve_deps`, `build`, and `checkpoint`
+- The feature with validations also has a `validate` step
+- All results share the same `generation_id` (a valid UUID)
+- The `MockAgent.build_calls` has 3 entries, one per feature
+- `StateManager.get_status(target)` returns `BUILT` for all three targets
+
+### test_idempotent_rebuild
+
+After a successful full build, run `builder.build()` again with the same options. Assert:
+
+- Returns empty results list (nothing to build)
+- No additional agent calls
+- State is unchanged
+
+### test_force_rebuild
+
+After a successful full build, run `builder.build()` with `force=True`. Assert:
+
+- All 3 targets are rebuilt
+- Agent is called 3 more times
+- All results have `status == BUILT`
+
+### test_targeted_build_with_ancestors
+
+Run `builder.build(BuildOptions(target="api", ...))`. Assert:
+
+- All 3 targets are built (api depends on store depends on models)
+- Build order is models -> store -> api
+- Only the targeted feature and its ancestors are included
+
+### test_partial_build_then_continue
+
+Build only `models` first via `BuildOptions(target="models")`. Then build all. Assert:
+
+- First build: 1 result (models only)
+- Second build: 2 results (store and api, since models is already built)
+- models is NOT rebuilt in the second pass
+
+### test_build_failure_stops_dag
+
+Use a `MockAgent` whose `build` raises `AgentError` when building `store`. Assert:
+
+- `models` builds successfully
+- `store` fails
+- `api` is never attempted (not in results)
+- Error is returned (second tuple element is not None)
+- `StateManager.get_status("store")` returns `FAILED`
+
+## Imports
+
+```python
+import subprocess
+import uuid
+from pathlib import Path
+
+import pytest
+
+from intentc.build.agents import AgentError, AgentProfile, BuildResponse, MockAgent
+from intentc.build.builder.builder import Builder, BuildOptions
+from intentc.build.state import StateManager, TargetStatus, VersionControl
+from intentc.core.project import load_project
+```
+
+## Important Implementation Notes
+
+- Use `subprocess.run(["git", ...], cwd=tmp_path)` for git init, not a library
+- The `MockVersionControl` class should be defined locally (or imported if accessible) — it implements the `VersionControl` protocol with in-memory storage
+- The `MockAgent` default response is `BuildResponse(status="success", summary="ok")` which is sufficient
+- All file I/O uses `tmp_path` — never touch the real repo
+- No network calls, no real agents, no real Claude invocations
+- Tests should be fast (< 1 second each)

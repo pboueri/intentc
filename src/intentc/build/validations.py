@@ -16,6 +16,7 @@ from intentc.build.agents import (
     ValidationResponse,
     create_from_profile,
 )
+from intentc.build.storage.backend import StorageBackend
 from intentc.core.project import Project
 from intentc.core.types import (
     Implementation,
@@ -158,12 +159,14 @@ class ValidationSuite:
         output_dir: str,
         runner_registry: dict[str, ValidationRunner] | None = None,
         val_response_dir: Path | None = None,
+        storage_backend: StorageBackend | None = None,
     ) -> None:
         self._project = project
         self._agent_profile = agent_profile
         self._output_dir = output_dir
         self._agent = create_from_profile(agent_profile)
         self._val_response_dir = val_response_dir
+        self._storage_backend = storage_backend
 
         # Initialize registry with the built-in agent runner
         self._runners: dict[str, ValidationRunner] = {}

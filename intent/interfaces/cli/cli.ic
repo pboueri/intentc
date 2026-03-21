@@ -7,6 +7,7 @@ depends_on:
   - build/state
   - build/validations
   - build/builder
+  - build/storage
 tags: [interface, cli]
 ---
 
@@ -29,6 +30,7 @@ Key imports used in the CLI:
 - `from intentc.build.agents import AgentProfile, BuildContext, create_from_profile`
 - `from intentc.build.builder.builder import Builder, BuildOptions`
 - `from intentc.build.state import GitVersionControl, StateManager, TargetStatus`
+- `from intentc.build.storage import SQLiteBackend`
 - `from intentc.build.validations import ValidationSuiteResult`
 - `from intentc.core.project import blank_project, load_project, write_project`
 - `from intentc.core.types import IntentFile`
@@ -226,7 +228,8 @@ def build(target: str, force: bool, output_dir: str, profile: str):
     project = load_project(Path("intent"))
     config = load_config(Path("."))
     agent_profile = resolve_profile(profile, config)
-    state_mgr = StateManager(Path("."), output_dir)
+    backend = SQLiteBackend(Path("."), output_dir)
+    state_mgr = StateManager(Path("."), output_dir, backend=backend)
     vcs = GitVersionControl(Path(output_dir))
     builder = Builder(project, state_mgr, vcs, agent_profile)
     results, err = builder.build(BuildOptions(...))
@@ -234,4 +237,4 @@ def build(target: str, force: bool, output_dir: str, profile: str):
     if err: raise typer.Exit(code=1)
 ```
 
-No shared state between commands. Each invocation is self-contained.
+No shared state between commands. Each invocation is self-contained. The `SQLiteBackend` is the default storage backend — if omitted from the `StateManager` constructor, one is created automatically.

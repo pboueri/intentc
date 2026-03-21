@@ -1,0 +1,59 @@
+target: build/storage
+version: 1
+validations:
+  - name: storage-backend-interface
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the storage module defines:
+        1. StorageBackend ABC with all specified methods (generation, build result, build step, validation result, agent response, target state)
+        2. GenerationStatus enum (running, completed, failed)
+        3. SQLiteBackend concrete implementation
+        4. The interface is backend-agnostic — no SQLite-specific types leak through the ABC
+
+  - name: sqlite-schema-creation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate that SQLiteBackend creates the database and all tables
+        on construction. Tables should include: intent_file_versions, validation_file_versions,
+        generations, generation_logs, build_results, build_steps, validation_results,
+        agent_responses, target_state. WAL mode and foreign keys should be enabled.
+
+  - name: storage-roundtrip
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate a full storage roundtrip:
+        1. Create a generation
+        2. Record an intent file version
+        3. Save a build result with steps (including log text)
+        4. Save an agent response
+        5. Save validation results
+        6. Log generation events
+        7. Complete the generation
+        8. Read back all data and confirm it survives the roundtrip
+
+  - name: target-state-management
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate target state operations:
+        1. get_status returns pending for unknown targets
+        2. set_status and get_status roundtrip correctly
+        3. list_targets returns all tracked targets
+        4. reset clears a single target without affecting others
+        5. reset_all clears all targets
+
+  - name: migration-from-flat-files
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate that when a state.json file exists alongside the
+        database path, the SQLiteBackend migrates existing state into the database
+        and renames state.json to state.json.migrated. Migration is idempotent.

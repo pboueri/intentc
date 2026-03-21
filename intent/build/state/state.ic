@@ -1,13 +1,13 @@
 ---
 name: state
 version: 1
-depends_on: [core/specifications, core/project]
+depends_on: [core/specifications, core/project, build/storage]
 tags: [build, foundation]
 ---
 
 # Build State
 
-Tracks the status and history of each target across builds. State is scoped per output directory and persisted under `.intentc/state/{output-dir}/`.
+Tracks the status and history of each target across builds. State is scoped per output directory and persisted via a `StorageBackend` (see [build/storage](../storage/storage.ic)). The default backend is SQLite.
 
 ## Module Layout
 
@@ -16,6 +16,7 @@ This feature generates:
   - From agents: `Agent`, `AgentError`, `AgentProfile`, `BuildContext`, `BuildResponse`, `CLIAgent`, `ClaudeAgent`, `MockAgent`, `PromptTemplates`, `ValidationResponse`, `create_from_profile`
   - From state: `BuildResult`, `BuildStep`, `GitVersionControl`, `StateManager`, `TargetStatus`, `VersionControl`
   - From validations: `AgentValidationRunner`, `ValidationContext`, `ValidationRunner`, `ValidationSuite`, `ValidationSuiteResult`
+  - From storage: `StorageBackend`, `SQLiteBackend`
   - Do NOT export: `Builder`, `BuildOptions`, `CreateFromProfile`, `DifferencingContext`, `DifferencingResponse`, `DimensionResult`, `load_default_prompts`, `render_prompt`, `render_differencing_prompt`
 - `intentc/build/state.py` — State management implementation
 - `intentc/build/test_state.py` — Tests
@@ -60,20 +61,19 @@ The outcome of building a single target. All fields are Pydantic BaseModel field
 
 ## StateManager
 
-Manages per-target state for a given output directory.
+Manages per-target state for a given output directory. Delegates all persistence to a `StorageBackend`.
 
 ### Constructor
 
 ```python
-StateManager(base_dir: Path, output_dir: str)
+StateManager(base_dir: Path, output_dir: str, backend: StorageBackend | None = None)
 ```
 
 - `base_dir` — the project root directory (typically `Path(".")`)
 - `output_dir` — the output directory name (e.g. `"src"`, `"src_generated/"`)
+- `backend` — optional storage backend. If `None`, a `SQLiteBackend(base_dir, output_dir)` is created.
 
-State files live at `base_dir / ".intentc" / "state" / output_dir / ...`. The `output_dir` string is used as-is in the path (do NOT sanitize slashes or transform the string).
-
-The StateManager also exposes `build_response_dir` and `val_response_dir` as `@property` methods that return the paths for build and validation response files respectively.
+The StateManager also exposes `build_response_dir` and `val_response_dir` as `@property` methods that return temporary directories for agent response file exchange. These are staging areas — response files are read, stored in the database via the backend, then deleted.
 
 ### Methods (all snake_case per Python convention)
 
@@ -101,44 +101,19 @@ Concrete implementation backed by git. Uses commits on a build-managed branch. T
 
 ## Persistence
 
-State is stored as a single JSON file per output directory at `.intentc/state/{output-dir}/state.json`. The schema is versioned. Unknown fields are tolerated on read. Missing files return empty/default state — never errors.
+All state is persisted via the `StorageBackend` (see [build/storage](../storage/storage.ic)). The default backend is SQLite, with the database at `.intentc/state/{output-dir}/intentc.db`.
 
-### Implementation Details
-
-The StateManager uses an **in-memory cache** (`dict[str, _TargetEntry]`) that is loaded from disk on construction and saved after each mutation. This is NOT Pydantic-native serialization — use manual `_serialize_state` / `_result_to_dict` / `_result_from_dict` helper functions:
+The `_result_to_dict` and `_result_from_dict` helper functions remain for serialization between the in-memory Pydantic models and the storage backend:
 
 - `timedelta` values are serialized as `total_seconds()` (float) and deserialized with `timedelta(seconds=...)`
 - `datetime` values use `.isoformat()` / `datetime.fromisoformat()`
 - `TargetStatus` uses `.value` for serialization and `TargetStatus(...)` for deserialization
-- The state file has `{"version": 1, "targets": {...}}` structure where each target entry has:
-  ```json
-  {"status": "built", "build_result": {...}}
-  ```
-  Note: the key is `"build_result"` (not `"result"`)
 
-### Build Log
+### Response File Lifecycle
 
-The build log is a separate append-only file. Use `json.dumps(_result_to_dict(result))` to serialize each entry, and `open(..., "a")` to append.
+Response files are **temporary**. The exchange works as follows:
+1. The caller creates a response file path under `build_response_dir` or `val_response_dir` using UUID-based naming: `f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"`
+2. The agent writes its JSON response to that path.
+3. The caller reads the response file, stores the JSON in the database via `backend.save_agent_response(...)`, then **deletes the file**.
 
-### Response File Naming
-
-Response files use UUID-based unique names to avoid collisions on repeated runs:
-- Build: `f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"` under `build_response_dir`
-- Validation: `f"{entry.name}-{uuid.uuid4().hex[:8]}.json"` under `val_response_dir`
-
-### Build Log
-
-The build log is a separate append-only file. Use `json.dumps(_result_to_dict(result))` to serialize each entry, and `open(..., "a")` to append.
-
-## Build Log
-
-An append-only log at `.intentc/state/{output-dir}/build-log.jsonl`. Each line is a JSON object representing a completed BuildResult. This provides full audit history independent of the mutable state file.
-
-## Response Files
-
-Agent response files are stored under `.intentc/state/{output-dir}/responses/`, organized by type:
-
-- `.intentc/state/{output-dir}/responses/build/{target}-{uuid}.json` — build agent responses
-- `.intentc/state/{output-dir}/responses/val/{validation-name}-{uuid}.json` — validation agent responses
-
-These files are historical artifacts written by agents during builds and validations. They accumulate over time and provide a record of agent outputs for debugging and audit.
+Response files do not accumulate on disk. The database is the permanent store for agent responses.

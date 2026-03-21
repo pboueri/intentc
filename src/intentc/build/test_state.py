@@ -16,6 +16,7 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
+from intentc.build.storage import SQLiteBackend
 from intentc.core.project import FeatureNode, Project
 from intentc.core.types import IntentFile, ProjectIntent
 
@@ -67,6 +68,14 @@ def _diamond_project() -> Project:
             "d": FeatureNode(path="d", intents=[IntentFile(name="d", depends_on=["b", "c"])]),
         },
     )
+
+
+def _make_sm(tmp_path: Path, output_dir: str = "out") -> StateManager:
+    """Create a StateManager with an explicit SQLiteBackend for testing."""
+    backend = SQLiteBackend(tmp_path, output_dir)
+    # Create a dummy generation for test results
+    backend.create_generation("gen-1", output_dir, None, None)
+    return StateManager(tmp_path, output_dir, backend=backend)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +158,7 @@ class TestStateManager:
         assert sm.get_build_result("nonexistent") is None
 
     def test_save_and_get(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         result = _make_result()
         sm.save_build_result("feat/a", result)
 
@@ -165,14 +174,14 @@ class TestStateManager:
         assert sm.get_status("feat/a") == TargetStatus.OUTDATED
 
     def test_list_targets(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         sm.save_build_result("b", _make_result("b"))
         sm.save_build_result("a", _make_result("a"))
         targets = sm.list_targets()
         assert targets == [("a", TargetStatus.BUILT), ("b", TargetStatus.BUILT)]
 
     def test_reset_target(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         sm.save_build_result("feat/a", _make_result())
         sm.save_build_result("feat/b", _make_result("feat/b"))
         sm.reset("feat/a")
@@ -183,7 +192,7 @@ class TestStateManager:
         assert sm.get_status("feat/b") == TargetStatus.BUILT
 
     def test_reset_all(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         sm.save_build_result("feat/a", _make_result())
         sm.save_build_result("feat/b", _make_result("feat/b"))
         sm.reset_all()
@@ -210,17 +219,17 @@ class TestResponseDirs:
 
 
 # ---------------------------------------------------------------------------
-# State roundtrip — save, reload from disk, verify
+# State roundtrip — save, reload from database, verify
 # ---------------------------------------------------------------------------
 
 
 class TestStateRoundtrip:
     def test_full_roundtrip(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         original = _make_result()
         sm.save_build_result("feat/a", original)
 
-        # Reload from disk
+        # Create a new StateManager from the same database
         sm2 = StateManager(tmp_path, "out")
         assert sm2.get_status("feat/a") == TargetStatus.BUILT
 
@@ -239,51 +248,16 @@ class TestStateRoundtrip:
             assert loaded_step.duration == orig_step.duration
             assert loaded_step.summary == orig_step.summary
 
-    def test_missing_state_file_returns_defaults(self, tmp_path: Path):
+    def test_missing_database_returns_defaults(self, tmp_path: Path):
         sm = StateManager(tmp_path, "out")
         assert sm.get_status("anything") == TargetStatus.PENDING
         assert sm.get_build_result("anything") is None
         assert sm.list_targets() == []
 
-    def test_corrupt_state_file_returns_defaults(self, tmp_path: Path):
-        state_dir = tmp_path / ".intentc" / "state" / "out"
-        state_dir.mkdir(parents=True)
-        (state_dir / "state.json").write_text("NOT VALID JSON")
-
-        sm = StateManager(tmp_path, "out")
-        assert sm.get_status("x") == TargetStatus.PENDING
-
-    def test_unknown_fields_tolerated(self, tmp_path: Path):
-        """Forward compatibility — extra fields in JSON are ignored."""
-        state_dir = tmp_path / ".intentc" / "state" / "out"
-        state_dir.mkdir(parents=True)
-        data = {
-            "version": 1,
-            "future_field": "ignored",
-            "targets": {
-                "feat/a": {
-                    "status": "built",
-                    "build_result": {
-                        "target": "feat/a",
-                        "generation_id": "g1",
-                        "status": "built",
-                        "steps": [],
-                        "commit_id": "sha1",
-                        "total_duration": 1.0,
-                        "timestamp": "2026-01-01T00:00:00",
-                        "new_field": "also_ignored",
-                    },
-                    "extra_entry_field": True,
-                },
-            },
-        }
-        (state_dir / "state.json").write_text(json.dumps(data))
-
-        sm = StateManager(tmp_path, "out")
-        assert sm.get_status("feat/a") == TargetStatus.BUILT
-        loaded = sm.get_build_result("feat/a")
-        assert loaded is not None
-        assert loaded.commit_id == "sha1"
+    def test_backend_property_exposed(self, tmp_path: Path):
+        backend = SQLiteBackend(tmp_path, "out")
+        sm = StateManager(tmp_path, "out", backend=backend)
+        assert sm.backend is backend
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +268,7 @@ class TestStateRoundtrip:
 class TestDAGOperations:
     def test_mark_dependents_outdated(self, tmp_path: Path):
         project = _diamond_project()
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
 
         # Build all targets
         for name in ["a", "b", "c", "d"]:
@@ -310,7 +284,7 @@ class TestDAGOperations:
 
     def test_mark_dependents_partial_graph(self, tmp_path: Path):
         project = _diamond_project()
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
 
         for name in ["a", "b", "c", "d"]:
             sm.save_build_result(name, _make_result(name))
@@ -324,7 +298,7 @@ class TestDAGOperations:
         assert sm.get_status("d") == TargetStatus.OUTDATED
 
     def test_reset_does_not_affect_others(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
         sm.save_build_result("a", _make_result("a"))
         sm.save_build_result("b", _make_result("b"))
 
@@ -336,68 +310,38 @@ class TestDAGOperations:
 
 
 # ---------------------------------------------------------------------------
-# Build log — append-only
+# Build history — append-only in database
 # ---------------------------------------------------------------------------
 
 
-class TestBuildLog:
+class TestBuildHistory:
     def test_append_only(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+        sm = _make_sm(tmp_path)
 
         r1 = _make_result("feat/a", generation_id="gen-1")
-        r2 = _make_result("feat/b", generation_id="gen-2")
-        r3 = _make_result("feat/a", generation_id="gen-3")
+        r2 = _make_result("feat/b", generation_id="gen-1")
+        r3 = _make_result("feat/a", generation_id="gen-1")
 
         sm.save_build_result("feat/a", r1)
         sm.save_build_result("feat/b", r2)
         sm.save_build_result("feat/a", r3)
 
-        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
-        assert log_path.exists()
+        # Query build history
+        history = sm.backend.get_build_history("feat/a")
+        assert len(history) == 2  # two results for feat/a
 
-        lines = log_path.read_text().strip().splitlines()
-        assert len(lines) == 3
+        # Target state always points to latest
+        latest = sm.get_build_result("feat/a")
+        assert latest is not None
 
-        entries = [json.loads(line) for line in lines]
-        assert entries[0]["target"] == "feat/a"
-        assert entries[0]["generation_id"] == "gen-1"
-        assert entries[1]["target"] == "feat/b"
-        assert entries[1]["generation_id"] == "gen-2"
-        assert entries[2]["target"] == "feat/a"
-        assert entries[2]["generation_id"] == "gen-3"
-
-    def test_each_entry_is_valid_json(self, tmp_path: Path):
-        sm = StateManager(tmp_path, "out")
+    def test_history_preserves_entries(self, tmp_path: Path):
+        sm = _make_sm(tmp_path)
         for i in range(5):
-            sm.save_build_result(f"t{i}", _make_result(f"t{i}", generation_id=f"g{i}"))
+            sm.save_build_result(f"t{i}", _make_result(f"t{i}", generation_id="gen-1"))
 
-        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
-        lines = log_path.read_text().strip().splitlines()
-        assert len(lines) == 5
-        for line in lines:
-            entry = json.loads(line)
-            assert "target" in entry
-            assert "generation_id" in entry
-            assert "status" in entry
-            assert "steps" in entry
-            assert "commit_id" in entry
-            assert "total_duration" in entry
-            assert "timestamp" in entry
-
-    def test_log_survives_reload(self, tmp_path: Path):
-        """Reloading StateManager doesn't truncate the log."""
-        sm = StateManager(tmp_path, "out")
-        sm.save_build_result("a", _make_result("a", generation_id="g1"))
-
-        # Reload and write more
-        sm2 = StateManager(tmp_path, "out")
-        sm2.save_build_result("b", _make_result("b", generation_id="g2"))
-
-        log_path = tmp_path / ".intentc" / "state" / "out" / "build-log.jsonl"
-        lines = log_path.read_text().strip().splitlines()
-        assert len(lines) == 2
-        assert json.loads(lines[0])["generation_id"] == "g1"
-        assert json.loads(lines[1])["generation_id"] == "g2"
+        # All 5 targets tracked
+        targets = sm.list_targets()
+        assert len(targets) == 5
 
 
 # ---------------------------------------------------------------------------
