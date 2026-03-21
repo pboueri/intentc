@@ -103,10 +103,16 @@ For each target in the build set:
                  feat_dir = intent_dir / feat
                  if feat_dir.is_dir():
                      sandbox_read.append(str(feat_dir.resolve()))
-             for f in ["project.ic", "implementation.ic"]:
-                 p = intent_dir / f
-                 if p.exists():
-                     sandbox_read.append(str(p.resolve()))
+             project_ic = intent_dir / "project.ic"
+             if project_ic.exists():
+                 sandbox_read.append(str(project_ic.resolve()))
+             impl_dir = intent_dir / "implementations"
+             if impl_dir.is_dir():
+                 sandbox_read.append(str(impl_dir.resolve()))
+             # Backward compat: legacy implementation.ic
+             impl_ic = intent_dir / "implementation.ic"
+             if impl_ic.exists():
+                 sandbox_read.append(str(impl_ic.resolve()))
          return profile.model_copy(update={
              "sandbox_write_paths": sandbox_write,
              "sandbox_read_paths": sandbox_read,

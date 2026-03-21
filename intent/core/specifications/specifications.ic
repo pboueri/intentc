@@ -69,9 +69,11 @@ The project intent is guiding document for the project meant for cohesion. It is
 
 Aside from that it follows the same `.ic` spec but cannot have a `depends_on` flag. 
 
-## Implementation
+## Implementations
 
-The `implementation.ic` is also a special file that defines how to implement the project with what languages and guidelines. It is meant to be kept separate as a way to encourage language neutrality if it is needed and is also injected in every run.
+Implementation files live in the `implementations/` directory under the intent root. Each `.ic` file defines how to implement the project with a particular language, stack, and set of guidelines. Having multiple implementations encourages language neutrality and enables cross-language builds.
+
+The selected implementation is injected in every build and validation run. When multiple implementations exist, one is selected via `--implementation {name}` on the CLI. If only one exists it is used by default; otherwise `default.ic` is used by convention.
 
 ## Module Layout
 

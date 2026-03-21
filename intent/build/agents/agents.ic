@@ -47,7 +47,7 @@ class Agent(abc.ABC):
 Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval. All commands and network access are fully allowed (equivalent to `--dangerously-skip-permissions`), but filesystem access is scoped:
 
 - **Write access**: only the output directory.
-- **Read access**: only the intent files for the current target and all of its ancestors in the DAG (plus `project.ic` and `implementation.ic`), and the output directory.
+- **Read access**: only the intent files for the current target and all of its ancestors in the DAG (plus `project.ic` and the `implementations/` directory), and the output directory.
 
 The **builder** is responsible for computing these paths from the project DAG and passing them into the `AgentProfile` via `sandbox_write_paths` and `sandbox_read_paths` before the agent is created.
 

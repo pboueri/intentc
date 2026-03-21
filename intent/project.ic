@@ -35,7 +35,7 @@ The core workflows of the project are defined below with the intended steps. Thi
 
 ### Initialize a Project
 
-A user comes to a new folder to start a project. The project structure is generated such that they can begin defining their project. The initial focus is on the core project.ic and accompanying implementation.ic, as well as initial features. The user then builds iteratively from there.
+A user comes to a new folder to start a project. The project structure is generated such that they can begin defining their project. The initial focus is on the core project.ic and an implementation in the implementations/ directory, as well as initial features. The user then builds iteratively from there.
 
 ### Iteratively add a new feature, with refinement
 
@@ -53,4 +53,4 @@ The user wants to regularly test their project is working as intended. Validatio
 
 ### Rebuild the project to a new target
 
-Sometimes new agents, new languages, or new frameworks come along that make a user want to rebuild the project from scratch to a new target. By updating implementation.ic, config, or other files, the user can build to a new output directory under the new paradigm. Combined with the .icv validations, the user can verify that the new target is functionally equivalent to the original.
+Sometimes new agents, new languages, or new frameworks come along that make a user want to rebuild the project from scratch to a new target. By adding a new implementation file in the implementations/ directory and selecting it with `--implementation`, the user can build to a new output directory under the new paradigm. Combined with the .icv validations, the user can verify that the new target is functionally equivalent to the original.

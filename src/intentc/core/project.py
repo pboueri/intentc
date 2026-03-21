@@ -56,10 +56,44 @@ class Project(BaseModel):
     model_config = {"extra": "ignore"}
 
     project_intent: ProjectIntent
-    implementation: Implementation | None = None
+    implementations: dict[str, Implementation] = {}
     assertions: list[ValidationFile] = []
     features: dict[str, FeatureNode] = {}
     intent_dir: Path | None = None
+
+    def resolve_implementation(self, name: str | None = None) -> Implementation | None:
+        """Resolve which implementation to use.
+
+        Args:
+            name: Explicit implementation name. If None, uses the default.
+
+        Returns:
+            The resolved Implementation, or None if no implementations exist.
+
+        Raises:
+            KeyError: If the named implementation is not found.
+            ValueError: If multiple implementations exist and no default can be determined.
+        """
+        if not self.implementations:
+            return None
+        if name:
+            if name not in self.implementations:
+                available = ", ".join(sorted(self.implementations))
+                raise KeyError(
+                    f"Implementation '{name}' not found. "
+                    f"Available implementations: {available}"
+                )
+            return self.implementations[name]
+        if len(self.implementations) == 1:
+            return next(iter(self.implementations.values()))
+        if "default" in self.implementations:
+            return self.implementations["default"]
+        available = ", ".join(sorted(self.implementations))
+        raise ValueError(
+            f"Multiple implementations found but no default. "
+            f"Use --implementation to select one. "
+            f"Available: {available}"
+        )
 
     def parents(self, feature_path: str) -> list[str]:
         """Direct dependencies of a feature."""
@@ -186,14 +220,25 @@ def load_project(intent_dir: Path) -> Project:
         except ParseErrors as exc:
             errors.extend(exc.errors)
 
-    # --- implementation.ic (optional) ---
-    impl_path = intent_dir / "implementation.ic"
-    implementation: Implementation | None = None
-    if impl_path.exists():
-        try:
-            implementation = parse_intent_file(impl_path, as_implementation=True)  # type: ignore[assignment]
-        except ParseErrors as exc:
-            errors.extend(exc.errors)
+    # --- implementations/ directory (optional, replaces legacy implementation.ic) ---
+    implementations: dict[str, Implementation] = {}
+    impl_dir = intent_dir / "implementations"
+    if impl_dir.is_dir():
+        for ic_path in sorted(impl_dir.glob("*.ic")):
+            try:
+                impl = parse_intent_file(ic_path, as_implementation=True)  # type: ignore[assignment]
+                implementations[ic_path.stem] = impl
+            except ParseErrors as exc:
+                errors.extend(exc.errors)
+    else:
+        # Backward compat: check for legacy intent/implementation.ic
+        impl_path = intent_dir / "implementation.ic"
+        if impl_path.exists():
+            try:
+                impl = parse_intent_file(impl_path, as_implementation=True)  # type: ignore[assignment]
+                implementations["default"] = impl
+            except ParseErrors as exc:
+                errors.extend(exc.errors)
 
     # --- assertions/*.icv (optional) ---
     assertions: list[ValidationFile] = []
@@ -207,7 +252,7 @@ def load_project(intent_dir: Path) -> Project:
 
     # --- Feature directories (everything else) ---
     features: dict[str, FeatureNode] = {}
-    skip_dirs = {intent_dir, assertions_dir}
+    skip_dirs = {intent_dir, assertions_dir, impl_dir}
 
     for ic_path in sorted(intent_dir.rglob("*.ic")):
         if ic_path.parent in skip_dirs:
@@ -288,7 +333,7 @@ def load_project(intent_dir: Path) -> Project:
 
     project = Project(
         project_intent=project_intent,
-        implementation=implementation,
+        implementations=implementations,
         assertions=assertions,
         features=features,
         intent_dir=intent_dir,
@@ -325,9 +370,10 @@ def write_project(project: Project, dest_dir: Path) -> Path:
     write_intent_file(project.project_intent, dest_dir / "project.ic")
     _copy_file_references(project.project_intent, dest_dir)
 
-    if project.implementation is not None:
-        write_intent_file(project.implementation, dest_dir / "implementation.ic")
-        _copy_file_references(project.implementation, dest_dir)
+    for impl_name, impl in project.implementations.items():
+        impl_path = dest_dir / "implementations" / f"{impl_name}.ic"
+        write_intent_file(impl, impl_path)
+        _copy_file_references(impl, impl_path.parent)
 
     for vf in project.assertions:
         if vf.source_path:
