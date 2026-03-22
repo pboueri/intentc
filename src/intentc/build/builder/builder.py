@@ -176,7 +176,7 @@ class Builder:
         return [
             t for t in topo
             if self.state_manager.get_status(t) in (
-                TargetStatus.PENDING, TargetStatus.OUTDATED,
+                TargetStatus.PENDING, TargetStatus.OUTDATED, TargetStatus.FAILED,
             )
         ]
 
@@ -258,44 +258,95 @@ class Builder:
         ))
         self._log(f"  Resolved {len(dep_names)} dependencies")
 
-        # Step 2: build (with retries)
-        step_start = datetime.now()
-        self.state_manager.build_response_dir.mkdir(parents=True, exist_ok=True)
-        response_file = self.state_manager.build_response_dir / f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
-        self._last_response_file = response_file
+        # Steps 2 & 3: build + validate (with retries)
         implementation = self.project.resolve_implementation(
             opts.implementation or None
         )
-        ctx = BuildContext(
-            intent=node.intents[0] if node.intents else IntentFile(name=target),
-            validations=node.validations,
-            output_dir=opts.output_dir,
-            generation_id=generation_id,
-            dependency_names=dep_names,
-            project_intent=self.project.project_intent,
-            implementation=implementation,
-            response_file_path=str(response_file.resolve()),
+        has_validations = any(
+            vf.validations for vf in node.validations
         )
 
-        build_error = None
+        last_failure_summary = ""
+        target_built = False
         for attempt in range(profile.retries):
+            if attempt > 0:
+                self._log(f"  Retry {attempt + 1}/{profile.retries}...")
+
+            # Step 2: build
+            step_start = datetime.now()
+            self.state_manager.build_response_dir.mkdir(parents=True, exist_ok=True)
+            response_file = self.state_manager.build_response_dir / f"{target.replace('/', '_')}-{uuid.uuid4().hex[:8]}.json"
+            self._last_response_file = response_file
+            ctx = BuildContext(
+                intent=node.intents[0] if node.intents else IntentFile(name=target),
+                validations=node.validations,
+                output_dir=opts.output_dir,
+                generation_id=generation_id,
+                dependency_names=dep_names,
+                project_intent=self.project.project_intent,
+                implementation=implementation,
+                response_file_path=str(response_file.resolve()),
+            )
+
             try:
                 agent.build(ctx)
-                build_error = None
-                break
             except AgentError as exc:
-                build_error = exc
-                if attempt < profile.retries - 1:
-                    continue
+                last_failure_summary = f"Agent error: {exc}"
+                steps.append(BuildStep(
+                    phase="build",
+                    status="failure",
+                    duration=datetime.now() - step_start,
+                    summary=last_failure_summary,
+                ))
+                self._log(f"  Build failed: {exc}")
+                continue
 
-        if build_error is not None:
-            self._log(f"  Build failed: {build_error}")
             steps.append(BuildStep(
                 phase="build",
-                status="failure",
+                status="success",
                 duration=datetime.now() - step_start,
-                summary=f"Agent error after {profile.retries} attempts: {build_error}",
+                summary="Build completed",
             ))
+            self._log("  Build step completed")
+
+            # Step 3: validate (if validations exist)
+            if has_validations:
+                self._log("  Running validations...")
+                step_start = datetime.now()
+                suite = ValidationSuite(
+                    project=self.project,
+                    agent_profile=profile,
+                    output_dir=opts.output_dir,
+                    val_response_dir=self.state_manager.val_response_dir,
+                    storage_backend=self._storage,
+                    log=self._log,
+                )
+                suite_result = suite.validate_feature(target)
+
+                if not suite_result.passed:
+                    last_failure_summary = f"Validation failed: {suite_result.summary}"
+                    steps.append(BuildStep(
+                        phase="validate",
+                        status="failure",
+                        duration=datetime.now() - step_start,
+                        summary=last_failure_summary,
+                    ))
+                    self._log(f"  Validations failed: {suite_result.summary}")
+                    continue
+
+                steps.append(BuildStep(
+                    phase="validate",
+                    status="success",
+                    duration=datetime.now() - step_start,
+                    summary=suite_result.summary,
+                ))
+                self._log(f"  Validations passed: {suite_result.summary}")
+
+            target_built = True
+            break
+
+        if not target_built:
+            self._log(f"  Target failed after {profile.retries} attempts")
             return BuildResult(
                 target=target,
                 generation_id=generation_id,
@@ -304,56 +355,6 @@ class Builder:
                 total_duration=sum((s.duration for s in steps), timedelta()),
                 timestamp=now,
             )
-
-        steps.append(BuildStep(
-            phase="build",
-            status="success",
-            duration=datetime.now() - step_start,
-            summary="Build completed",
-        ))
-        self._log("  Build step completed")
-
-        # Step 3: validate (if validations exist)
-        has_validations = any(
-            vf.validations for vf in node.validations
-        )
-        if has_validations:
-            self._log("  Running validations...")
-            step_start = datetime.now()
-            suite = ValidationSuite(
-                project=self.project,
-                agent_profile=profile,
-                output_dir=opts.output_dir,
-                val_response_dir=self.state_manager.val_response_dir,
-                storage_backend=self._storage,
-                log=self._log,
-            )
-            suite_result = suite.validate_feature(target)
-
-            if not suite_result.passed:
-                self._log(f"  Validations failed: {suite_result.summary}")
-                steps.append(BuildStep(
-                    phase="validate",
-                    status="failure",
-                    duration=datetime.now() - step_start,
-                    summary=f"Validation failed: {suite_result.summary}",
-                ))
-                return BuildResult(
-                    target=target,
-                    generation_id=generation_id,
-                    status=TargetStatus.FAILED,
-                    steps=steps,
-                    total_duration=sum((s.duration for s in steps), timedelta()),
-                    timestamp=now,
-                )
-
-            steps.append(BuildStep(
-                phase="validate",
-                status="success",
-                duration=datetime.now() - step_start,
-                summary=suite_result.summary,
-            ))
-            self._log(f"  Validations passed: {suite_result.summary}")
 
         # Step 4: checkpoint
         step_start = datetime.now()

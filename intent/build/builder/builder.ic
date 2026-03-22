@@ -73,7 +73,7 @@ Timestamps use the current timestamp (no timezone). Durations are computed as th
 
 Returns a tuple of (results, error). Error is non-null if any target failed. The error is NOT raised — it is returned as the second element of the tuple. The caller decides how to handle it.
 
-1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending` or `outdated` only (NOT `failed`) — or all if `force`. Always in topological order. If the build set is empty, return `([], null)` early.
+1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending`, `outdated`, or `failed` — or all if `force`. Always in topological order. If the build set is empty, return `([], null)` early.
 2. **Dry run check** — If `dryRun`, return the build set with their current statuses. No side effects.
 3. **Resolve implementation** — If `opts.implementation` is set, resolve it via `project.resolve_implementation(opts.implementation)` and use the result for all targets in this build. Otherwise, use the project's default implementation (via `project.resolve_implementation(null)`). The resolved implementation is passed to every `BuildContext` during this build.
 4. **Generate generation ID** — A single UUID for this entire build invocation. Create a generation record via `storage.create_generation(generation_id, output_dir, profile_name, opts_dict)` with status `running`.
@@ -106,7 +106,7 @@ The checkpoint happens only after both build and validation succeed. This means 
 
 ### Retries
 
-Retries apply only to `AgentError` exceptions (crashes, timeouts, malformed response files). They do **not** apply to validation failures or generic exceptions. `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
+Retries apply to both `AgentError` exceptions (crashes, timeouts, malformed response files) and validation failures. `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the builder retries from the `build` step (not just validation), giving the agent a fresh attempt to produce code that passes. Only after all retry attempts are exhausted is the target marked `failed`.
 
 ## Clean
 
