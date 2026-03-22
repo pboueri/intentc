@@ -36,6 +36,22 @@ Type Builder:
 
 Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing. The `StorageBackend` is obtained from the `StateManager` (which creates a default `SQLiteBackend` if none is provided).
 
+### Progress Logging
+
+The builder accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wires this to `console.print()` so users see progress as the build runs. Log messages are emitted at the following points:
+
+- **Build start**: `"Building {n} target(s): {target_list}"` when the build plan is determined
+- **Target start**: `"[{index}/{total}] Building target '{target}'..."` before each target
+- **Target skip**: `"[{index}/{total}] Skipping target '{target}' (already built)"` when skipping
+- **resolve_deps**: `"  Resolved {n} dependencies"` after dependency resolution
+- **build step**: `"  Build step completed"` after agent invocation succeeds
+- **build failure**: `"  Build failed: {error}"` after all retries exhausted
+- **validate step**: `"  Running validations..."` before validation, `"  Validations {passed|failed}: {summary}"` after
+- **checkpoint**: `"  Checkpointed: commit {short_commit_id}"` after version control checkpoint including number of files generated
+- **Target complete**: `"  Target '{target}' built successfully"` after all steps pass
+- **Clean**: `"Cleaning target '{target}'..."`, `"  Reverting commit {commit_id}"`, `"  Resetting state to pending"`, `"  Marking dependents as outdated"`
+- **Clean all**: `"Resetting all state for output directory..."`, `"  State reset complete"`
+
 ```
 Type Builder:
     constructor(project, state_manager, version_control, agent_profile):

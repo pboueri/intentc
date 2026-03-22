@@ -76,6 +76,7 @@ def _make_builder(
         state_manager=state_mgr,
         version_control=vcs,
         agent_profile=agent_profile,
+        log=console.print,
     )
     return builder, resolved_output
 

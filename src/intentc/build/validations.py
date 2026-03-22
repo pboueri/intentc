@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from pydantic import BaseModel
 
@@ -160,6 +161,7 @@ class ValidationSuite:
         runner_registry: dict[str, ValidationRunner] | None = None,
         val_response_dir: Path | None = None,
         storage_backend: StorageBackend | None = None,
+        log: Callable[[str], None] | None = None,
     ) -> None:
         self._project = project
         self._agent_profile = agent_profile
@@ -167,6 +169,7 @@ class ValidationSuite:
         self._agent = create_from_profile(agent_profile)
         self._val_response_dir = val_response_dir
         self._storage_backend = storage_backend
+        self._log: Callable[[str], None] = log or (lambda _: None)
 
         # Initialize registry with the built-in agent runner
         self._runners: dict[str, ValidationRunner] = {}
@@ -190,13 +193,16 @@ class ValidationSuite:
         for vf in node.validations:
             all_entries.extend(vf.validations)
 
+        self._log(f"Validating feature '{feature}'... ({len(all_entries)} validations)")
         return self.validate_entries(feature, all_entries)
 
     def validate_project(self) -> list[ValidationSuiteResult]:
         """Validate all features in topological order plus project-level assertions."""
+        features = self._project.topological_order()
+        self._log(f"Validating project ({len(features)} features)...")
         results: list[ValidationSuiteResult] = []
 
-        for feature_path in self._project.topological_order():
+        for feature_path in features:
             result = self.validate_feature(feature_path)
             results.append(result)
 
@@ -206,6 +212,7 @@ class ValidationSuite:
             for vf in self._project.assertions:
                 assertion_entries.extend(vf.validations)
             if assertion_entries:
+                self._log(f"Running project-level assertions ({len(assertion_entries)} entries)...")
                 result = self._validate_assertions(assertion_entries)
                 results.append(result)
 
@@ -221,14 +228,19 @@ class ValidationSuite:
         feature_intent = self._resolve_feature_intent(target)
 
         for entry in entries:
+            self._log(f"  Running validation '{entry.name}' ({entry.type.value})...")
             runner = self._runners.get(entry.type.value)
             if runner is None:
+                fail_reason = (
+                    f"No runner registered for validation type '{entry.type.value}'. "
+                    f"Registered types: {', '.join(sorted(self._runners))}"
+                )
+                self._log(f"  Validation '{entry.name}': fail — {fail_reason}")
                 responses.append(
                     ValidationResponse(
                         name=entry.name,
                         status="fail",
-                        reason=f"No runner registered for validation type '{entry.type.value}'. "
-                        f"Registered types: {', '.join(sorted(self._runners))}",
+                        reason=fail_reason,
                     )
                 )
                 continue
@@ -247,6 +259,10 @@ class ValidationSuite:
             )
             resp = runner.run(entry, ctx)
             responses.append(resp)
+            if resp.status == "pass":
+                self._log(f"  Validation '{entry.name}': pass")
+            else:
+                self._log(f"  Validation '{entry.name}': fail — {resp.reason}")
 
         # Determine pass/fail based on error-severity entries
         severity_map = {v.name: v.severity for v in entries}
