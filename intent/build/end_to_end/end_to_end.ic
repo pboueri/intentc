@@ -13,21 +13,18 @@ tags: [build, testing]
 
 # End-to-End Build Pipeline Test
 
-A pytest-based integration test that exercises the full `intentc build` pipeline in an isolated temporary directory with a clean git repository. The agent is mocked — this test validates the orchestration, not the agent output.
+An integration test that exercises the full `intentc build` pipeline in an isolated temporary directory with a clean git repository. The agent is mocked — this test validates the orchestration, not the agent output.
 
 ## Module Layout
 
-This feature generates a single test file:
-- `intentc/build/test_end_to_end.py`
-
-No production code is generated — this is a test-only feature.
+This feature generates a single test file within the build module. No production code is generated — this is a test-only feature.
 
 ## Test Setup
 
-Each test operates in a fresh `tmp_path` (pytest fixture). The setup must:
+Each test operates in a fresh temporary directory (provided by the implementation's test framework). The setup must:
 
-1. **Initialize a git repo** in `tmp_path` — run `git init`, configure a dummy user name/email, and create an initial empty commit so that the version control layer has a baseline.
-2. **Create an intentc project on disk** under `tmp_path/intent/`:
+1. **Initialize a git repo** in the temporary directory — run `git init`, configure a dummy user name/email, and create an initial empty commit so that the version control layer has a baseline.
+2. **Create an intentc project on disk** under `{tmp_dir}/intent/`:
    - `intent/project.ic` — a minimal project intent (name + body)
    - `intent/implementation.ic` — implementation spec (e.g., Python 3.11, output to `src/`)
    - At least **three features** forming a dependency chain, e.g.:
@@ -36,11 +33,11 @@ Each test operates in a fresh `tmp_path` (pytest fixture). The setup must:
      - `intent/api/api.ic` — `depends_on: [store]`
    - At least one feature should have a `.icv` validation file with an `agent_validation` entry
 3. **Create `.intentc/config.yaml`** with a default profile pointing to `cli` provider
-4. **Load the project** via `load_project(tmp_path / "intent")` to get a real `Project` object with a real DAG
+4. **Load the project** via `load_project({tmp_dir} / "intent")` to get a real `Project` object with a real DAG
 5. **Wire up the Builder** with:
-   - A real `StateManager` pointed at `tmp_path`
-   - A `MockVersionControl` (from the existing test helpers in `test_builder.py`)
-   - A `MockAgent` (from `intentc.build.agents`)
+   - A real `StateManager` pointed at the temporary directory
+   - A `MockVersionControl` (from the existing test helpers)
+   - A `MockAgent` (from the agents module)
    - Inject the mock agent via `builder._create_agent = lambda p: mock_agent`
 
 ## Test Cases (class TestEndToEnd)
@@ -101,26 +98,11 @@ Use a `MockAgent` whose `build` raises `AgentError` when building `store`. Asser
 - Error is returned (second tuple element is not None)
 - `StateManager.get_status("store")` returns `FAILED`
 
-## Imports
-
-```python
-import subprocess
-import uuid
-from pathlib import Path
-
-import pytest
-
-from intentc.build.agents import AgentError, AgentProfile, BuildResponse, MockAgent
-from intentc.build.builder.builder import Builder, BuildOptions
-from intentc.build.state import StateManager, TargetStatus, VersionControl
-from intentc.core.project import load_project
-```
-
 ## Important Implementation Notes
 
-- Use `subprocess.run(["git", ...], cwd=tmp_path)` for git init, not a library
+- Use `subprocess.run(["git", ...], cwd=tmp_dir)` for git init, not a library
 - The `MockVersionControl` class should be defined locally (or imported if accessible) — it implements the `VersionControl` protocol with in-memory storage
 - The `MockAgent` default response is `BuildResponse(status="success", summary="ok")` which is sufficient
-- All file I/O uses `tmp_path` — never touch the real repo
+- All file I/O uses the temporary directory — never touch the real repo
 - No network calls, no real agents, no real Claude invocations
 - Tests should be fast (< 1 second each)

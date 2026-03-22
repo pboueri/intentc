@@ -15,7 +15,6 @@ validations:
         6. ClaudeAgent implements Difference following the same pattern as CLIAgent (render prompt, invoke agent, read response file)
         7. MockAgent records Difference calls and returns a configurable DifferencingResponse
         All response types should be serializable to/from JSON for the response file mechanism.
-      context_files: ["src/intentc/build/agents.*"]
 
   - name: differencing-workflow-implemented
     type: agent_validation
@@ -29,8 +28,7 @@ validations:
         4. Reads and parses the DifferencingResponse JSON from the response file
         5. Returns the parsed DifferencingResponse
         6. Treats a missing or malformed response file as a failure with a descriptive error
-        7. Does not modify any build state — differencing is a pure evaluation
-      context_files: ["src/intentc/differencing/**"]
+        7. Does not modify any build state -- differencing is a pure evaluation
 
   - name: differencing-response-parsing
     type: agent_validation
@@ -45,24 +43,24 @@ validations:
         3. A missing response file produces a descriptive error
         4. A malformed JSON response file produces a descriptive error
         5. Unknown fields in the response are tolerated (forward compatibility)
-      context_files: ["src/intentc/differencing/**"]
 
   - name: differencing-prompt-rendered
     type: agent_validation
     severity: error
     args:
       rubric: |
-        Verify that the differencing prompt template exists and renders correctly:
-        1. The prompt file exists at intent/differencing/prompts/difference.prompt
-        2. The template contains the variables {project}, {implementation}, {output_dir_a}, {output_dir_b}, and {response_file}
-        3. render_differencing_prompt (or equivalent) substitutes all template variables from DifferencingContext
+        Verify that the differencing prompt template rendering works correctly:
+        1. The code has a function (render_differencing_prompt or equivalent) that renders a differencing prompt template
+        2. The template mechanism supports the variables {project}, {implementation}, {output_dir_a}, {output_dir_b}, and {response_file}
+        3. The rendering function substitutes all template variables from DifferencingContext
         4. The rendered prompt contains the actual values passed in, not raw template variable placeholders
-      context_files: ["intent/differencing/prompts/*", "src/intentc/build/agents.*"]
+        5. The prompt loading mechanism resolves prompt file paths relative to the current working directory's intent/ folder -- NOT relative to the module's source file location
 
   - name: differencing-tests-pass
     type: agent_validation
     severity: error
     args:
       rubric: |
-        Run `cd src && uv run pytest intentc/differencing/ -v` and verify all tests
-        pass with exit code 0.
+        Run the differencing tests and verify all pass with exit code 0.
+        Use the implementation's test runner (e.g., pytest for Python, go test for Go).
+        Look for the test files within the differencing module of the output directory.

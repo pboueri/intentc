@@ -7,16 +7,16 @@ validations:
     args:
       rubric: |
         This is an end-to-end validation that tests the full intentc workflow:
-        init → copy example → build → verify. All work MUST happen in an
+        init -> copy example -> build -> verify. All work MUST happen in an
         isolated temporary directory.
 
         The example project lives at `examples/todo-app/` in the intentc repo
         root. It contains a complete intentc project with three features in an
-        A → B → C dependency chain: models → store → cli.
+        A -> B -> C dependency chain: models -> store -> cli.
 
         ## Setup
 
-        1. Create a temporary directory (e.g. via `mktemp -d`).
+        1. Create a temporary directory.
         2. `cd` into it and run `intentc init todo-app`.
         3. Verify `intent/project.ic` and `.intentc/config.yaml` were created.
         4. Remove the generated `intent/` directory entirely.
@@ -25,24 +25,24 @@ validations:
            `cp -r <repo_root>/examples/todo-app/intent/ intent/`
 
         The example project defines:
-        - `intent/project.ic` — project description
-        - `intent/implementation.ic` — Python 3.11+, stdlib only, output to `src/todo_app/`
-        - `intent/models/models.ic` — Task dataclass (no dependencies)
-        - `intent/store/store.ic` — JSON persistence (depends_on: [models])
-        - `intent/cli/cli.ic` — argparse CLI (depends_on: [store])
+        - `intent/project.ic` -- project description
+        - `intent/implementation.ic` -- implementation spec
+        - `intent/models/models.ic` -- Task data type (no dependencies)
+        - `intent/store/store.ic` -- JSON persistence (depends_on: [models])
+        - `intent/cli/cli.ic` -- CLI interface (depends_on: [store])
 
         ## Build
 
         Run `intentc build` from the project root (the temp directory). This should
-        build all three features in topological order: models → store → cli.
+        build all three features in topological order: models -> store -> cli.
 
         ## Verification
 
         1. The build command exits with code 0.
-        2. The directory `src/todo_app/` exists and contains at least:
-           `__init__.py`, `models.py`, `store.py`, `cli.py`.
-        3. Running `python -c "from todo_app.models import Task, create_task; t = create_task('test'); assert t.title == 'test'; assert t.done == False; print('models OK')"` from within `src/` succeeds.
-        4. Running `python -c "from todo_app.store import TaskStore; from todo_app.models import create_task; import tempfile, os; s = TaskStore(os.path.join(tempfile.mkdtemp(), 'tasks.json')); t = create_task('hello'); s.add(t); assert len(s.list_all()) == 1; print('store OK')"` from within `src/` succeeds.
+        2. The output directory exists and contains the expected modules.
+        3. The generated code can be executed and the features work correctly:
+           - Models: Can create a Task with a title, verify the title and default done=false
+           - Store: Can create a store, add a task, and list tasks (should return 1)
 
         ## Cleanup
 
@@ -53,4 +53,4 @@ validations:
         This validation passes if and only if ALL of the above verification steps
         succeed. If any step fails, report which step failed and include the
         relevant command output or error message.
-      context_files: ["examples/todo-app/**", "src/intentc/**"]
+      context_files: ["examples/todo-app/**"]

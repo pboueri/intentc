@@ -14,32 +14,25 @@ Because the success of agents is so tied to their context and how they are manag
 
 ## AgentError
 
-An exception class for agent-related errors (crashes, timeouts, malformed responses). Must be defined in agents.py and exported from `intentc.build`:
+An exception class for agent-related errors (crashes, timeouts, malformed responses). Must be defined in the agent module and exported from the build package:
 
-```python
-class AgentError(Exception):
-    """Raised when an agent invocation fails."""
-    pass
+```
+Error AgentError:
+    "Raised when an agent invocation fails."
 ```
 
 ## Agent Interface
 
-All methods follow Python snake_case naming (PEP 8):
+All methods follow the naming conventions specified in the implementation file:
 
-```python
-class Agent(abc.ABC):
-    @abc.abstractmethod
-    def build(self, ctx: BuildContext) -> BuildResponse: ...
-    @abc.abstractmethod
-    def validate(self, ctx: BuildContext, validation: Validation) -> ValidationResponse: ...
-    @abc.abstractmethod
-    def difference(self, ctx: DifferencingContext) -> DifferencingResponse: ...
-    @abc.abstractmethod
-    def plan(self, ctx: BuildContext) -> None: ...
-    @abc.abstractmethod
-    def get_name(self) -> str: ...
-    @abc.abstractmethod
-    def get_type(self) -> str: ...
+```
+Interface Agent:
+    build(ctx: BuildContext) -> BuildResponse
+    validate(ctx: BuildContext, validation: Validation) -> ValidationResponse
+    difference(ctx: DifferencingContext) -> DifferencingResponse
+    plan(ctx: BuildContext) -> void
+    get_name() -> string
+    get_type() -> string
 ```
 
 ### Sandboxed Execution
@@ -107,65 +100,65 @@ Written by the agent after a differencing evaluation. The full specification of 
 
 ## DifferencingContext
 
-Everything the agent needs to perform a differencing evaluation. All fields snake_case:
+Everything the agent needs to perform a differencing evaluation. All fields follow implementation naming conventions:
 
-```python
-class DifferencingContext(BaseModel):
-    output_dir_a: str                          # path to the reference output directory
-    output_dir_b: str                          # path to the candidate output directory
-    project_intent: ProjectIntent              # project.ic content
-    response_file_path: str                    # where to write the DifferencingResponse JSON
-    implementation: Implementation | None = None  # implementation.ic content
+```
+Type DifferencingContext:
+    output_dir_a: string                          # path to the reference output directory
+    output_dir_b: string                          # path to the candidate output directory
+    project_intent: ProjectIntent                 # project.ic content
+    response_file_path: string                    # where to write the DifferencingResponse JSON
+    implementation: Implementation or null         # implementation.ic content, optional
 ```
 
 ## BuildContext
 
-Everything the agent needs to act on a target. All fields snake_case:
+Everything the agent needs to act on a target. All fields follow implementation naming conventions:
 
-```python
-class BuildContext(BaseModel):
-    intent: IntentFile                         # the target's parsed intent
-    validations: list[ValidationFile] = []     # associated validations
-    output_dir: str                            # where generated code lives
-    generation_id: str                         # unique identifier for this build run
-    dependency_names: list[str] = []           # names of dependency targets
-    project_intent: ProjectIntent              # project-level intent
-    implementation: Implementation | None = None  # implementation.ic content
-    response_file_path: str                    # where to write the structured response
+```
+Type BuildContext:
+    intent: IntentFile                             # the target's parsed intent
+    validations: list of ValidationFile            # associated validations, default empty
+    output_dir: string                             # where generated code lives
+    generation_id: string                          # unique identifier for this build run
+    dependency_names: list of string               # names of dependency targets, default empty
+    project_intent: ProjectIntent                  # project-level intent
+    implementation: Implementation or null          # implementation.ic content, optional
+    response_file_path: string                     # where to write the structured response
 ```
 
 ## CLIAgent
 
-Generic base that wraps any command-line tool. Constructs a prompt from BuildContext using the prompt templates, passes it to the command, then reads the response file after the process exits.
+Generic base that wraps any command-line tool. Constructs a prompt from BuildContext using the prompt templates, passes it to the command, then reads the response file after the process exits. All subprocess calls pass the command as a list of arguments (not a string) to avoid shell injection risks and ensure consistent cross-platform behavior.
 
 ## ClaudeAgent
 
 Specialization for Claude Code. The non-interactive command is built as:
-```python
+```
 cmd = ["claude", "-p", prompt, "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"]
-if self._profile.model_id:
-    cmd.extend(["--model", self._profile.model_id])
-cmd.extend(self._profile.cli_args)
+if profile.model_id is set:
+    append "--model" and profile.model_id to cmd
+append all profile.cli_args to cmd
 ```
 
 When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
 ### Streaming Output
 
-ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The non-interactive command flags are: `-p`, `--verbose`, `--output-format`, `stream-json`, `--dangerously-skip-permissions`, and optionally `--model`. The subprocess is launched with `Popen` and stdout is read line-by-line. Each line is a JSON event. Relevant events (assistant text, content deltas) are printed to stderr as they arrive so the user can follow what the agent is doing without interfering with structured response handling. The response file mechanism remains unchanged.
+ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The non-interactive command flags are: `-p`, `--verbose`, `--output-format`, `stream-json`, `--dangerously-skip-permissions`, and optionally `--model`. The subprocess is launched and stdout is read line-by-line. Each line is a JSON event. Relevant events (assistant text, content deltas) are printed to stderr as they arrive so the user can follow what the agent is doing without interfering with structured response handling. The response file mechanism remains unchanged.
 
 For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode:
-```python
+```
 cmd = ["claude"]
-if self._profile.model_id:
-    cmd.extend(["--model", self._profile.model_id])
-cmd.extend(self._profile.cli_args)
-cmd.append(prompt)  # prompt as last positional argument
+if profile.model_id is set:
+    append "--model" and profile.model_id to cmd
+append all profile.cli_args to cmd
+append prompt as last positional argument to cmd
 ```
 
 ## create_from_profile(profile: AgentProfile) -> Agent
 
-Factory function (snake_case). Reads the profile's `provider` field and returns the appropriate agent:
+Factory function. Reads the profile's `provider` field and returns the appropriate agent:
 - `"claude"` -> ClaudeAgent
 - `"cli"` -> CLIAgent with the profile's command
 - Unknown provider -> error
@@ -178,48 +171,62 @@ For testing intentc itself. Records all calls, returns configurable BuildRespons
 
 Named, reusable agent configuration. Captures provider selection and model version. Profiles are referenced by name via the `agent_profile` field in intents, validations, and config. A default profile is generated when a project is initialized.
 
-All fields use snake_case per Python convention:
+All fields follow implementation naming conventions:
 
-```python
-class AgentProfile(BaseModel):
-    name: str
-    provider: str                              # "claude", "codex", or "cli"
-    command: str = ""                          # shell command for CLI provider
-    cli_args: list[str] = []                   # additional CLI arguments
-    timeout: float = 3600.0                    # seconds, default 1 hour
-    retries: int = 3                           # retries on error
-    model_id: str | None = None                # provider-specific model identifier
-    prompt_templates: PromptTemplates | None = None  # template overrides
-    sandbox_write_paths: list[str] = []
-    sandbox_read_paths: list[str] = []
+```
+Type AgentProfile:
+    name: string
+    provider: string                               # "claude", "codex", or "cli"
+    command: string                                # shell command for CLI provider, default empty
+    cli_args: list of string                       # additional CLI arguments, default empty
+    timeout: float                                 # seconds, default 3600.0 (1 hour)
+    retries: integer                               # retries on error, default 3
+    model_id: string or null                       # provider-specific model identifier, optional
+    prompt_templates: PromptTemplates or null       # template overrides, optional
+    sandbox_write_paths: list of string             # default empty
+    sandbox_read_paths: list of string              # default empty
 ```
 
 ## Module Layout
 
 This feature generates two locations:
 
-1. **`intentc/build/agents.py`** — The canonical agent module within the intentc package. All other intentc modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent ABC, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
-2. **`intentc/build/test_agents.py`** — Tests for the agent module.
-3. **`agent/`** — A standalone copy of the agent module for use outside the intentc package. Contains `agent/__init__.py`, `agent/agent.py`, and `agent/test_agent.py`. This is a mirror/copy of the implementation in `intentc/build/agents.py`. **The standalone copy MUST have the same defaults** (e.g., `timeout=3600.0`).
+1. The canonical agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
+2. Tests for the agent module.
+3. **`agent/`** — A standalone copy of the agent module for use outside the main package. This is a mirror/copy of the canonical agent module implementation. **The standalone copy MUST have the same defaults** (e.g., `timeout=3600.0`).
 
 ## PromptTemplates
 
 All default prompts are stored in [prompts/](prompts/).
 
-The `PromptTemplates` model has these fields (all snake_case):
+The `PromptTemplates` type has these fields, following implementation naming conventions:
 
-```python
-class PromptTemplates(BaseModel):
-    build: str = ""
-    validate_template: str = ""   # NOTE: named validate_template, NOT validate (avoids Pydantic name clash)
-    plan: str = ""
-    difference: str = ""
+```
+Type PromptTemplates:
+    build: string                                  # default empty
+    validate_template: string                      # NOTE: named validate_template, NOT validate (avoids naming clashes)
+    plan: string                                   # default empty
+    difference: string                             # default empty
 ```
 
 - `build` — template for build prompts — [file](prompts/build.prompt)
 - `validate_template` — template for validation prompts — [file](prompts/validate.prompt)
 - `plan` — template for planning/refining a feature — [file](prompts/plan.prompt)
 - `difference` — template for differencing prompts — [file](../../differencing/prompts/difference.prompt)
+
+### Prompt Path Resolution
+
+Prompt template files are resolved relative to the current working directory joined with "intent" — NOT relative to the module's own file location. This is because intentc is always invoked from the project root where `intent/` lives. The helper functions are:
+
+```
+function prompts_dir() -> path:
+    return current_working_directory / "intent" / "build" / "agents" / "prompts"
+
+function diff_prompts_dir() -> path:
+    return current_working_directory / "intent" / "differencing" / "prompts"
+```
+
+`load_default_prompts()` uses these helpers. If a prompt file does not exist at the resolved path, the corresponding template field remains empty (no error raised).
 
 Templates reference variables from BuildContext or DifferencingContext:
 - `{project}` — the project-level intent

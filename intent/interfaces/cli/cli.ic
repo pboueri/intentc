@@ -15,26 +15,22 @@ tags: [interface, cli]
 
 The CLI is the primary interface for intentc. It is a thin wrapper over the core workflows, wiring dependencies at the command boundary and deferring all logic to the underlying modules. Each command constructs its own agent, state manager, version control, and builder — no shared global state.
 
-Built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/) for terminal output. The entry point is `intentc.cli.main:app` as declared in pyproject.toml. The Typer app uses `no_args_is_help=True`.
+Built with a CLI framework and terminal formatting library as specified in the implementation file. The CLI entry point is configured in the project's package manifest. The CLI app is created with name "intentc", help text "A compiler of intent — transforms specs into working code using AI agents.", and shows help when no arguments are given.
+
+### Error Handling
+
+All commands that load a project use a `_load_project_or_exit(intent_dir) -> Project` helper function. This helper wraps `load_project()` in a try/catch for `ParseErrors` and prints a friendly error message to stderr (via `print_error()`) before exiting with code 2. Never show raw tracebacks to users — always catch known exceptions and produce actionable error messages with file paths and descriptions.
 
 ## Module Layout
 
 This feature generates:
-- `intentc/cli/__init__.py` — Package init (empty)
-- `intentc/cli/main.py` — CLI commands using Typer
-- `intentc/cli/config.py` — Config loading/saving
-- `intentc/cli/output.py` — Rich output formatting
-- `intentc/cli/test_cli.py` — Tests
+- CLI package init (empty)
+- CLI commands module
+- Config loading/saving module
+- Output formatting module
+- Tests module
 
-Key imports used in the CLI:
-- `from intentc.build.agents import AgentProfile, BuildContext, create_from_profile`
-- `from intentc.build.builder.builder import Builder, BuildOptions`
-- `from intentc.build.state import GitVersionControl, StateManager, TargetStatus`
-- `from intentc.build.storage import SQLiteBackend`
-- `from intentc.build.validations import ValidationSuiteResult`
-- `from intentc.core.project import blank_project, load_project, write_project`
-- `from intentc.core.types import IntentFile`
-- `from intentc.differencing.differencing import run_differencing`
+This module depends on types from: agents, builder, state, storage, validations, core/project, core/types, differencing
 
 ## Project Config
 
@@ -51,9 +47,9 @@ default_output_dir: src
 
 If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually.
 
-`load_config(project_root: Path) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config uses `model_config = {"extra": "ignore"}`.
+`load_config(project_root) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config ignores extra/unknown fields.
 
-`save_config(config: Config, project_root: Path) -> Path` writes the config. Parameter order: config FIRST, project_root SECOND.
+`save_config(config, project_root) -> path` writes the config. Parameter order: config FIRST, project_root SECOND.
 
 ## Commands
 
@@ -62,7 +58,7 @@ If the config file is missing, the CLI uses hardcoded sensible defaults. The con
 Create a new intentc project in the current directory.
 
 1. If `intent/project.ic` already exists, abort with exit code 2 — do not overwrite.
-2. Generate a blank project via `blank_project(name or Path.cwd().name)`.
+2. Generate a blank project via `blank_project(name or current directory name)`.
 3. Write the project to `intent/` via `write_project()`.
 4. Write a default `.intentc/config.yaml` with sensible defaults via `save_config()`.
 5. Print a summary of created files via `render_init_summary()`.
@@ -76,13 +72,14 @@ Create a new intentc project in the current directory.
 
 Build features using the configured agent.
 
-1. Load the project via `load_project(intent_dir)`.
+1. Load the project via `_load_project_or_exit()` (a helper that catches `ParseErrors` and prints a friendly error message to stderr before exiting with code 2 — never show raw tracebacks to users).
 2. Load config via `load_config()`.
 3. Resolve agent profile: `--profile` flag > config default.
 4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
-5. Call `builder.build(opts)` (snake_case).
-6. Print results: for each target, show status, duration, and step summaries.
-7. Exit with code 1 if any target failed.
+5. Wire the `--implementation` flag into `BuildOptions(implementation=implementation)` so it is passed through to the builder. The builder resolves the implementation via `project.resolve_implementation()`.
+6. Call `builder.build(opts)`.
+7. Print results: for each target, show status, duration, and step summaries.
+8. Exit with code 1 if any target failed.
 
 **Arguments:**
 - `target` (positional, optional) — specific feature path to build. If omitted, builds all pending/outdated targets.
@@ -92,17 +89,18 @@ Build features using the configured agent.
 - `--dry-run / -n` — print the build plan without executing.
 - `--output-dir / -o` — override the output directory (default from config).
 - `--profile / -p` — agent profile name override.
-- `--implementation / -i` — implementation name to use (from implementations/ directory).
+- `--implementation / -i` — implementation name to use (from implementations/ directory). This value is passed as `BuildOptions.implementation` and the builder resolves it to select the correct implementation file.
 
 ### `intentc validate [target]`
 
 Run validations independently of the build pipeline.
 
-1. Load the project and config.
-2. Resolve agent profile.
-3. Construct the `Builder` and call `builder.validate(target, output_dir)` (snake_case).
-4. Print results: for each validation, show name, status, and reason.
-5. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
+1. Load the project via `_load_project_or_exit()`.
+2. Load config and resolve agent profile.
+3. If `--implementation` is specified, resolve it via `project.resolve_implementation(name)` so the correct implementation context is used during validation.
+4. Construct the `Builder` and call `builder.validate(target, output_dir)`.
+5. Print results: for each validation, show name, status, and reason.
+6. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
 6. Exit with code 1 if any error-severity validation failed.
 
 **Arguments:**
@@ -118,7 +116,7 @@ Run validations independently of the build pipeline.
 Revert a target's generated code and reset its state.
 
 1. Load the project and config.
-2. If `--all` is passed, call `builder.clean_all(output_dir)` (snake_case).
+2. If `--all` is passed, call `builder.clean_all(output_dir)`.
 3. Otherwise, call `builder.clean(target, output_dir)` for the specified target.
 4. Print what was cleaned.
 
@@ -133,11 +131,11 @@ Revert a target's generated code and reset its state.
 
 Enter interactive planning mode with the agent for a specific feature.
 
-1. Load the project and config.
+1. Load the project via `_load_project_or_exit()` and config.
 2. **Validate feature exists** — If `target` is not in `project.features`, print an error listing available features and exit with code 2.
 3. Resolve agent profile.
-4. Construct a `BuildContext` for the target.
-5. Call `agent.plan(ctx)` (snake_case) which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
+4. Construct a `BuildContext` for the target. If the feature exists but has no intents (empty intents list), create a synthetic `IntentFile(name=target)` so the agent still has context.
+5. Call `agent.plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
 
 **Arguments:**
 - `target` (positional, required) — feature path to plan.
@@ -154,7 +152,7 @@ Show the build state for all tracked targets.
 1. Load config.
 2. Construct a `StateManager` for the output directory.
 3. Call `list_targets()` and display a table with columns: target, status, last build timestamp, generation ID.
-4. If `--outdated` is passed, also run `builder.detect_outdated()` (snake_case) and annotate stale targets.
+4. If `--outdated` is passed, also run `builder.detect_outdated()` and annotate stale targets.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
@@ -165,7 +163,7 @@ Show the build state for all tracked targets.
 Show the diff of what was generated for a target.
 
 1. Load config and state manager.
-2. Look up the target's last `BuildResult` to get the `commit_id`.
+2. Look up the target's last `BuildResult` to get the `commit_id`. If no build result exists, print an error and exit with code 2 (usage error, not runtime failure).
 3. Use `GitVersionControl.diff()` to produce the diff from `{commit_id}~1` to `commit_id`.
 4. Print the diff with syntax highlighting.
 
@@ -177,7 +175,7 @@ Show the diff of what was generated for a target.
 
 ### `intentc compare <dir_a> <dir_b>`
 
-Evaluate functional equivalence between two output directories. This is defined in [differencing](../../differencing/differencing.ic) and implemented via `run_differencing()`.
+Evaluate functional equivalence between two output directories. This is defined in [differencing](../../differencing/differencing.ic). The command MUST delegate to the `run_differencing()` workflow function from the differencing module — it must NOT drive the agent directly. The `run_differencing()` function handles response file creation, agent invocation, and response parsing.
 
 **Arguments:**
 - `dir_a` (positional, required) — path to the reference output directory.
@@ -191,24 +189,24 @@ Exit code 0 if equivalent, 1 if divergent.
 
 ## Output Formatting
 
-The output module (`intentc/cli/output.py`) uses Rich for terminal output. It defines a module-level `console = Console()` variable.
+The output module uses a terminal formatting library for rich output. It defines a module-level console instance.
 
 Key function signatures:
-```python
-console = Console()
+```
+console = create_console()
 
-def render_build_results(results: list[BuildResult], dry_run: bool = False) -> None: ...
-def render_validation_result(result: ValidationSuiteResult) -> None: ...
-def render_validation_results(results: list[ValidationSuiteResult]) -> None: ...
-def render_status_table(
-    targets: list[tuple[str, TargetStatus]],
-    results: dict[str, BuildResult],
-    outdated: list[str] | None = None,
-) -> None: ...
-def render_diff(diff_text: str) -> None: ...
-def render_init_summary(files: list[str]) -> None: ...
-def render_compare_result(result: DifferencingResponse) -> None: ...
-def print_error(message: str) -> None: ...
+render_build_results(results: list of BuildResult, dry_run: boolean = false) -> void
+render_validation_result(result: ValidationSuiteResult) -> void
+render_validation_results(results: list of ValidationSuiteResult) -> void
+render_status_table(
+    targets: list of (string, TargetStatus) tuples,
+    results: map of string to BuildResult,
+    outdated: list of string or null = null,
+) -> void
+render_diff(diff_text: string) -> void
+render_init_summary(files: list of string) -> void
+render_compare_result(result: DifferencingResponse) -> void
+print_error(message: string) -> void
 ```
 
 Errors are printed to stderr with file paths and actionable descriptions per the implementation conventions.
@@ -223,18 +221,18 @@ Errors are printed to stderr with file paths and actionable descriptions per the
 
 Each command follows the same wiring pattern, per the implementation convention of dependency injection at the call site:
 
-```python
-def build(target: str, force: bool, output_dir: str, profile: str):
-    project = load_project(Path("intent"))
-    config = load_config(Path("."))
+```
+function build(target: string, force: boolean, output_dir: string, profile: string):
+    project = load_project(the intent directory)
+    config = load_config(the project root)
     agent_profile = resolve_profile(profile, config)
-    backend = SQLiteBackend(Path("."), output_dir)
-    state_mgr = StateManager(Path("."), output_dir, backend=backend)
-    vcs = GitVersionControl(Path(output_dir))
+    backend = SQLiteBackend(the project root, output_dir)
+    state_mgr = StateManager(the project root, output_dir, backend)
+    vcs = GitVersionControl(output_dir)
     builder = Builder(project, state_mgr, vcs, agent_profile)
     results, err = builder.build(BuildOptions(...))
     render_build_results(results)
-    if err: raise typer.Exit(code=1)
+    if err: exit with code 1
 ```
 
 No shared state between commands. Each invocation is self-contained. The `SQLiteBackend` is the default storage backend — if omitted from the `StateManager` constructor, one is created automatically.

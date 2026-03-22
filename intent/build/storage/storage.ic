@@ -7,15 +7,15 @@ tags: [build, storage, foundation]
 
 # Storage
 
-Persistent storage for all build state, results, logs, and agent responses. The storage layer replaces the flat-file persistence (state.json, build-log.jsonl, response files) with a database-backed system. SQLite is the first implementation, but the interface is designed so that other databases (PostgreSQL, DynamoDB, etc.) can be plugged in by implementing the `StorageBackend` ABC.
+Persistent storage for all build state, results, logs, and agent responses. The storage layer replaces the flat-file persistence (state.json, build-log.jsonl, response files) with a database-backed system. SQLite is the first implementation, but the interface is designed so that other databases (PostgreSQL, DynamoDB, etc.) can be plugged in by implementing the `StorageBackend` abstract class.
 
 ## Module Layout
 
 This feature generates:
-- `intentc/build/storage/__init__.py` — Package init. Re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`
-- `intentc/build/storage/backend.py` — `StorageBackend` ABC and `GenerationStatus` enum
-- `intentc/build/storage/sqlite.py` — SQLite implementation
-- `intentc/build/storage/test_storage.py` — Tests
+- A package init module — re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`
+- A backend module — `StorageBackend` abstract class and `GenerationStatus` enum
+- A SQLite implementation module — SQLite implementation
+- A test module — Tests
 
 ## Design Principles
 
@@ -136,8 +136,8 @@ Composite PK: `(target, output_dir)`. This is the only mutable table — it trac
 
 ## GenerationStatus
 
-```python
-class GenerationStatus(str, enum.Enum):
+```
+enum GenerationStatus:
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -145,51 +145,50 @@ class GenerationStatus(str, enum.Enum):
 
 ## StorageBackend
 
-Abstract interface. All methods use snake_case. The backend is scoped to a single output directory (set at construction).
+Abstract interface. All methods follow implementation naming conventions. The backend is scoped to a single output directory (set at construction).
 
-```python
-class StorageBackend(abc.ABC):
-    @abc.abstractmethod
-    def __init__(self, base_dir: Path, output_dir: str) -> None: ...
+```
+abstract class StorageBackend:
+    constructor(base_dir: Path, output_dir: string)
 ```
 
 ### Generation Methods
-- `create_generation(generation_id: str, output_dir: str, profile_name: str | None, options: dict | None) -> None` — Insert a new generation row with status `running`.
-- `complete_generation(generation_id: str, status: GenerationStatus) -> None` — Update generation status to `completed` or `failed`.
-- `log_generation_event(generation_id: str, message: str) -> None` — Append a log entry to the generation.
-- `get_generation(generation_id: str) -> dict | None` — Retrieve generation metadata and logs.
+- `create_generation(generation_id: string, output_dir: string, profile_name: string or null, options: map or null) -> void` — Insert a new generation row with status `running`.
+- `complete_generation(generation_id: string, status: GenerationStatus) -> void` — Update generation status to `completed` or `failed`.
+- `log_generation_event(generation_id: string, message: string) -> void` — Append a log entry to the generation.
+- `get_generation(generation_id: string) -> map or null` — Retrieve generation metadata and logs.
 
 ### Intent/Validation File Version Methods
-- `record_intent_version(name: str, source_path: str, content_hash: str) -> int` — Insert if new hash, return the version ID. Idempotent — returns existing ID if hash already recorded.
-- `record_validation_version(target: str, source_path: str, content_hash: str) -> int` — Same for validation files.
+- `record_intent_version(name: string, source_path: string, content_hash: string) -> integer` — Insert if new hash, return the version ID. Idempotent — returns existing ID if hash already recorded.
+- `record_validation_version(target: string, source_path: string, content_hash: string) -> integer` — Same for validation files.
 
 ### Build Result Methods
-- `save_build_result(target: str, result: BuildResult, intent_version_id: int | None, git_diff: str | None, files_created: list[str] | None, files_modified: list[str] | None) -> int` — Insert build result and its steps. Returns the build_result ID.
-- `get_build_result(target: str) -> BuildResult | None` — Get the latest build result for a target (via `target_state`).
-- `get_build_history(target: str, limit: int = 50) -> list[BuildResult]` — All build results for a target, newest first.
+- `save_build_result(target: string, result: BuildResult, intent_version_id: integer or null, git_diff: string or null, files_created: list of string or null, files_modified: list of string or null) -> integer` — Insert build result and its steps. Returns the build_result ID.
+- `get_build_result(target: string) -> BuildResult or null` — Get the latest build result for a target (via `target_state`).
+- `get_build_history(target: string, limit: integer = 50) -> list of BuildResult` — All build results for a target, newest first.
 
 ### Build Step Methods
-- `save_build_step(build_result_id: int, step: BuildStep, log: str, step_order: int) -> None` — Insert a build step with its log output.
+- `save_build_step(build_result_id: integer, step: BuildStep, log: string, step_order: integer) -> void` — Insert a build step with its log output.
 
 ### Validation Result Methods
-- `save_validation_result(build_result_id: int | None, generation_id: str, target: str, validation_file_version_id: int | None, name: str, type: str, severity: str, status: str, reason: str, duration_secs: float | None) -> int` — Insert and return the ID.
+- `save_validation_result(build_result_id: integer or null, generation_id: string, target: string, validation_file_version_id: integer or null, name: string, type: string, severity: string, status: string, reason: string, duration_secs: float or null) -> integer` — Insert and return the ID.
 
 ### Agent Response Methods
-- `save_agent_response(build_result_id: int | None, validation_result_id: int | None, response_type: str, response_json: dict) -> None` — Store raw agent response JSON.
+- `save_agent_response(build_result_id: integer or null, validation_result_id: integer or null, response_type: string, response_json: map) -> void` — Store raw agent response JSON.
 
 ### Target State Methods
-- `get_status(target: str) -> TargetStatus` — Current status; `pending` if unknown.
-- `set_status(target: str, status: TargetStatus) -> None` — Update current status.
-- `list_targets() -> list[tuple[str, TargetStatus]]` — All tracked targets.
-- `reset(target: str) -> None` — Remove target state entry.
-- `reset_all() -> None` — Remove all target state entries for this output directory.
+- `get_status(target: string) -> TargetStatus` — Current status; `pending` if unknown.
+- `set_status(target: string, status: TargetStatus) -> void` — Update current status.
+- `list_targets() -> list of (string, TargetStatus)` — All tracked targets.
+- `reset(target: string) -> void` — Remove target state entry.
+- `reset_all() -> void` — Remove all target state entries for this output directory.
 
 ## SQLiteBackend
 
-Concrete implementation of `StorageBackend` using Python's built-in `sqlite3` module (no external dependencies). The database file is created lazily on first write. All tables are created via `CREATE TABLE IF NOT EXISTS` on connection.
+Concrete implementation of `StorageBackend` using the implementation's SQLite library (no external dependencies). The database file is created lazily on first write. All tables are created via `CREATE TABLE IF NOT EXISTS` on connection.
 
 ### Connection Management
-- Uses `sqlite3.connect()` with `check_same_thread=False`.
+- Opens an SQLite connection with `check_same_thread=False`.
 - WAL mode enabled for concurrent read access: `PRAGMA journal_mode=WAL`.
 - Foreign keys enforced: `PRAGMA foreign_keys=ON`.
 - One connection per `SQLiteBackend` instance, opened on construction, closed explicitly or via context manager.

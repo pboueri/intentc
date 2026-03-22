@@ -15,6 +15,7 @@ language: Python 3.11+
 packaging: uv
 sandboxing: claude-code-sandbox (OS-level via bubblewrap/seatbelt), docker (fallback for generic CLI agents)
 cli_framework: typer
+terminal_output: rich (>=13.0.0) — MUST be listed as an explicit dependency in pyproject.toml, do not rely on transitive installation through typer
 data_modeling: pydantic
 yaml_library: PyYAML
 serialization: JSON (stdlib), YAML (PyYAML)
@@ -51,3 +52,92 @@ Errors include file paths, field names, and actionable descriptions. A user with
 ### State & Storage
 
 State is persisted via a `StorageBackend` interface. The default implementation uses SQLite (Python's built-in `sqlite3` module — no external dependencies). The backend interface is designed to be pluggable so that other databases (PostgreSQL, DynamoDB, etc.) can be added by implementing the ABC. Missing databases are created lazily on first write with sensible defaults.
+
+## Module Layout
+
+The Python implementation uses the following file structure. Each intent feature maps to specific Python modules:
+
+### core/specifications
+- `intentc/__init__.py` — Package init (empty or minimal)
+- `intentc/core/__init__.py` — Re-exports: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`, `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`
+- `intentc/core/types.py` — Core data models using Pydantic BaseModel
+- `intentc/core/parser.py` — File I/O (parse and write .ic/.icv files)
+- `intentc/core/test_core.py` — Tests
+
+### core/project
+- `intentc/core/project.py` — Project, FeatureNode, load_project, write_project, blank_project
+- `intentc/core/test_project.py` — Tests
+- Update `intentc/core/__init__.py` to also re-export: `FeatureNode`, `Project`, `load_project`, `write_project`, `blank_project`
+
+### build/agents
+- `intentc/build/agents.py` — All types (responses, contexts, profile, prompt templates), the Agent ABC, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers
+- `intentc/build/test_agents.py` — Tests
+- `agent/` — Standalone copy: `agent/__init__.py`, `agent/agent.py`, `agent/test_agent.py`
+
+### build/state
+- `intentc/build/__init__.py` — Re-exports from agents, state, validations, storage (see intent spec for exact list)
+- `intentc/build/state.py` — State management
+- `intentc/build/test_state.py` — Tests
+
+### build/storage
+- `intentc/build/storage/__init__.py` — Re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`
+- `intentc/build/storage/backend.py` — `StorageBackend` ABC and `GenerationStatus` enum
+- `intentc/build/storage/sqlite.py` — SQLite implementation
+- `intentc/build/storage/test_storage.py` — Tests
+
+### build/validations
+- `intentc/build/validations.py` — Single module (not a separate package)
+- `intentc/build/test_validations.py` — Tests
+
+### build/builder
+- `intentc/build/builder/__init__.py` — Empty (do NOT re-export Builder/BuildOptions)
+- `intentc/build/builder/builder.py` — Builder implementation
+- `intentc/build/builder/test_builder.py` — Tests
+
+### build/end_to_end
+- `intentc/build/test_end_to_end.py` — Integration test (no production code)
+
+### interfaces/cli
+- `intentc/cli/__init__.py` — Empty
+- `intentc/cli/main.py` — CLI commands using Typer. Entry point: `intentc = "intentc.cli.main:app"` in pyproject.toml
+- `intentc/cli/config.py` — Config loading/saving
+- `intentc/cli/output.py` — Rich output formatting
+- `intentc/cli/test_cli.py` — Tests
+
+### differencing
+- `intentc/differencing/__init__.py` — Re-exports `run_differencing`
+- `intentc/differencing/differencing.py` — Differencing workflow
+
+## Python-Specific Import Patterns
+
+```python
+# agents
+from intentc.build.agents import Agent, AgentError, AgentProfile, BuildContext, create_from_profile
+
+# state
+from intentc.build.state import BuildResult, BuildStep, StateManager, TargetStatus, VersionControl
+
+# builder
+from intentc.build.builder.builder import Builder, BuildOptions
+
+# validations
+from intentc.build.validations import ValidationSuite, ValidationSuiteResult
+
+# storage
+from intentc.build.storage import StorageBackend, SQLiteBackend
+
+# core
+from intentc.core.project import Project, load_project, write_project, blank_project
+from intentc.core.types import IntentFile
+
+# differencing
+from intentc.differencing.differencing import run_differencing
+
+# CLI framework
+import typer
+from rich.console import Console
+```
+
+## Data Modeling
+
+All data types use Pydantic `BaseModel` with `model_config = {"extra": "ignore"}` where specified. Enums use `(str, enum.Enum)` pattern for string-valued enums. Error types use `@dataclass` for simple data (ParseError) or `Exception` subclass (ParseErrors, AgentError).

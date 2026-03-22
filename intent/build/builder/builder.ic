@@ -17,23 +17,16 @@ The builder is the core workflow engine of intentc. It takes a loaded project, m
 ## Module Layout
 
 This feature generates:
-- `intentc/build/builder/__init__.py` — Package init. **Empty file** (do NOT re-export Builder/BuildOptions). Consumers import from `intentc.build.builder.builder` directly.
-- `intentc/build/builder/builder.py` — Builder implementation
-- `intentc/build/builder/test_builder.py` — Tests
+- Package init module (empty — consumers import from the builder module directly)
+- Builder implementation module
+- Tests module
 
-Imports used:
-- `from intentc.build.agents import Agent, AgentError, AgentProfile, BuildContext, create_from_profile`
-- `from intentc.build.state import BuildResult, BuildStep, StateManager, TargetStatus, VersionControl`
-- `from intentc.build.validations import ValidationSuite, ValidationSuiteResult`
-- `from intentc.build.storage import StorageBackend`
-- `from intentc.core.project import Project`
-- `from intentc.core.types import IntentFile`
+This module depends on types from the agents, state, validations, storage, and core modules.
 
 ## Builder
 
-```python
-# All attributes use snake_case with leading underscore (private)
-class Builder:
+```
+Type Builder:
     _project: Project
     _state_manager: StateManager
     _version_control: VersionControl
@@ -43,43 +36,45 @@ class Builder:
 
 Dependencies are injected at construction. The builder receives an `AgentProfile` and uses a `_create_agent` callable (defaulting to `create_from_profile`) when it needs an agent instance. This allows tests to inject a mock factory. The `Project` is already loaded and parsed by the caller; the builder does not do file discovery or parsing. The `StorageBackend` is obtained from the `StateManager` (which creates a default `SQLiteBackend` if none is provided).
 
-```python
-class Builder:
-    def __init__(self, project, state_manager, version_control, agent_profile):
-        self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
-        self._storage: StorageBackend = state_manager.backend
+```
+Type Builder:
+    constructor(project, state_manager, version_control, agent_profile):
+        _create_agent: callable taking AgentProfile returning Agent = create_from_profile
+        _storage: StorageBackend = state_manager.backend
 ```
 
 ## BuildOptions
 
-All fields use snake_case per Python convention:
+All fields follow implementation naming conventions:
 
-```python
-class BuildOptions(BaseModel):
-    target: str = ""              # Specific feature path, or empty for all unbuilt
-    force: bool = False           # Rebuild even if already built
-    dry_run: bool = False         # Print build plan without executing (snake_case, NOT dryRun)
-    output_dir: str = ""          # Where generated code lives (snake_case, NOT outputDir)
-    profile_override: str = ""    # Agent profile name override (snake_case, NOT profileOverride)
+```
+Type BuildOptions:
+    target: string = ""              # Specific feature path, or empty for all unbuilt
+    force: boolean = false           # Rebuild even if already built
+    dry_run: boolean = false         # Print build plan without executing
+    output_dir: string = ""          # Where generated code lives
+    profile_override: string = ""    # Agent profile name override
+    implementation: string = ""      # Implementation name (from implementations/ directory). When set, the builder resolves this implementation via project.resolve_implementation(name) and uses it for the build. The CLI's --implementation/-i flag sets this field.
 ```
 
 ## GenerationID
 
-Each `build()` invocation produces a single generation ID (a `str(uuid.uuid4())`) that is shared across all targets built in that run. This ID links together everything that happened in one build invocation and is stored in each target's `BuildResult`.
+Each `build()` invocation produces a single generation ID (a generated UUID) that is shared across all targets built in that run. This ID links together everything that happened in one build invocation and is stored in each target's `BuildResult`.
 
-Timestamps use naive `datetime.now()` (no timezone). Durations use `datetime.now() - step_start` to produce `timedelta` values.
+Timestamps use the current timestamp (no timezone). Durations are computed as the difference between the current timestamp and the step start time, producing a duration value.
 
 ## Build Pipeline
 
-`build(self, opts: BuildOptions) -> tuple[list[BuildResult], Exception | None]`:
+`build(opts: BuildOptions) -> tuple of (list of BuildResult, error or null)`:
 
-Returns a tuple of (results, error). Error is non-None if any target failed. The error is NOT raised — it is returned as the second element of the tuple. The caller decides how to handle it.
+Returns a tuple of (results, error). Error is non-null if any target failed. The error is NOT raised — it is returned as the second element of the tuple. The caller decides how to handle it.
 
-1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending` or `outdated` only (NOT `failed`) — or all if `force`. Always in topological order. If the build set is empty, return `([], None)` early.
+1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending` or `outdated` only (NOT `failed`) — or all if `force`. Always in topological order. If the build set is empty, return `([], null)` early.
 2. **Dry run check** — If `dryRun`, return the build set with their current statuses. No side effects.
-3. **Generate generation ID** — A single UUID for this entire build invocation. Create a generation record via `storage.create_generation(generation_id, output_dir, profile_name, opts_dict)` with status `running`.
-4. **Resolve output directory** — Use `opts.outputDir`. Create if it doesn't exist.
-5. **Build each target** in topological order. Log generation-level events (build plan, ordering, skip decisions) via `storage.log_generation_event(generation_id, message)`:
+3. **Resolve implementation** — If `opts.implementation` is set, resolve it via `project.resolve_implementation(opts.implementation)` and use the result for all targets in this build. Otherwise, use the project's default implementation (via `project.resolve_implementation(null)`). The resolved implementation is passed to every `BuildContext` during this build.
+4. **Generate generation ID** — A single UUID for this entire build invocation. Create a generation record via `storage.create_generation(generation_id, output_dir, profile_name, opts_dict)` with status `running`.
+5. **Resolve output directory** — Use `opts.outputDir`. Create if it doesn't exist.
+6. **Build each target** in topological order. Log generation-level events (build plan, ordering, skip decisions) via `storage.log_generation_event(generation_id, message)`:
 
 For each target in the build set:
 
@@ -87,36 +82,33 @@ For each target in the build set:
    - **Resolve agent profile** — Priority: `opts.profile_override` > builder's `agent_profile`.
    - **Apply sandbox paths** — Compute filesystem boundaries from the project DAG and attach to the profile before creating the agent:
 
-     ```python
-     def _apply_sandbox_paths(self, profile, target, opts):
-         output_dir_abs = str(Path(opts.output_dir).resolve())
+     ```
+     method _apply_sandbox_paths(profile, target, opts):
+         output_dir_abs = absolute path of opts.output_dir
          sandbox_write = [
              output_dir_abs,
-             str(self._state_manager.build_response_dir.resolve()),
-             str(self._state_manager.val_response_dir.resolve()),
+             absolute path of state_manager.build_response_dir,
+             absolute path of state_manager.val_response_dir,
          ]
          sandbox_read = [output_dir_abs]
-         intent_dir = self._project.intent_dir
-         if intent_dir is not None:
-             ancestors = self._project.ancestors(target)
-             for feat in ancestors | {target}:
+         intent_dir = project.intent_dir
+         if intent_dir is not null:
+             ancestors = project.ancestors(target)
+             for each feat in ancestors union {target}:
                  feat_dir = intent_dir / feat
-                 if feat_dir.is_dir():
-                     sandbox_read.append(str(feat_dir.resolve()))
+                 if feat_dir is a directory:
+                     append absolute path of feat_dir to sandbox_read
              project_ic = intent_dir / "project.ic"
-             if project_ic.exists():
-                 sandbox_read.append(str(project_ic.resolve()))
+             if project_ic exists:
+                 append absolute path of project_ic to sandbox_read
              impl_dir = intent_dir / "implementations"
-             if impl_dir.is_dir():
-                 sandbox_read.append(str(impl_dir.resolve()))
+             if impl_dir is a directory:
+                 append absolute path of impl_dir to sandbox_read
              # Backward compat: legacy implementation.ic
              impl_ic = intent_dir / "implementation.ic"
-             if impl_ic.exists():
-                 sandbox_read.append(str(impl_ic.resolve()))
-         return profile.model_copy(update={
-             "sandbox_write_paths": sandbox_write,
-             "sandbox_read_paths": sandbox_read,
-         })
+             if impl_ic exists:
+                 append absolute path of impl_ic to sandbox_read
+         return copy of profile with updated sandbox_write_paths and sandbox_read_paths
      ```
 
    - Use `create_from_profile` to get an agent instance from the sandboxed profile.
@@ -124,24 +116,24 @@ For each target in the build set:
 
      1. `resolve_deps` — Gather the target's dependency names from the DAG via `node.depends_on`. This is context for the agent, not a build action.
      2. `build` — Construct a `BuildContext`:
-        ```python
+        ```
         ctx = BuildContext(
-            intent=node.intents[0] if node.intents else IntentFile(name=target),
-            validations=node.validations,       # pass the target's validations
-            output_dir=opts.output_dir,
-            generation_id=generation_id,
-            dependency_names=dep_names,          # from resolve_deps step
-            project_intent=self._project.project_intent,
-            implementation=self._project.implementation,
-            response_file_path=str(response_file.resolve()),
+            intent = first element of node.intents if non-empty, otherwise IntentFile(name=target),
+            validations = node.validations,       # pass the target's validations
+            output_dir = opts.output_dir,
+            generation_id = generation_id,
+            dependency_names = dep_names,          # from resolve_deps step
+            project_intent = project.project_intent,
+            implementation = project.implementation,
+            response_file_path = absolute path of response_file,
         )
         ```
-        Invoke `agent.build(ctx)` (snake_case). On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
-     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, the output dir, and the storage backend. Call `suite.validate_feature(target)` (snake_case). If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
-     4. `checkpoint` — Call `version_control.checkpoint()` (snake_case) with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`. Capture the git diff via `version_control.diff("{commit_id}~1", commit_id)` and store it on the build result.
+        Invoke `agent.build(ctx)`. On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
+     3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, the output dir, the storage backend, and the `val_response_dir` from the state manager. The `val_response_dir` MUST be passed to the ValidationSuite so that validation response files are staged in the correct directory. Call `suite.validate_feature(target)`. If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
+     4. `checkpoint` — Call `version_control.checkpoint()` with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`. Capture the git diff via `version_control.diff("{commit_id}~1", commit_id)` and store it on the build result.
 
    - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), and timestamp. If all steps succeeded, status is `built`. If any step failed, status is `failed`.
-   - **Save** — `state_manager.save_build_result(target, result)` (snake_case). The storage backend records the build result, all build steps (with their `log` output), the git diff, and the file manifest (files_created, files_modified from the `BuildResponse`). The build agent response file is read, stored via `storage.save_agent_response(...)`, then deleted from disk.
+   - **Save** — `state_manager.save_build_result(target, result)`. The storage backend records the build result, all build steps (with their `log` output), the git diff, and the file manifest (files_created, files_modified from the `BuildResponse`). The build agent response file is read, stored via `storage.save_agent_response(...)`, then deleted from disk.
    - **On failure** — If the target's status is `failed`, stop the DAG walk immediately. Log the failure via `storage.log_generation_event(...)`. Return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
 
 6. **Complete generation** — After the build loop (whether all targets succeeded or one failed), call `storage.complete_generation(generation_id, status)` where status is `completed` or `failed`.
@@ -154,14 +146,14 @@ The checkpoint happens only after both build and validation succeed. This means 
 
 Retries apply only to `AgentError` exceptions (crashes, timeouts, malformed response files). They do **not** apply to validation failures or generic exceptions. The retry loop catches specifically `AgentError`:
 
-```python
-build_error = None
+```
+build_error = null
 for attempt in range(profile.retries):
     try:
         agent.build(ctx)
-        build_error = None
+        build_error = null
         break
-    except AgentError as exc:
+    on AgentError as exc:
         build_error = exc
         if attempt < profile.retries - 1:
             continue
@@ -171,7 +163,7 @@ So `retries=3` means 3 total attempts, not 3 retries after the first attempt. If
 
 ## Clean
 
-`clean(target, output_dir)` (snake_case):
+`clean(target, output_dir)`:
 
 Reverts a target's generated code and resets its state. This is not a destructive rollback — it creates a new revert commit in the linear version control history.
 
@@ -180,13 +172,13 @@ Reverts a target's generated code and resets its state. This is not a destructiv
 3. Reset the target's state to `pending` via `state_manager.reset(target)`.
 4. Mark all descendants of the target as `outdated` via `state_manager.mark_dependents_outdated(target, project)`.
 
-`clean_all(output_dir)` (snake_case):
+`clean_all(output_dir)`:
 
 Resets all state for the output directory via `state_manager.reset_all()`. Does not modify files — the version control history is preserved.
 
 ## Validate
 
-`validate(target, output_dir) -> ValidationSuiteResult` (snake_case):
+`validate(target, output_dir) -> ValidationSuiteResult`:
 
 Runs validations independently of the build pipeline. Useful for checking a target's current state at any time.
 
@@ -200,6 +192,6 @@ Runs validations independently of the build pipeline. Useful for checking a targ
 
 When a user modifies a `.ic` or `.icv` file for a target that was previously built, that target and its descendants are stale. The builder detects this by comparing the target's `BuildResult.timestamp` against the modification time of its intent and validation files. If any source file is newer than the last build, the target is `outdated`.
 
-`detect_outdated() -> list[str]` (snake_case):
+`detect_outdated() -> list of string`:
 
 Walks all targets tracked by the state manager. For each target with status `built`, checks if any of its `.ic` or `.icv` files have been modified since the build timestamp. Returns the list of targets that are outdated. Does **not** automatically update state — the caller decides whether to mark them (via `stateManager.SetStatus`) or rebuild.
