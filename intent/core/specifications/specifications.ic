@@ -40,15 +40,13 @@ Type IntentFile:
 ```
 Enum ValidationType (string-valued):
     AGENT_VALIDATION = "agent_validation"
-    LLM_JUDGE = "llm_judge"
-    FILE_CHECK = "file_check"
-    FOLDER_CHECK = "folder_check"
-    COMMAND_CHECK = "command_check"
 ```
 
 ## Validation Files
 
-Validation files are `.icv` files that can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails.
+Validation files are `.icv` files that can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails. 
+
+They are yaml files that describe the individual validations
 
 ### Top Level
 - `target` (string) — feature this validates, using its path like `module/feature`

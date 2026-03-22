@@ -111,10 +111,20 @@ def parse_validation_file(path: Path) -> ValidationFile:
     except FileNotFoundError:
         raise ParseErrors([ParseError(path=path, field=None, message="File not found")])
 
+    # Empty or whitespace-only .icv files are valid (no validations)
+    if not text.strip():
+        return ValidationFile(target="", validations=[], source_path=path)
+
     meta, _body = _split_front_matter(text)
     if meta is None:
-        errors.append(ParseError(path=path, field=None, message="Missing or invalid YAML front matter"))
-        raise ParseErrors(errors)
+        # .icv files may be plain YAML without front matter delimiters
+        try:
+            meta = yaml.safe_load(text)
+        except yaml.YAMLError:
+            meta = None
+        if not isinstance(meta, dict):
+            errors.append(ParseError(path=path, field=None, message="Missing or invalid YAML front matter"))
+            raise ParseErrors(errors)
 
     if "target" not in meta:
         errors.append(ParseError(path=path, field="target", message="Required field 'target' is missing"))
