@@ -56,7 +56,7 @@ class TestTypes:
 
     def test_project_intent_no_depends_on(self):
         p = ProjectIntent(name="project")
-        assert not hasattr(p, "depends_on") or "depends_on" not in p.model_fields
+        assert "depends_on" not in p.model_fields
 
     def test_implementation(self):
         impl = Implementation(name="python", depends_on=["core"])
@@ -66,21 +66,17 @@ class TestTypes:
         vf = ValidationFile(
             target="core/specs",
             validations=[
-                Validation(name="check1", type=ValidationType.FILE_CHECK, args={"path": "foo.py"}),
+                Validation(name="check1", args={"rubric": "looks good"}),
                 Validation(name="check2", severity=Severity.WARNING),
             ],
         )
         assert len(vf.validations) == 2
-        assert vf.validations[0].type == ValidationType.FILE_CHECK
+        assert vf.validations[0].type == ValidationType.AGENT_VALIDATION
         assert vf.validations[1].severity == Severity.WARNING
         assert vf.validations[1].type == ValidationType.AGENT_VALIDATION
 
     def test_validation_type_values(self):
         assert ValidationType.AGENT_VALIDATION.value == "agent_validation"
-        assert ValidationType.LLM_JUDGE.value == "llm_judge"
-        assert ValidationType.FILE_CHECK.value == "file_check"
-        assert ValidationType.FOLDER_CHECK.value == "folder_check"
-        assert ValidationType.COMMAND_CHECK.value == "command_check"
 
     def test_severity_values(self):
         assert Severity.ERROR.value == "error"
@@ -149,10 +145,10 @@ target: core/specs
 agent_profile: default
 validations:
   - name: types-exist
-    type: file_check
+    type: agent_validation
     severity: error
     args:
-      path: types.py
+      rubric: Types module exists
   - name: quality
     type: agent_validation
     severity: warning
@@ -230,9 +226,9 @@ class TestParseValidationFile:
         assert result.agent_profile == "default"
         assert len(result.validations) == 2
         assert result.validations[0].name == "types-exist"
-        assert result.validations[0].type == ValidationType.FILE_CHECK
+        assert result.validations[0].type == ValidationType.AGENT_VALIDATION
         assert result.validations[0].severity == Severity.ERROR
-        assert result.validations[0].args == {"path": "types.py"}
+        assert result.validations[0].args == {"rubric": "Types module exists"}
         assert result.validations[1].severity == Severity.WARNING
 
     def test_parse_missing_target(self, tmp_path: Path):
@@ -308,9 +304,9 @@ class TestWriteValidationFile:
             validations=[
                 Validation(
                     name="types-exist",
-                    type=ValidationType.FILE_CHECK,
+                    type=ValidationType.AGENT_VALIDATION,
                     severity=Severity.ERROR,
-                    args={"path": "types.py"},
+                    args={"rubric": "Types module exists"},
                 ),
                 Validation(
                     name="quality",
@@ -329,7 +325,6 @@ class TestWriteValidationFile:
         assert roundtripped.agent_profile == original.agent_profile
         assert len(roundtripped.validations) == 2
         assert roundtripped.validations[0].name == "types-exist"
-        assert roundtripped.validations[0].type == ValidationType.FILE_CHECK
         assert roundtripped.validations[1].severity == Severity.WARNING
 
     def test_write_no_path_raises(self):
@@ -371,7 +366,7 @@ class TestRoundTrip:
         original = ValidationFile(
             target="feat",
             validations=[
-                Validation(name="v1", type=ValidationType.COMMAND_CHECK, args={"cmd": "echo ok"}),
+                Validation(name="v1", args={"rubric": "check something"}),
             ],
         )
         p1 = tmp_path / "v1.icv"

@@ -18,10 +18,6 @@ from pydantic import BaseModel, Field
 
 class ValidationType(str, enum.Enum):
     AGENT_VALIDATION = "agent_validation"
-    LLM_JUDGE = "llm_judge"
-    FILE_CHECK = "file_check"
-    FOLDER_CHECK = "folder_check"
-    COMMAND_CHECK = "command_check"
 
 
 class Severity(str, enum.Enum):
@@ -81,7 +77,6 @@ class Validation(BaseModel):
     type: str = ValidationType.AGENT_VALIDATION.value
     severity: Severity = Severity.ERROR
     args: dict[str, Any] = Field(default_factory=dict)
-    agent_profile: dict[str, Any] | None = None
 
 
 class ValidationFile(BaseModel):
@@ -97,17 +92,15 @@ class ValidationFile(BaseModel):
 # Parse errors
 # ---------------------------------------------------------------------------
 
-# Regex to extract file references from markdown body text.
-# Matches relative paths (containing at least one dot or slash) that aren't URLs.
 _FILE_REF_RE = re.compile(
-    r"(?<![(\[/a-zA-Z0-9])"  # not preceded by markdown link chars or URL chars
-    r"(?:\.\.?/)?(?:[a-zA-Z0-9_\-]+/)+"  # directory components
-    r"[a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_]+)+"  # filename with extension
+    r"(?<![(\[/a-zA-Z0-9])"
+    r"(?:\.\.?/)?(?:[a-zA-Z0-9_\-]+/)+"
+    r"[a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_]+)+"
     r"|"
-    r"(?:\.\.?/)(?:[a-zA-Z0-9_\-]+/)*"  # or relative path with dirs
-    r"[a-zA-Z0-9_\-]+(?:\.\*|\.[a-zA-Z0-9_]+)*"  # with wildcard or extension
+    r"(?:\.\.?/)(?:[a-zA-Z0-9_\-]+/)*"
+    r"[a-zA-Z0-9_\-]+(?:\.\*|\.[a-zA-Z0-9_]+)*"
     r"|"
-    r"[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_]+"  # simple filename.ext
+    r"[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_]+"
 )
 
 
@@ -139,11 +132,8 @@ def extract_file_references(body: str) -> list[str]:
     """Extract file references from a markdown body string."""
     refs: list[str] = []
     for line in body.splitlines():
-        # Look for file references in the line - paths with extensions or
-        # relative paths with directory separators.
         for match in _FILE_REF_RE.finditer(line):
             ref = match.group(0)
-            # Filter out common false positives
             if ref in ("e.g", "i.e", "etc."):
                 continue
             refs.append(ref)

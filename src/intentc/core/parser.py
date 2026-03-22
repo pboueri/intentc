@@ -24,7 +24,6 @@ def _split_front_matter(text: str) -> tuple[dict | None, str]:
     if not text.startswith("---"):
         return None, text
 
-    # Find the closing ---
     end = text.find("\n---", 3)
     if end == -1:
         return None, text
@@ -111,13 +110,11 @@ def parse_validation_file(path: Path) -> ValidationFile:
     except FileNotFoundError:
         raise ParseErrors([ParseError(path=path, field=None, message="File not found")])
 
-    # Empty or whitespace-only .icv files are valid (no validations)
     if not text.strip():
         return ValidationFile(target="", validations=[], source_path=path)
 
     meta, _body = _split_front_matter(text)
     if meta is None:
-        # .icv files may be plain YAML without front matter delimiters
         try:
             meta = yaml.safe_load(text)
         except yaml.YAMLError:
