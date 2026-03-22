@@ -1,18 +1,22 @@
-"""Core data structures for intentc specification files."""
+"""Core data models for intentc."""
 
 from __future__ import annotations
 
 import enum
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field
+
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
 
 
 class ValidationType(str, enum.Enum):
-    """Built-in validation types. Extensible via registration."""
-
     AGENT_VALIDATION = "agent_validation"
     LLM_JUDGE = "llm_judge"
     FILE_CHECK = "file_check"
@@ -21,126 +25,126 @@ class ValidationType(str, enum.Enum):
 
 
 class Severity(str, enum.Enum):
-    """What happens when a validation fails."""
-
     ERROR = "error"
     WARNING = "warning"
 
 
-class Validation(BaseModel):
-    """A single validation entry within a ValidationFile."""
-
-    model_config = {"extra": "ignore"}
-
-    type: ValidationType
-    name: str
-    severity: Severity = Severity.ERROR
-    args: dict[str, Any] = {}
-    agent_profile: dict[str, Any] | None = None
-
-
-class ValidationFile(BaseModel):
-    """Parsed .icv file — validates a feature after it is built."""
-
-    model_config = {"extra": "ignore"}
-
-    target: str
-    agent_profile: str | None = None
-    validations: list[Validation] = []
-    source_path: Path | None = None
-
-
-# Regex for local file references in markdown bodies.
-# Matches: ![alt](path), [text](path) pointing to local paths (not URLs or anchors).
-_MARKDOWN_LINK_RE = re.compile(
-    r"!?\[[^\]]*\]\((?!https?://|#)([^)]+)\)"
-)
-# Matches bare relative paths like ../foo/bar.txt or ./file.png.
-# Must start with ./ or ../ to avoid false positives on domain names.
-_BARE_PATH_RE = re.compile(
-    r"(?<!\w)(\.\./[^\s)\"'>]+|\.\/[^\s)\"'>]+)"
-)
-
-# Spans covered by markdown links — used to avoid double-counting
-_MARKDOWN_FULL_RE = re.compile(r"!?\[[^\]]*\]\([^)]+\)")
-
-
-def extract_file_references(body: str) -> list[str]:
-    """Extract local file references from markdown body text.
-
-    Finds markdown links/images pointing to local paths and bare relative
-    paths with file extensions. Excludes URLs and anchor-only links.
-    """
-    refs: list[str] = []
-    seen: set[str] = set()
-
-    # Collect spans covered by markdown links to avoid double-matching
-    link_spans: list[tuple[int, int]] = []
-    for m in _MARKDOWN_FULL_RE.finditer(body):
-        link_spans.append((m.start(), m.end()))
-
-    for match in _MARKDOWN_LINK_RE.finditer(body):
-        path = match.group(1).strip()
-        if path not in seen:
-            refs.append(path)
-            seen.add(path)
-
-    for match in _BARE_PATH_RE.finditer(body):
-        # Skip if this match falls inside a markdown link
-        pos = match.start()
-        if any(s <= pos < e for s, e in link_spans):
-            continue
-        path = match.group(1).strip()
-        if path not in seen:
-            refs.append(path)
-            seen.add(path)
-
-    return refs
+# ---------------------------------------------------------------------------
+# Intent files
+# ---------------------------------------------------------------------------
 
 
 class IntentFile(BaseModel):
-    """Parsed .ic file — a feature intent with frontmatter and markdown body."""
-
     model_config = {"extra": "ignore"}
 
     name: str
-    depends_on: list[str] = []
-    tags: list[str] = []
-    authors: list[str] = []
+    depends_on: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    authors: list[str] = Field(default_factory=list)
     body: str = ""
-    file_references: list[str] = []
+    file_references: list[str] = Field(default_factory=list)
     source_path: Path | None = None
 
 
 class ProjectIntent(BaseModel):
-    """Special singleton at intent/project.ic. No depends_on allowed."""
-
     model_config = {"extra": "ignore"}
 
     name: str
-    tags: list[str] = []
-    authors: list[str] = []
+    tags: list[str] = Field(default_factory=list)
+    authors: list[str] = Field(default_factory=list)
     body: str = ""
-    file_references: list[str] = []
+    file_references: list[str] = Field(default_factory=list)
     source_path: Path | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_depends_on(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if values.get("depends_on"):
-            raise ValueError("project.ic cannot have depends_on")
-        values.pop("depends_on", None)
-        return values
 
 
 class Implementation(BaseModel):
-    """Implementation spec — language, libs, conventions. Lives in intent/implementations/."""
-
     model_config = {"extra": "ignore"}
 
     name: str
-    tags: list[str] = []
-    authors: list[str] = []
+    depends_on: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    authors: list[str] = Field(default_factory=list)
     body: str = ""
-    file_references: list[str] = []
+    file_references: list[str] = Field(default_factory=list)
     source_path: Path | None = None
+
+
+# ---------------------------------------------------------------------------
+# Validation files
+# ---------------------------------------------------------------------------
+
+
+class Validation(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    name: str
+    type: str = ValidationType.AGENT_VALIDATION.value
+    severity: Severity = Severity.ERROR
+    args: dict[str, Any] = Field(default_factory=dict)
+    agent_profile: dict[str, Any] | None = None
+
+
+class ValidationFile(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    target: str
+    agent_profile: str | None = None
+    validations: list[Validation] = Field(default_factory=list)
+    source_path: Path | None = None
+
+
+# ---------------------------------------------------------------------------
+# Parse errors
+# ---------------------------------------------------------------------------
+
+# Regex to extract file references from markdown body text.
+# Matches relative paths (containing at least one dot or slash) that aren't URLs.
+_FILE_REF_RE = re.compile(
+    r"(?<![(\[/a-zA-Z0-9])"  # not preceded by markdown link chars or URL chars
+    r"(?:\.\.?/)?(?:[a-zA-Z0-9_\-]+/)+"  # directory components
+    r"[a-zA-Z0-9_\-]+(?:\.[a-zA-Z0-9_]+)+"  # filename with extension
+    r"|"
+    r"(?:\.\.?/)(?:[a-zA-Z0-9_\-]+/)*"  # or relative path with dirs
+    r"[a-zA-Z0-9_\-]+(?:\.\*|\.[a-zA-Z0-9_]+)*"  # with wildcard or extension
+    r"|"
+    r"[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_]+"  # simple filename.ext
+)
+
+
+@dataclass
+class ParseError:
+    path: Path
+    field: str | None
+    message: str
+
+    def __str__(self) -> str:
+        if self.field is None:
+            return f"{self.path}: {self.message}"
+        return f"{self.path} [{self.field}]: {self.message}"
+
+
+class ParseErrors(Exception):
+    def __init__(self, errors: list[ParseError]) -> None:
+        self.errors = errors
+        lines = "\n".join(str(e) for e in errors)
+        super().__init__(f"{len(errors)} parse error(s):\n{lines}")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_file_references(body: str) -> list[str]:
+    """Extract file references from a markdown body string."""
+    refs: list[str] = []
+    for line in body.splitlines():
+        # Look for file references in the line - paths with extensions or
+        # relative paths with directory separators.
+        for match in _FILE_REF_RE.finditer(line):
+            ref = match.group(0)
+            # Filter out common false positives
+            if ref in ("e.g", "i.e", "etc."):
+                continue
+            refs.append(ref)
+    return refs

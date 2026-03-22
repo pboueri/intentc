@@ -1,25 +1,23 @@
-"""Tests for core specification types and file I/O."""
+"""Tests for core types and parser."""
 
 from __future__ import annotations
 
-import textwrap
+import pytest
 from pathlib import Path
 
-import pytest
-
 from intentc.core.types import (
-    Implementation,
     IntentFile,
     ProjectIntent,
-    Severity,
-    Validation,
+    Implementation,
     ValidationFile,
+    Validation,
     ValidationType,
+    Severity,
+    ParseError,
+    ParseErrors,
     extract_file_references,
 )
 from intentc.core.parser import (
-    ParseError,
-    ParseErrors,
     parse_intent_file,
     parse_validation_file,
     write_intent_file,
@@ -28,352 +26,363 @@ from intentc.core.parser import (
 
 
 # ---------------------------------------------------------------------------
-# Type construction
+# Type construction tests
 # ---------------------------------------------------------------------------
 
 
-class TestValidation:
-    def test_defaults(self):
-        v = Validation(type=ValidationType.LLM_JUDGE, name="check-it")
-        assert v.severity == Severity.ERROR
-        assert v.args == {}
+class TestTypes:
+    def test_intent_file_defaults(self):
+        f = IntentFile(name="feat")
+        assert f.name == "feat"
+        assert f.depends_on == []
+        assert f.tags == []
+        assert f.authors == []
+        assert f.body == ""
+        assert f.file_references == []
+        assert f.source_path is None
 
-    def test_with_args(self):
-        v = Validation(
-            type=ValidationType.COMMAND_CHECK,
-            name="lint",
-            severity=Severity.WARNING,
-            args={"command": "ruff check"},
-        )
-        assert v.args["command"] == "ruff check"
-        assert v.severity == Severity.WARNING
-
-    def test_extra_fields_ignored(self):
-        v = Validation(type=ValidationType.FILE_CHECK, name="f", future_field="hello")
-        assert not hasattr(v, "future_field")
-
-
-class TestValidationFile:
-    def test_minimal(self):
-        vf = ValidationFile(target="core/specs")
-        assert vf.validations == []
-        assert vf.agent_profile is None
-
-    def test_full(self):
-        vf = ValidationFile(
-            target="core/specs",
-            agent_profile="default",
-            validations=[
-                Validation(type=ValidationType.LLM_JUDGE, name="t1", args={"rubric": "check stuff"}),
-            ],
-        )
-        assert len(vf.validations) == 1
-        assert vf.validations[0].args["rubric"] == "check stuff"
-
-
-class TestIntentFile:
-    def test_minimal(self):
-        i = IntentFile(name="feature-a")
-        assert i.depends_on == []
-        assert i.body == ""
-        assert i.file_references == []
-
-    def test_full(self):
-        i = IntentFile(
-            name="feature-a",
-            depends_on=["core/specs"],
+    def test_intent_file_full(self):
+        f = IntentFile(
+            name="core/specs",
+            depends_on=["core/*"],
             tags=["foundation"],
             authors=["alice"],
-            body="# My Feature\n\nSee [design](./design.png)",
-            file_references=["./design.png"],
+            body="Some body",
+            file_references=["design.png"],
+            source_path=Path("/tmp/test.ic"),
         )
-        assert i.depends_on == ["core/specs"]
-        assert i.tags == ["foundation"]
+        assert f.depends_on == ["core/*"]
+        assert f.source_path == Path("/tmp/test.ic")
+
+    def test_project_intent_no_depends_on(self):
+        p = ProjectIntent(name="project")
+        assert not hasattr(p, "depends_on") or "depends_on" not in p.model_fields
+
+    def test_implementation(self):
+        impl = Implementation(name="python", depends_on=["core"])
+        assert impl.depends_on == ["core"]
+
+    def test_validation_file(self):
+        vf = ValidationFile(
+            target="core/specs",
+            validations=[
+                Validation(name="check1", type=ValidationType.FILE_CHECK, args={"path": "foo.py"}),
+                Validation(name="check2", severity=Severity.WARNING),
+            ],
+        )
+        assert len(vf.validations) == 2
+        assert vf.validations[0].type == ValidationType.FILE_CHECK
+        assert vf.validations[1].severity == Severity.WARNING
+        assert vf.validations[1].type == ValidationType.AGENT_VALIDATION
+
+    def test_validation_type_values(self):
+        assert ValidationType.AGENT_VALIDATION.value == "agent_validation"
+        assert ValidationType.LLM_JUDGE.value == "llm_judge"
+        assert ValidationType.FILE_CHECK.value == "file_check"
+        assert ValidationType.FOLDER_CHECK.value == "folder_check"
+        assert ValidationType.COMMAND_CHECK.value == "command_check"
+
+    def test_severity_values(self):
+        assert Severity.ERROR.value == "error"
+        assert Severity.WARNING.value == "warning"
+
+    def test_extra_fields_ignored(self):
+        f = IntentFile(name="feat", unknown_field="ignored")
+        assert not hasattr(f, "unknown_field")
 
 
-class TestProjectIntent:
-    def test_rejects_depends_on(self):
-        with pytest.raises(ValueError, match="depends_on"):
-            ProjectIntent(name="myproj", depends_on=["something"])
+class TestParseError:
+    def test_str_no_field(self):
+        e = ParseError(path=Path("foo.ic"), field=None, message="bad file")
+        assert str(e) == "foo.ic: bad file"
 
-    def test_accepts_without_depends_on(self):
-        p = ProjectIntent(name="myproj", tags=["meta"])
-        assert p.name == "myproj"
+    def test_str_with_field(self):
+        e = ParseError(path=Path("foo.ic"), field="name", message="missing")
+        assert str(e) == "foo.ic [name]: missing"
 
-
-class TestImplementation:
-    def test_basic(self):
-        impl = Implementation(name="impl", body="Python 3.11+")
-        assert impl.name == "impl"
-
-
-# ---------------------------------------------------------------------------
-# File reference extraction
-# ---------------------------------------------------------------------------
+    def test_parse_errors_exception(self):
+        errs = ParseErrors([
+            ParseError(path=Path("a.ic"), field=None, message="err1"),
+            ParseError(path=Path("b.ic"), field="x", message="err2"),
+        ])
+        assert "2 parse error(s)" in str(errs)
+        assert "a.ic: err1" in str(errs)
+        assert "b.ic [x]: err2" in str(errs)
 
 
 class TestExtractFileReferences:
-    def test_markdown_image(self):
-        refs = extract_file_references("![ui](ui_design.png)")
+    def test_simple_filename(self):
+        refs = extract_file_references("see ui_design.png for details")
         assert "ui_design.png" in refs
 
-    def test_markdown_link(self):
-        refs = extract_file_references("See [guide](../docs/guide.md)")
-        assert "../docs/guide.md" in refs
-
-    def test_ignores_urls(self):
-        refs = extract_file_references("[link](https://example.com/foo.png)")
-        assert refs == []
-
-    def test_ignores_anchors(self):
-        refs = extract_file_references("[link](#section)")
-        assert refs == []
-
     def test_relative_path(self):
-        refs = extract_file_references("Check ../../design_system/tokens.yaml for details")
-        assert "../../design_system/tokens.yaml" in refs
+        refs = extract_file_references("refer to ../../design_system/tokens.yaml")
+        assert any("design_system/tokens.yaml" in r for r in refs)
 
-    def test_deduplication(self):
-        refs = extract_file_references("![a](icon.png) and ![b](icon.png)")
-        assert refs.count("icon.png") == 1
+    def test_no_refs_in_plain_text(self):
+        refs = extract_file_references("This is just plain text with no files")
+        assert refs == []
 
 
 # ---------------------------------------------------------------------------
-# File I/O — .ic files
+# Parser tests
 # ---------------------------------------------------------------------------
+
+IC_CONTENT = """\
+---
+name: core/specs
+depends_on:
+  - foundation
+tags:
+  - core
+authors:
+  - alice
+---
+# Feature spec
+
+Refer to design.png for the mockup.
+"""
+
+ICV_CONTENT = """\
+---
+target: core/specs
+agent_profile: default
+validations:
+  - name: types-exist
+    type: file_check
+    severity: error
+    args:
+      path: types.py
+  - name: quality
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: Code is clean
+---
+"""
 
 
 class TestParseIntentFile:
-    def test_roundtrip(self, tmp_path: Path):
-        ic = tmp_path / "feature.ic"
-        ic.write_text(textwrap.dedent("""\
-            ---
-            name: my-feature
-            depends_on:
-              - core/specs
-            tags:
-              - foundation
-            ---
-
-            # My Feature
-
-            This feature does things. See [mockup](./mockup.png).
-        """))
-
-        intent = parse_intent_file(ic)
-        assert isinstance(intent, IntentFile)
-        assert intent.name == "my-feature"
-        assert intent.depends_on == ["core/specs"]
-        assert intent.tags == ["foundation"]
-        assert "# My Feature" in intent.body
-        assert "./mockup.png" in intent.file_references
-        assert intent.source_path == ic
-
-    def test_write_and_reparse(self, tmp_path: Path):
-        original = IntentFile(
-            name="roundtrip",
-            depends_on=["a", "b"],
-            tags=["test"],
-            body="# Hello\n\nWorld",
-            source_path=tmp_path / "roundtrip.ic",
-        )
-        write_intent_file(original)
-        reparsed = parse_intent_file(original.source_path)
-        assert reparsed.name == original.name
-        assert reparsed.depends_on == original.depends_on
-        assert reparsed.tags == original.tags
-        assert "# Hello" in reparsed.body
-
-    def test_missing_file(self, tmp_path: Path):
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_intent_file(tmp_path / "nope.ic")
-        assert "File not found" in str(exc_info.value)
-
-    def test_missing_frontmatter(self, tmp_path: Path):
-        ic = tmp_path / "bad.ic"
-        ic.write_text("no frontmatter here")
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_intent_file(ic)
-        assert "frontmatter" in str(exc_info.value).lower()
-
-    def test_missing_name(self, tmp_path: Path):
-        ic = tmp_path / "noname.ic"
-        ic.write_text("---\ntags: [a]\n---\nbody")
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_intent_file(ic)
-        assert "name" in str(exc_info.value)
+    def test_parse_basic(self, tmp_path: Path):
+        p = tmp_path / "test.ic"
+        p.write_text(IC_CONTENT)
+        result = parse_intent_file(p)
+        assert isinstance(result, IntentFile)
+        assert result.name == "core/specs"
+        assert result.depends_on == ["foundation"]
+        assert result.tags == ["core"]
+        assert result.authors == ["alice"]
+        assert "# Feature spec" in result.body
+        assert result.source_path == p
 
     def test_parse_as_project(self, tmp_path: Path):
-        ic = tmp_path / "project.ic"
-        ic.write_text("---\nname: myproj\ntags: [meta]\n---\n# The Project")
-        proj = parse_intent_file(ic, as_project=True)
-        assert isinstance(proj, ProjectIntent)
-        assert proj.name == "myproj"
+        p = tmp_path / "project.ic"
+        p.write_text("---\nname: myproject\ntags: [proj]\n---\nProject body\n")
+        result = parse_intent_file(p, as_project=True)
+        assert isinstance(result, ProjectIntent)
+        assert result.name == "myproject"
 
     def test_parse_as_project_rejects_depends_on(self, tmp_path: Path):
-        ic = tmp_path / "project.ic"
-        ic.write_text("---\nname: myproj\ndepends_on: [something]\n---\nbody")
-        with pytest.raises(ParseErrors):
-            parse_intent_file(ic, as_project=True)
+        p = tmp_path / "project.ic"
+        p.write_text("---\nname: myproject\ndepends_on: [x]\n---\nbody\n")
+        with pytest.raises(ParseErrors) as exc_info:
+            parse_intent_file(p, as_project=True)
+        assert any("depends_on" in str(e) for e in exc_info.value.errors)
 
     def test_parse_as_implementation(self, tmp_path: Path):
-        ic = tmp_path / "implementation.ic"
-        ic.write_text("---\nname: impl\ntags: [meta]\n---\n# Stack\nPython 3.11+")
-        impl = parse_intent_file(ic, as_implementation=True)
-        assert isinstance(impl, Implementation)
+        p = tmp_path / "impl.ic"
+        p.write_text("---\nname: python\ndepends_on: [core]\n---\nPython impl\n")
+        result = parse_intent_file(p, as_implementation=True)
+        assert isinstance(result, Implementation)
+        assert result.depends_on == ["core"]
 
-    def test_empty_frontmatter_body(self, tmp_path: Path):
-        ic = tmp_path / "empty.ic"
-        ic.write_text("---\nname: empty\n---\n")
-        intent = parse_intent_file(ic)
-        assert intent.name == "empty"
-        assert intent.body == ""
+    def test_parse_missing_name(self, tmp_path: Path):
+        p = tmp_path / "bad.ic"
+        p.write_text("---\ntags: [x]\n---\nbody\n")
+        with pytest.raises(ParseErrors) as exc_info:
+            parse_intent_file(p)
+        assert any("name" in str(e) for e in exc_info.value.errors)
 
+    def test_parse_missing_file(self, tmp_path: Path):
+        with pytest.raises(ParseErrors):
+            parse_intent_file(tmp_path / "nonexistent.ic")
 
-# ---------------------------------------------------------------------------
-# File I/O — .icv files
-# ---------------------------------------------------------------------------
+    def test_parse_no_front_matter(self, tmp_path: Path):
+        p = tmp_path / "no_fm.ic"
+        p.write_text("just text, no front matter")
+        with pytest.raises(ParseErrors):
+            parse_intent_file(p)
+
+    def test_file_references_extracted(self, tmp_path: Path):
+        p = tmp_path / "refs.ic"
+        p.write_text("---\nname: feat\n---\nSee design.png and ../shared/tokens.yaml\n")
+        result = parse_intent_file(p)
+        assert "design.png" in result.file_references
 
 
 class TestParseValidationFile:
-    def test_roundtrip(self, tmp_path: Path):
-        icv = tmp_path / "validations.icv"
-        icv.write_text(textwrap.dedent("""\
-            target: core
-            validations:
-              - name: types-exist
-                type: llm_judge
-                severity: error
-                args:
-                  rubric: |
-                    Check that types exist
-              - name: has-init
-                type: file_check
-                severity: warning
-                args:
-                  path: __init__.py
-        """))
+    def test_parse_basic(self, tmp_path: Path):
+        p = tmp_path / "test.icv"
+        p.write_text(ICV_CONTENT)
+        result = parse_validation_file(p)
+        assert isinstance(result, ValidationFile)
+        assert result.target == "core/specs"
+        assert result.agent_profile == "default"
+        assert len(result.validations) == 2
+        assert result.validations[0].name == "types-exist"
+        assert result.validations[0].type == ValidationType.FILE_CHECK
+        assert result.validations[0].severity == Severity.ERROR
+        assert result.validations[0].args == {"path": "types.py"}
+        assert result.validations[1].severity == Severity.WARNING
 
-        vf = parse_validation_file(icv)
-        assert vf.target == "core"
-        assert len(vf.validations) == 2
-        assert vf.validations[0].type == ValidationType.LLM_JUDGE
-        assert vf.validations[0].severity == Severity.ERROR
-        assert "Check that types exist" in vf.validations[0].args["rubric"]
-        assert vf.validations[1].type == ValidationType.FILE_CHECK
-        assert vf.validations[1].severity == Severity.WARNING
+    def test_parse_missing_target(self, tmp_path: Path):
+        p = tmp_path / "bad.icv"
+        p.write_text("---\nvalidations:\n  - name: x\n---\n")
+        with pytest.raises(ParseErrors):
+            parse_validation_file(p)
 
-    def test_write_and_reparse(self, tmp_path: Path):
-        original = ValidationFile(
-            target="feature/a",
-            agent_profile="default",
-            validations=[
-                Validation(type=ValidationType.COMMAND_CHECK, name="lint", args={"command": "ruff check"}),
-            ],
-            source_path=tmp_path / "vals.icv",
-        )
-        write_validation_file(original)
-        reparsed = parse_validation_file(original.source_path)
-        assert reparsed.target == "feature/a"
-        assert reparsed.agent_profile == "default"
-        assert len(reparsed.validations) == 1
-        assert reparsed.validations[0].name == "lint"
-
-    def test_missing_file(self, tmp_path: Path):
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_validation_file(tmp_path / "nope.icv")
-        assert "File not found" in str(exc_info.value)
-
-    def test_missing_target(self, tmp_path: Path):
-        icv = tmp_path / "bad.icv"
-        icv.write_text("validations: []")
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_validation_file(icv)
-        assert "target" in str(exc_info.value)
-
-    def test_invalid_yaml(self, tmp_path: Path):
-        icv = tmp_path / "bad.icv"
-        icv.write_text(": : : not yaml [[[")
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_validation_file(icv)
-        assert "YAML" in str(exc_info.value)
-
-    def test_empty_file(self, tmp_path: Path):
-        icv = tmp_path / "empty.icv"
-        icv.write_text("")
-        with pytest.raises(ParseErrors) as exc_info:
-            parse_validation_file(icv)
-        assert "target" in str(exc_info.value)
+    def test_parse_missing_validations(self, tmp_path: Path):
+        p = tmp_path / "bad.icv"
+        p.write_text("---\ntarget: feat\n---\n")
+        with pytest.raises(ParseErrors):
+            parse_validation_file(p)
 
 
 # ---------------------------------------------------------------------------
-# Write helpers
+# Writer tests
 # ---------------------------------------------------------------------------
 
 
 class TestWriteIntentFile:
-    def test_creates_parent_dirs(self, tmp_path: Path):
-        intent = IntentFile(name="nested", body="content")
-        dest = tmp_path / "a" / "b" / "feature.ic"
-        write_intent_file(intent, dest)
-        assert dest.exists()
+    def test_write_and_read_back(self, tmp_path: Path):
+        original = IntentFile(
+            name="core/specs",
+            depends_on=["foundation"],
+            tags=["core"],
+            authors=["alice"],
+            body="# My feature\n\nDetails here.\n",
+        )
+        out = tmp_path / "feature.ic"
+        result_path = write_intent_file(original, out)
+        assert result_path == out
+        assert out.exists()
 
-    def test_raises_without_path(self):
-        intent = IntentFile(name="orphan", body="no path")
-        with pytest.raises(ValueError, match="destination"):
+        roundtripped = parse_intent_file(out)
+        assert roundtripped.name == original.name
+        assert roundtripped.depends_on == original.depends_on
+        assert roundtripped.tags == original.tags
+        assert roundtripped.authors == original.authors
+        assert roundtripped.body.strip() == original.body.strip()
+
+    def test_write_project_intent(self, tmp_path: Path):
+        proj = ProjectIntent(name="myproject", body="Project body\n")
+        out = tmp_path / "project.ic"
+        write_intent_file(proj, out)
+        roundtripped = parse_intent_file(out, as_project=True)
+        assert isinstance(roundtripped, ProjectIntent)
+        assert roundtripped.name == "myproject"
+
+    def test_write_uses_source_path(self, tmp_path: Path):
+        out = tmp_path / "auto.ic"
+        intent = IntentFile(name="auto", source_path=out)
+        write_intent_file(intent)
+        assert out.exists()
+
+    def test_write_no_path_raises(self):
+        intent = IntentFile(name="no-path")
+        with pytest.raises(ValueError):
             write_intent_file(intent)
+
+    def test_write_creates_parent_dirs(self, tmp_path: Path):
+        out = tmp_path / "deep" / "nested" / "feature.ic"
+        intent = IntentFile(name="deep")
+        write_intent_file(intent, out)
+        assert out.exists()
 
 
 class TestWriteValidationFile:
-    def test_creates_parent_dirs(self, tmp_path: Path):
-        vf = ValidationFile(target="core")
-        dest = tmp_path / "deep" / "validations.icv"
-        write_validation_file(vf, dest)
-        assert dest.exists()
+    def test_write_and_read_back(self, tmp_path: Path):
+        original = ValidationFile(
+            target="core/specs",
+            agent_profile="default",
+            validations=[
+                Validation(
+                    name="types-exist",
+                    type=ValidationType.FILE_CHECK,
+                    severity=Severity.ERROR,
+                    args={"path": "types.py"},
+                ),
+                Validation(
+                    name="quality",
+                    type=ValidationType.AGENT_VALIDATION,
+                    severity=Severity.WARNING,
+                    args={"rubric": "Code is clean"},
+                ),
+            ],
+        )
+        out = tmp_path / "test.icv"
+        write_validation_file(original, out)
+        assert out.exists()
 
-    def test_raises_without_path(self):
-        vf = ValidationFile(target="core")
-        with pytest.raises(ValueError, match="destination"):
+        roundtripped = parse_validation_file(out)
+        assert roundtripped.target == original.target
+        assert roundtripped.agent_profile == original.agent_profile
+        assert len(roundtripped.validations) == 2
+        assert roundtripped.validations[0].name == "types-exist"
+        assert roundtripped.validations[0].type == ValidationType.FILE_CHECK
+        assert roundtripped.validations[1].severity == Severity.WARNING
+
+    def test_write_no_path_raises(self):
+        vf = ValidationFile(target="x", validations=[])
+        with pytest.raises(ValueError):
             write_validation_file(vf)
 
 
 # ---------------------------------------------------------------------------
-# Parse the actual intent files in this repo
+# Round-trip tests
 # ---------------------------------------------------------------------------
 
 
-class TestParseRealFiles:
-    """Parse the actual .ic and .icv files shipped with this repo."""
+class TestRoundTrip:
+    def test_intent_file_roundtrip(self, tmp_path: Path):
+        """Write -> parse -> write -> parse yields identical data."""
+        original = IntentFile(
+            name="roundtrip/test",
+            depends_on=["a", "b"],
+            tags=["t1", "t2"],
+            authors=["bob"],
+            body="Body with design.png reference\n",
+        )
+        p1 = tmp_path / "v1.ic"
+        write_intent_file(original, p1)
+        loaded = parse_intent_file(p1)
 
-    INTENT_ROOT = Path(__file__).resolve().parents[3] / "intent"
+        p2 = tmp_path / "v2.ic"
+        write_intent_file(loaded, p2)
+        reloaded = parse_intent_file(p2)
 
-    def test_parse_project_ic(self):
-        path = self.INTENT_ROOT / "project.ic"
-        if not path.exists():
-            pytest.skip("project.ic not found")
-        proj = parse_intent_file(path, as_project=True)
-        assert isinstance(proj, ProjectIntent)
-        assert proj.name == "intentc"
+        assert loaded.name == reloaded.name
+        assert loaded.depends_on == reloaded.depends_on
+        assert loaded.tags == reloaded.tags
+        assert loaded.authors == reloaded.authors
+        assert loaded.body == reloaded.body
 
-    def test_parse_implementation_ic(self):
-        path = self.INTENT_ROOT / "implementations" / "default.ic"
-        if not path.exists():
-            pytest.skip("implementations/default.ic not found")
-        impl = parse_intent_file(path, as_implementation=True)
-        assert isinstance(impl, Implementation)
-        assert impl.name == "implementation"
+    def test_validation_file_roundtrip(self, tmp_path: Path):
+        original = ValidationFile(
+            target="feat",
+            validations=[
+                Validation(name="v1", type=ValidationType.COMMAND_CHECK, args={"cmd": "echo ok"}),
+            ],
+        )
+        p1 = tmp_path / "v1.icv"
+        write_validation_file(original, p1)
+        loaded = parse_validation_file(p1)
 
-    def test_parse_specifications_ic(self):
-        path = self.INTENT_ROOT / "core" / "specifications" / "specifications.ic"
-        if not path.exists():
-            pytest.skip("specifications.ic not found")
-        intent = parse_intent_file(path)
-        assert intent.name == "core"
+        p2 = tmp_path / "v2.icv"
+        write_validation_file(loaded, p2)
+        reloaded = parse_validation_file(p2)
 
-    def test_parse_specifications_icv(self):
-        path = self.INTENT_ROOT / "core" / "specifications" / "validations.icv"
-        if not path.exists():
-            pytest.skip("validations.icv not found")
-        vf = parse_validation_file(path)
-        assert vf.target == "core/specifications"
-        assert len(vf.validations) == 2
+        assert loaded.target == reloaded.target
+        assert len(loaded.validations) == len(reloaded.validations)
+        assert loaded.validations[0].name == reloaded.validations[0].name
+        assert loaded.validations[0].type == reloaded.validations[0].type

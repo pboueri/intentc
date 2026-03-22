@@ -1,17 +1,17 @@
-"""CLI entry point for intentc — thin wrappers over core workflows."""
+"""CLI commands for intentc — a compiler of intent."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Optional
 
 import typer
 
 from intentc.build.agents import AgentProfile, BuildContext, create_from_profile
 from intentc.build.builder.builder import Builder, BuildOptions
-from intentc.build.state import GitVersionControl, StateManager, TargetStatus
-from intentc.build.validations import ValidationSuiteResult
+from intentc.build.state import GitVersionControl, StateManager
+from intentc.build.storage import SQLiteBackend
 from intentc.cli.config import Config, load_config, save_config
 from intentc.cli.output import (
     console,
@@ -24,114 +24,89 @@ from intentc.cli.output import (
     render_validation_result,
     render_validation_results,
 )
-from intentc.core.project import blank_project, load_project, write_project
-from intentc.core.types import IntentFile
+from intentc.core.project import Project, blank_project, load_project, write_project
+from intentc.core.types import IntentFile, ParseErrors
 
 app = typer.Typer(
     name="intentc",
     help="A compiler of intent — transforms specs into working code using AI agents.",
+    invoke_without_command=True,
     no_args_is_help=True,
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _resolve_profile(profile_name: str | None, config: Config) -> AgentProfile:
-    """Resolve agent profile: flag override > config default."""
-    if profile_name:
-        return AgentProfile(
-            name=profile_name,
-            provider=config.default_profile.provider,
-            timeout=config.default_profile.timeout,
-            retries=config.default_profile.retries,
-        )
-    return config.default_profile
-
-
-def _load_project_or_exit():
-    """Load the project or exit with code 2."""
+def _load_project_or_exit(intent_dir: Path) -> Project:
+    """Load project from intent directory, printing friendly errors on failure."""
     try:
-        return load_project(Path("intent"))
-    except Exception as exc:
-        print_error(str(exc))
+        return load_project(intent_dir)
+    except ParseErrors as exc:
+        for err in exc.errors:
+            print_error(f"{err.path}: {err.message}" + (f" (field: {err.field})" if err.field else ""))
         raise typer.Exit(code=2)
 
 
-def _make_builder(
-    project,
-    config: Config,
-    profile_name: str | None,
-    output_dir: str | None,
-) -> tuple[Builder, str]:
-    """Wire up a Builder with its dependencies. Returns (builder, resolved_output_dir)."""
-    resolved_output = output_dir or config.default_output_dir
-    agent_profile = _resolve_profile(profile_name, config)
-    state_mgr = StateManager(Path("."), resolved_output)
-    vcs = GitVersionControl(Path(resolved_output))
-    builder = Builder(
-        project=project,
-        state_manager=state_mgr,
-        version_control=vcs,
-        agent_profile=agent_profile,
-    )
-    return builder, resolved_output
+def _resolve_profile(profile_name: str | None, config: Config) -> AgentProfile:
+    """Return the agent profile: CLI override or config default."""
+    if profile_name:
+        return AgentProfile(name=profile_name, provider=profile_name)
+    return config.default_profile
 
 
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
+def _resolve_output_dir(output_dir: str | None, config: Config) -> str:
+    """Return the output directory: CLI override or config default."""
+    return output_dir or config.default_output_dir
 
 
 @app.command()
 def init(
-    name: Annotated[
-        Optional[str],
-        typer.Argument(help="Project name (defaults to current directory name)."),
-    ] = None,
+    name: Optional[str] = typer.Argument(None, help="Project name (default: current directory name)"),
 ) -> None:
     """Create a new intentc project in the current directory."""
-    intent_dir = Path("intent")
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+
     if (intent_dir / "project.ic").exists():
-        print_error(
-            "An intentc project already exists here (intent/project.ic). "
-            "Remove it first if you want to reinitialize."
-        )
+        print_error("intent/project.ic already exists — refusing to overwrite.")
         raise typer.Exit(code=2)
 
-    project_name = name or Path.cwd().name
+    project_name = name or cwd.name
     project = blank_project(project_name)
     write_project(project, intent_dir)
 
     config = Config()
-    config_path = save_config(config, Path("."))
+    config_path = save_config(config, cwd)
 
-    created_files = [
-        "intent/project.ic",
-        "intent/starter/starter.ic",
-        str(config_path),
-    ]
+    created_files: list[str] = []
+    for p in sorted(intent_dir.rglob("*")):
+        if p.is_file():
+            created_files.append(str(p.relative_to(cwd)))
+    created_files.append(str(config_path.relative_to(cwd)))
+
     render_init_summary(created_files)
 
 
 @app.command()
 def build(
-    target: Annotated[
-        Optional[str],
-        typer.Argument(help="Feature path to build. Builds all pending/outdated if omitted."),
-    ] = None,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Rebuild even if already built.")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Print the build plan without executing.")] = False,
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
-    profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile name override.")] = None,
-    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use (from implementations/ directory).")] = None,
+    target: Optional[str] = typer.Argument(None, help="Feature path to build"),
+    force: bool = typer.Option(False, "--force", "-f", help="Rebuild even if already built"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print the build plan without executing"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile name override"),
+    implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
 ) -> None:
     """Build features using the configured agent."""
-    project = _load_project_or_exit()
-    config = load_config(Path("."))
-    builder, resolved_output = _make_builder(project, config, profile, output_dir)
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+    project = _load_project_or_exit(intent_dir)
+    config = load_config(cwd)
+
+    agent_profile = _resolve_profile(profile, config)
+    resolved_output = _resolve_output_dir(output_dir, config)
+
+    backend = SQLiteBackend(cwd, resolved_output)
+    state_mgr = StateManager(cwd, resolved_output, backend)
+    vcs = GitVersionControl(Path(resolved_output))
+    builder = Builder(project, state_mgr, vcs, agent_profile)
 
     opts = BuildOptions(
         target=target or "",
@@ -143,133 +118,155 @@ def build(
     results, err = builder.build(opts)
     render_build_results(results, dry_run=dry_run)
 
-    if err is not None:
-        print_error(str(err))
+    if err:
         raise typer.Exit(code=1)
 
 
 @app.command()
 def validate(
-    target: Annotated[
-        Optional[str],
-        typer.Argument(help="Feature to validate. Validates entire project if omitted."),
-    ] = None,
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
-    profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
-    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
+    target: Optional[str] = typer.Argument(None, help="Feature to validate"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override"),
+    implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
 ) -> None:
     """Run validations independently of the build pipeline."""
-    project = _load_project_or_exit()
-    config = load_config(Path("."))
-    builder, resolved_output = _make_builder(project, config, profile, output_dir)
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+    project = _load_project_or_exit(intent_dir)
+    config = load_config(cwd)
 
-    result = builder.validate(target, resolved_output, implementation=implementation)
+    agent_profile = _resolve_profile(profile, config)
+    resolved_output = _resolve_output_dir(output_dir, config)
+
+    if implementation:
+        project.resolve_implementation(implementation)
+
+    backend = SQLiteBackend(cwd, resolved_output)
+    state_mgr = StateManager(cwd, resolved_output, backend)
+    vcs = GitVersionControl(Path(resolved_output))
+    builder = Builder(project, state_mgr, vcs, agent_profile)
+
+    result = builder.validate(target or "", resolved_output)
 
     if isinstance(result, list):
         render_validation_results(result)
-        has_error = any(not r.passed for r in result)
+        has_failure = any(not r.passed for r in result)
     else:
         render_validation_result(result)
-        has_error = not result.passed
+        console.print(
+            f"\n{sum(1 for v in result.results if v.status == 'pass')}/{len(result.results)} passed, "
+            f"{sum(1 for v in result.results if v.status != 'pass')} error(s), 0 warning(s)"
+        )
+        has_failure = not result.passed
 
-    if has_error:
+    if has_failure:
         raise typer.Exit(code=1)
 
 
 @app.command()
 def clean(
-    target: Annotated[
-        Optional[str],
-        typer.Argument(help="Feature path to clean."),
-    ] = None,
-    all_targets: Annotated[bool, typer.Option("--all", help="Reset all state for the output directory.")] = False,
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
+    target: Optional[str] = typer.Argument(None, help="Feature path to clean"),
+    all_targets: bool = typer.Option(False, "--all", help="Reset all state"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
 ) -> None:
     """Revert a target's generated code and reset its state."""
-    if not all_targets and not target:
-        print_error("Provide a target or use --all to reset everything.")
-        raise typer.Exit(code=2)
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+    project = _load_project_or_exit(intent_dir)
+    config = load_config(cwd)
+    resolved_output = _resolve_output_dir(output_dir, config)
 
-    project = _load_project_or_exit()
-    config = load_config(Path("."))
-    builder, resolved_output = _make_builder(project, config, None, output_dir)
+    backend = SQLiteBackend(cwd, resolved_output)
+    state_mgr = StateManager(cwd, resolved_output, backend)
+    vcs = GitVersionControl(Path(resolved_output))
+    builder = Builder(project, state_mgr, vcs, config.default_profile)
 
     if all_targets:
         builder.clean_all(resolved_output)
-        console.print("[green]All state reset.[/green]")
-    else:
+        console.print("All targets cleaned.")
+    elif target:
         builder.clean(target, resolved_output)
-        console.print(f"[green]Cleaned target '{target}'.[/green]")
+        console.print(f"Cleaned: {target}")
+    else:
+        print_error("Specify a target or use --all.")
+        raise typer.Exit(code=2)
 
 
 @app.command()
 def plan(
-    target: Annotated[
-        str,
-        typer.Argument(help="Feature path to plan."),
-    ],
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
-    profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
-    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
+    target: str = typer.Argument(..., help="Feature path to plan"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override"),
+    implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
 ) -> None:
     """Enter interactive planning mode with the agent for a specific feature."""
-    project = _load_project_or_exit()
-    config = load_config(Path("."))
-    resolved_output = output_dir or config.default_output_dir
-    agent_profile = _resolve_profile(profile, config)
-    agent = create_from_profile(agent_profile)
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+    project = _load_project_or_exit(intent_dir)
+    config = load_config(cwd)
 
     if target not in project.features:
-        print_error(
-            f"Feature '{target}' not found. "
-            f"Available: {', '.join(sorted(project.features))}"
-        )
+        available = ", ".join(sorted(project.features.keys()))
+        print_error(f"Feature '{target}' not found. Available features: {available}")
         raise typer.Exit(code=2)
 
-    resolved_impl = project.resolve_implementation(implementation)
-    node = project.features[target]
-    intent = node.intents[0] if node.intents else IntentFile(name=target)
+    agent_profile = _resolve_profile(profile, config)
+    resolved_output = _resolve_output_dir(output_dir, config)
+
+    feature = project.features[target]
+    if feature.intents:
+        intent = feature.intents[0]
+    else:
+        intent = IntentFile(name=target)
+
+    impl = None
+    if implementation:
+        impl = project.resolve_implementation(implementation)
+    else:
+        try:
+            impl = project.resolve_implementation(None)
+        except (KeyError, ValueError):
+            pass
+
     ctx = BuildContext(
         intent=intent,
-        validations=node.validations,
         output_dir=resolved_output,
         generation_id="plan",
-        dependency_names=list(node.depends_on),
         project_intent=project.project_intent,
-        implementation=resolved_impl,
+        implementation=impl,
         response_file_path="",
     )
+
+    agent = create_from_profile(agent_profile)
     agent.plan(ctx)
 
 
 @app.command()
 def status(
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
-    outdated: Annotated[bool, typer.Option("--outdated", help="Check for targets with stale source files.")] = False,
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
+    outdated: bool = typer.Option(False, "--outdated", help="Check for outdated targets"),
 ) -> None:
     """Show the build state for all tracked targets."""
-    config = load_config(Path("."))
-    resolved_output = output_dir or config.default_output_dir
-    state_mgr = StateManager(Path("."), resolved_output)
+    cwd = Path.cwd()
+    config = load_config(cwd)
+    resolved_output = _resolve_output_dir(output_dir, config)
 
+    backend = SQLiteBackend(cwd, resolved_output)
+    state_mgr = StateManager(cwd, resolved_output, backend)
     targets = state_mgr.list_targets()
-    results = {
-        name: state_mgr.get_build_result(name)
-        for name, _ in targets
-    }
-    results = {k: v for k, v in results.items() if v is not None}
+
+    results: dict[str, object] = {}
+    for t, _ in targets:
+        r = state_mgr.get_build_result(t)
+        if r:
+            results[t] = r
 
     outdated_list = None
     if outdated:
-        project = _load_project_or_exit()
-        agent_profile = _resolve_profile(None, config)
+        intent_dir = cwd / "intent"
+        project = _load_project_or_exit(intent_dir)
         vcs = GitVersionControl(Path(resolved_output))
-        builder = Builder(
-            project=project,
-            state_manager=state_mgr,
-            version_control=vcs,
-            agent_profile=agent_profile,
-        )
+        builder = Builder(project, state_mgr, vcs, config.default_profile)
         outdated_list = builder.detect_outdated()
 
     render_status_table(targets, results, outdated_list)
@@ -277,24 +274,20 @@ def status(
 
 @app.command()
 def diff(
-    target: Annotated[
-        str,
-        typer.Argument(help="Feature path to diff."),
-    ],
-    output_dir: Annotated[Optional[str], typer.Option("--output-dir", "-o", help="Override the output directory.")] = None,
+    target: str = typer.Argument(..., help="Feature path"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override the output directory"),
 ) -> None:
     """Show the diff of what was generated for a target."""
-    config = load_config(Path("."))
-    resolved_output = output_dir or config.default_output_dir
-    state_mgr = StateManager(Path("."), resolved_output)
+    cwd = Path.cwd()
+    config = load_config(cwd)
+    resolved_output = _resolve_output_dir(output_dir, config)
+
+    backend = SQLiteBackend(cwd, resolved_output)
+    state_mgr = StateManager(cwd, resolved_output, backend)
 
     result = state_mgr.get_build_result(target)
     if result is None:
         print_error(f"No build result found for target '{target}'.")
-        raise typer.Exit(code=2)
-
-    if not result.commit_id:
-        print_error(f"Target '{target}' has no commit ID (build may have failed).")
         raise typer.Exit(code=2)
 
     vcs = GitVersionControl(Path(resolved_output))
@@ -304,41 +297,37 @@ def diff(
 
 @app.command()
 def compare(
-    dir_a: Annotated[
-        str,
-        typer.Argument(help="Path to the reference output directory."),
-    ],
-    dir_b: Annotated[
-        str,
-        typer.Argument(help="Path to the candidate output directory."),
-    ],
-    profile: Annotated[Optional[str], typer.Option("--profile", "-p", help="Agent profile override.")] = None,
-    implementation: Annotated[Optional[str], typer.Option("--implementation", "-i", help="Implementation name to use.")] = None,
+    dir_a: str = typer.Argument(..., help="Path to the reference output directory"),
+    dir_b: str = typer.Argument(..., help="Path to the candidate output directory"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override"),
+    implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
 ) -> None:
     """Evaluate functional equivalence between two output directories."""
     from intentc.differencing.differencing import run_differencing
 
-    path_a = Path(dir_a)
-    path_b = Path(dir_b)
+    cwd = Path.cwd()
+    intent_dir = cwd / "intent"
+    project = _load_project_or_exit(intent_dir)
+    config = load_config(cwd)
 
-    if not path_a.is_dir():
-        print_error(f"Reference directory does not exist: {dir_a}")
-        raise typer.Exit(code=2)
-    if not path_b.is_dir():
-        print_error(f"Candidate directory does not exist: {dir_b}")
-        raise typer.Exit(code=2)
-
-    project = _load_project_or_exit()
-    config = load_config(Path("."))
     agent_profile = _resolve_profile(profile, config)
 
-    try:
-        result = run_differencing(dir_a, dir_b, project, agent_profile, implementation=implementation)
-    except Exception as exc:
-        print_error(str(exc))
-        raise typer.Exit(code=1)
+    impl = None
+    if implementation:
+        impl = project.resolve_implementation(implementation)
+
+    result = run_differencing(
+        project=project,
+        agent_profile=agent_profile,
+        dir_a=dir_a,
+        dir_b=dir_b,
+        implementation=impl,
+    )
 
     render_compare_result(result)
-
     if result.status != "equivalent":
         raise typer.Exit(code=1)
+
+
+if __name__ == "__main__":
+    app()

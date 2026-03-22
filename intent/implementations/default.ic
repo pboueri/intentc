@@ -72,7 +72,6 @@ The Python implementation uses the following file structure. Each intent feature
 ### build/agents
 - `intentc/build/agents.py` — All types (responses, contexts, profile, prompt templates), the Agent ABC, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers
 - `intentc/build/test_agents.py` — Tests
-- `agent/` — Standalone copy: `agent/__init__.py`, `agent/agent.py`, `agent/test_agent.py`
 
 ### build/state
 - `intentc/build/__init__.py` — Re-exports from agents, state, validations, storage (see intent spec for exact list)

@@ -1,4 +1,4 @@
-"""Differencing module — evaluates functional equivalence between two builds."""
+"""Differencing module — functional equivalence evaluation."""
 
 from intentc.differencing.differencing import run_differencing
 

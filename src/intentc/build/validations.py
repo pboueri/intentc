@@ -1,12 +1,14 @@
-"""Validation suite — runs validations against built features and the project."""
+"""Validation suite for intentc — runners, orchestration, and results."""
 
 from __future__ import annotations
 
 import abc
-import uuid
+import json
+import secrets
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
-
-from pydantic import BaseModel
+from typing import Any
 
 from intentc.build.agents import (
     Agent,
@@ -17,15 +19,15 @@ from intentc.build.agents import (
     create_from_profile,
 )
 from intentc.build.storage.backend import StorageBackend
-from intentc.core.project import Project
 from intentc.core.types import (
     Implementation,
     IntentFile,
     ProjectIntent,
     Severity,
     Validation,
-    ValidationFile,
+    ValidationType,
 )
+from intentc.core.project import Project
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +35,12 @@ from intentc.core.types import (
 # ---------------------------------------------------------------------------
 
 
-class ValidationContext(BaseModel):
+@dataclass
+class ValidationContext:
     """What a runner needs to evaluate a validation."""
 
-    model_config = {"extra": "ignore"}
-
     project_intent: ProjectIntent
-    implementation: Implementation | None = None
+    implementation: Implementation | None
     feature_intent: IntentFile
     output_dir: str
     response_file_path: str
@@ -50,28 +51,51 @@ class ValidationContext(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ValidationSuiteResult(BaseModel):
-    """The result of running a suite of validations against a target."""
-
-    model_config = {"extra": "ignore"}
+@dataclass
+class ValidationSuiteResult:
+    """Aggregated result for all validations run against a target."""
 
     target: str
-    results: list[ValidationResponse] = []
+    results: list[ValidationResponse] = field(default_factory=list)
     passed: bool = True
     summary: str = ""
 
+    def _build_summary(self, validations: list[Validation]) -> None:
+        """Compute summary string and passed flag from results and their severities."""
+        total = len(self.results)
+        passed_count = sum(1 for r in self.results if r.status == "pass")
+        # Build a map from validation name to severity
+        severity_map: dict[str, Severity] = {}
+        for v in validations:
+            severity_map[v.name] = v.severity
+
+        errors = 0
+        warnings = 0
+        for r in self.results:
+            if r.status != "pass":
+                sev = severity_map.get(r.name, Severity.ERROR)
+                if sev == Severity.ERROR:
+                    errors += 1
+                else:
+                    warnings += 1
+
+        self.passed = errors == 0
+        self.summary = (
+            f"{passed_count}/{total} passed, {errors} error(s), {warnings} warning(s)"
+        )
+
 
 # ---------------------------------------------------------------------------
-# ValidationRunner interface
+# ValidationRunner ABC
 # ---------------------------------------------------------------------------
 
 
 class ValidationRunner(abc.ABC):
-    """Interface for validation evaluation strategies."""
+    """Interface for validation type runners."""
 
     @abc.abstractmethod
     def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
-        """Evaluate a single validation entry and return the response."""
+        """Evaluate a single validation entry."""
 
     @abc.abstractmethod
     def type(self) -> str:
@@ -84,12 +108,7 @@ class ValidationRunner(abc.ABC):
 
 
 class AgentValidationRunner(ValidationRunner):
-    """Built-in runner for type 'agent_validation'.
-
-    Constructs a BuildContext from the ValidationContext, invokes the agent's
-    validate method, and returns the parsed ValidationResponse. If the agent
-    raises an error or returns an invalid response, returns a failure.
-    """
+    """Built-in runner for agent_validation type."""
 
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
@@ -99,7 +118,7 @@ class AgentValidationRunner(ValidationRunner):
             intent=ctx.feature_intent,
             validations=[],
             output_dir=ctx.output_dir,
-            generation_id=f"val-{uuid.uuid4().hex[:8]}",
+            generation_id=f"val-{secrets.token_hex(4)}",
             dependency_names=[],
             project_intent=ctx.project_intent,
             implementation=ctx.implementation,
@@ -107,17 +126,11 @@ class AgentValidationRunner(ValidationRunner):
         )
         try:
             return self._agent.validate(build_ctx, validation)
-        except AgentError as exc:
+        except (AgentError, Exception) as exc:
             return ValidationResponse(
                 name=validation.name,
                 status="fail",
                 reason=f"Agent error: {exc}",
-            )
-        except Exception as exc:
-            return ValidationResponse(
-                name=validation.name,
-                status="fail",
-                reason=f"Unexpected error: {exc}",
             )
 
     def type(self) -> str:
@@ -129,28 +142,8 @@ class AgentValidationRunner(ValidationRunner):
 # ---------------------------------------------------------------------------
 
 
-def _build_summary(results: list[ValidationResponse], entries: list[Validation]) -> str:
-    """Build a human-readable summary from results and their severity."""
-    severity_map = {v.name: v.severity for v in entries}
-    total = len(results)
-    passed = sum(1 for r in results if r.status == "pass")
-    errors = sum(
-        1 for r in results
-        if r.status != "pass" and severity_map.get(r.name, Severity.ERROR) == Severity.ERROR
-    )
-    warnings = sum(
-        1 for r in results
-        if r.status != "pass" and severity_map.get(r.name, Severity.ERROR) == Severity.WARNING
-    )
-    return f"{passed}/{total} passed, {errors} error(s), {warnings} warning(s)"
-
-
 class ValidationSuite:
-    """Core orchestrator for running validations.
-
-    Takes a project, an agent profile, and an output directory. Can validate
-    a specific feature or the entire project.
-    """
+    """Orchestrates running validations for features and the whole project."""
 
     def __init__(
         self,
@@ -164,27 +157,26 @@ class ValidationSuite:
         self._project = project
         self._agent_profile = agent_profile
         self._output_dir = output_dir
-        self._agent = create_from_profile(agent_profile)
         self._val_response_dir = val_response_dir
         self._storage_backend = storage_backend
 
-        # Initialize registry with the built-in agent runner
-        self._runners: dict[str, ValidationRunner] = {}
-        agent_runner = AgentValidationRunner(self._agent)
-        self._runners[agent_runner.type()] = agent_runner
-
-        # Merge caller-provided runners (can override defaults)
+        # Create the default agent and register the built-in runner
+        agent = create_from_profile(agent_profile)
+        self._registry: dict[str, ValidationRunner] = {
+            "agent_validation": AgentValidationRunner(agent),
+        }
         if runner_registry:
-            self._runners.update(runner_registry)
+            self._registry.update(runner_registry)
 
     def register_runner(self, runner: ValidationRunner) -> None:
         """Register a custom validation runner."""
-        self._runners[runner.type()] = runner
+        self._registry[runner.type()] = runner
 
     def validate_feature(self, feature: str) -> ValidationSuiteResult:
-        """Validate a specific feature by loading its .icv files and running each entry."""
-        self._project._require_feature(feature)
-        node = self._project.features[feature]
+        """Run all validations for a feature's .icv files."""
+        node = self._project.features.get(feature)
+        if node is None:
+            return ValidationSuiteResult(target=feature, passed=True, summary="0/0 passed, 0 error(s), 0 warning(s)")
 
         all_entries: list[Validation] = []
         for vf in node.validations:
@@ -193,21 +185,19 @@ class ValidationSuite:
         return self.validate_entries(feature, all_entries)
 
     def validate_project(self) -> list[ValidationSuiteResult]:
-        """Validate all features in topological order plus project-level assertions."""
+        """Run validations for all features (topological order) plus project assertions."""
         results: list[ValidationSuiteResult] = []
 
         for feature_path in self._project.topological_order():
-            result = self.validate_feature(feature_path)
-            results.append(result)
+            results.append(self.validate_feature(feature_path))
 
         # Project-level assertions
         if self._project.assertions:
-            assertion_entries: list[Validation] = []
+            all_entries: list[Validation] = []
             for vf in self._project.assertions:
-                assertion_entries.extend(vf.validations)
-            if assertion_entries:
-                result = self._validate_assertions(assertion_entries)
-                results.append(result)
+                all_entries.extend(vf.validations)
+            if all_entries:
+                results.append(self.validate_entries("project", all_entries))
 
         return results
 
@@ -215,66 +205,101 @@ class ValidationSuite:
         self, target: str, entries: list[Validation]
     ) -> ValidationSuiteResult:
         """Run a specific list of validation entries against a target."""
-        responses: list[ValidationResponse] = []
+        suite_result = ValidationSuiteResult(target=target)
 
-        # Resolve feature intent for context (use a blank one for "project" target)
-        feature_intent = self._resolve_feature_intent(target)
+        for validation in entries:
+            ctx = self._build_context(target, validation)
+            val_type = validation.type
+            runner = self._registry.get(val_type)
 
-        for entry in entries:
-            runner = self._runners.get(entry.type.value)
             if runner is None:
-                responses.append(
-                    ValidationResponse(
-                        name=entry.name,
-                        status="fail",
-                        reason=f"No runner registered for validation type '{entry.type.value}'. "
-                        f"Registered types: {', '.join(sorted(self._runners))}",
-                    )
+                response = ValidationResponse(
+                    name=validation.name,
+                    status="fail",
+                    reason=f"Unknown validation type: {val_type!r} — no runner registered",
                 )
-                continue
-
-            if self._val_response_dir is not None:
-                self._val_response_dir.mkdir(parents=True, exist_ok=True)
-                response_file = self._val_response_dir / f"{entry.name}-{uuid.uuid4().hex[:8]}.json"
             else:
-                response_file = Path(self._output_dir) / f".intentc-val-{entry.name}-{uuid.uuid4().hex[:8]}.json"
-            ctx = ValidationContext(
-                project_intent=self._project.project_intent,
-                implementation=self._project.resolve_implementation(),
-                feature_intent=feature_intent,
-                output_dir=self._output_dir,
-                response_file_path=str(response_file.resolve()),
-            )
-            resp = runner.run(entry, ctx)
-            responses.append(resp)
+                response = runner.run(validation, ctx)
 
-        # Determine pass/fail based on error-severity entries
-        severity_map = {v.name: v.severity for v in entries}
-        passed = not any(
-            r.status != "pass" and severity_map.get(r.name, Severity.ERROR) == Severity.ERROR
-            for r in responses
-        )
+            suite_result.results.append(response)
 
-        return ValidationSuiteResult(
-            target=target,
-            results=responses,
-            passed=passed,
-            summary=_build_summary(responses, entries),
-        )
+            # Persist if storage backend available
+            if self._storage_backend is not None:
+                self._persist_result(target, validation, response, ctx)
 
-    def _validate_assertions(self, entries: list[Validation]) -> ValidationSuiteResult:
-        """Run project-level assertions."""
-        return self.validate_entries("project", entries)
+        suite_result._build_summary(entries)
+        return suite_result
 
-    def _resolve_feature_intent(self, target: str) -> IntentFile:
-        """Get the primary intent for a target, or a blank one for 'project'."""
+    def _build_context(self, target: str, validation: Validation) -> ValidationContext:
+        """Construct a ValidationContext for a given target."""
+        # Resolve feature intent
         if target == "project":
-            return IntentFile(
+            feature_intent = IntentFile(
                 name="project",
                 body=self._project.project_intent.body,
             )
-        if target in self._project.features:
-            node = self._project.features[target]
-            if node.intents:
-                return node.intents[0]
-        return IntentFile(name=target, body="")
+        else:
+            node = self._project.features.get(target)
+            if node and node.intents:
+                feature_intent = node.intents[0]
+            else:
+                feature_intent = IntentFile(name=target, body="")
+
+        # Resolve implementation
+        impl: Implementation | None = None
+        try:
+            impl = self._project.resolve_implementation()
+        except (KeyError, ValueError):
+            pass
+
+        # Response file path
+        resp_dir = self._val_response_dir or Path(self._output_dir)
+        resp_file = resp_dir / f"val-{secrets.token_hex(8)}.json"
+
+        return ValidationContext(
+            project_intent=self._project.project_intent,
+            implementation=impl,
+            feature_intent=feature_intent,
+            output_dir=self._output_dir,
+            response_file_path=str(resp_file),
+        )
+
+    def _persist_result(
+        self,
+        target: str,
+        validation: Validation,
+        response: ValidationResponse,
+        ctx: ValidationContext,
+    ) -> None:
+        """Persist validation result and agent response to storage."""
+        assert self._storage_backend is not None
+
+        val_type = validation.type
+
+        val_result_id = self._storage_backend.save_validation_result(
+            build_result_id=None,
+            generation_id=f"val-{secrets.token_hex(4)}",
+            target=target,
+            validation_file_version_id=None,
+            name=validation.name,
+            type=val_type,
+            severity=validation.severity.value,
+            status=response.status,
+            reason=response.reason,
+            duration_secs=None,
+        )
+
+        # Save agent response if response file exists
+        resp_path = Path(ctx.response_file_path)
+        if resp_path.exists():
+            try:
+                resp_data = json.loads(resp_path.read_text(encoding="utf-8"))
+                self._storage_backend.save_agent_response(
+                    build_result_id=None,
+                    validation_result_id=val_result_id,
+                    response_type="validation",
+                    response_json=resp_data,
+                )
+                resp_path.unlink()
+            except (json.JSONDecodeError, OSError):
+                pass

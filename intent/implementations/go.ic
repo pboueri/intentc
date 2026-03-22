@@ -76,7 +76,6 @@ The Go implementation uses the following file structure. Each intent feature map
 ### build/agents
 - `internal/build/agents/agents.go` — All types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers
 - `internal/build/agents/agents_test.go` — Tests
-- `agent/` — Standalone copy for external use
 
 ### build/state
 - `internal/build/state.go` — State management (StateManager, BuildResult, BuildStep, TargetStatus, VersionControl, GitVersionControl)

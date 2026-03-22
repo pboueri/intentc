@@ -1,46 +1,55 @@
 """End-to-end integration tests for the intentc build pipeline.
 
-Exercises the full build pipeline in an isolated temporary directory
-with a real project loaded from disk, a real StateManager, and a
-MockAgent + MockVersionControl. No network calls, no real agents.
+Exercises the full build pipeline in an isolated temporary directory with a
+clean git repository. The agent is mocked — this test validates the
+orchestration, not the agent output.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
-import uuid
-from datetime import timedelta
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 
 from intentc.build.agents import (
     AgentError,
     AgentProfile,
+    BuildContext,
     BuildResponse,
     MockAgent,
 )
 from intentc.build.builder.builder import Builder, BuildOptions
-from intentc.build.state import StateManager, TargetStatus, VersionControl
+from intentc.build.state import (
+    BuildResult,
+    StateManager,
+    TargetStatus,
+    VersionControl,
+)
+from intentc.build.storage import SQLiteBackend
 from intentc.core.project import load_project
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Mock VersionControl
 # ---------------------------------------------------------------------------
 
 
 class MockVersionControl(VersionControl):
-    """In-memory version control for testing."""
+    """In-memory version control for tests."""
 
     def __init__(self) -> None:
         self.checkpoints: list[tuple[str, str]] = []
         self.restores: list[str] = []
+        self._counter = 0
 
     def checkpoint(self, message: str) -> str:
-        cid = f"commit-{len(self.checkpoints)}"
-        self.checkpoints.append((message, cid))
+        self._counter += 1
+        cid = f"commit-{self._counter:04d}"
+        self.checkpoints.append((cid, message))
         return cid
 
     def diff(self, from_id: str, to_id: str) -> str:
@@ -50,246 +59,330 @@ class MockVersionControl(VersionControl):
         self.restores.append(commit_id)
 
     def log(self, target: str | None = None) -> list[str]:
-        return [cid for _, cid in self.checkpoints]
-
-
-def _init_git_repo(path: Path) -> None:
-    """Initialize a git repo with a dummy user and initial commit."""
-    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=path, check=True, capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"],
-        cwd=path, check=True, capture_output=True,
-    )
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "initial"],
-        cwd=path, check=True, capture_output=True,
-    )
-
-
-def _create_project_on_disk(root: Path) -> None:
-    """Write a minimal intentc project with a 3-feature dependency chain.
-
-    models -> store -> api, where store has a validation.
-    """
-    intent = root / "intent"
-    intent.mkdir()
-
-    (intent / "project.ic").write_text(
-        "---\nname: test-e2e\n---\n# E2E Test Project\n"
-    )
-    (intent / "implementation.ic").write_text(
-        "---\nname: impl\n---\n# Implementation\nPython 3.11, output to src/\n"
-    )
-
-    # models — no deps
-    models = intent / "models"
-    models.mkdir()
-    (models / "models.ic").write_text(
-        "---\nname: models\nversion: 1\n---\n# Models\nData models.\n"
-    )
-
-    # store — depends on models, has a validation
-    store = intent / "store"
-    store.mkdir()
-    (store / "store.ic").write_text(
-        "---\nname: store\nversion: 1\ndepends_on: [models]\n---\n# Store\nPersistence layer.\n"
-    )
-    (store / "validations.icv").write_text(
-        "target: store\nversion: 1\nvalidations:\n"
-        "  - name: store-check\n"
-        "    type: agent_validation\n"
-        "    severity: error\n"
-        "    args:\n"
-        "      rubric: Check store module\n"
-    )
-
-    # api — depends on store
-    api = intent / "api"
-    api.mkdir()
-    (api / "api.ic").write_text(
-        "---\nname: api\nversion: 1\ndepends_on: [store]\n---\n# API\nREST endpoints.\n"
-    )
-
-    # config
-    intentc_dir = root / ".intentc"
-    intentc_dir.mkdir()
-    (intentc_dir / "config.yaml").write_text(
-        "default_output_dir: src\ndefault_profile:\n  name: cli\n  provider: cli\n"
-    )
-
-
-def _make_e2e_builder(
-    tmp_path: Path,
-    agent: MockAgent | None = None,
-) -> tuple[Builder, MockAgent, MockVersionControl, StateManager]:
-    """Load the on-disk project and wire up a Builder with mocks."""
-    project = load_project(tmp_path / "intent")
-    mock_agent = agent or MockAgent()
-    mock_vc = MockVersionControl()
-    profile = AgentProfile(name="mock", provider="cli")
-    output_dir = tmp_path / "src"
-    output_dir.mkdir(exist_ok=True)
-    sm = StateManager(tmp_path, "src")
-
-    builder = Builder(
-        project=project,
-        state_manager=sm,
-        version_control=mock_vc,
-        agent_profile=profile,
-    )
-    builder._create_agent = lambda p: mock_agent  # type: ignore[attr-defined]
-    return builder, mock_agent, mock_vc, sm
+        return [cid for cid, _ in self.checkpoints]
 
 
 # ---------------------------------------------------------------------------
-# End-to-end tests
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _setup_project(tmp_path: Path) -> Path:
+    """Create an intentc project on disk and return the tmp_path.
+
+    Creates:
+      intent/project.ic
+      intent/implementations/python.ic
+      intent/models/models.ic          (no deps)
+      intent/store/store.ic            (depends_on: [models])
+      intent/store/store.icv           (agent_validation)
+      intent/api/api.ic                (depends_on: [store])
+      .intentc/config.yaml
+    """
+    intent_dir = tmp_path / "intent"
+    intent_dir.mkdir()
+
+    # project.ic
+    (intent_dir / "project.ic").write_text(
+        "---\nname: test-e2e-project\n---\nAn end-to-end test project.\n",
+        encoding="utf-8",
+    )
+
+    # implementations/
+    impl_dir = intent_dir / "implementations"
+    impl_dir.mkdir()
+    (impl_dir / "python.ic").write_text(
+        "---\nname: python\n---\nPython 3.11, output to src/\n",
+        encoding="utf-8",
+    )
+
+    # models feature (no deps)
+    models_dir = intent_dir / "models"
+    models_dir.mkdir()
+    (models_dir / "models.ic").write_text(
+        "---\nname: models\n---\nCore data models.\n",
+        encoding="utf-8",
+    )
+
+    # store feature (depends on models)
+    store_dir = intent_dir / "store"
+    store_dir.mkdir()
+    (store_dir / "store.ic").write_text(
+        "---\nname: store\ndepends_on:\n  - models\n---\nPersistence layer.\n",
+        encoding="utf-8",
+    )
+
+    # store validation file
+    (store_dir / "store.icv").write_text(
+        "---\ntarget: store\nvalidations:\n"
+        "  - name: store-schema-check\n"
+        "    type: agent_validation\n"
+        "    severity: error\n"
+        "    args:\n"
+        "      rubric: Verify the store schema is valid\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    # api feature (depends on store)
+    api_dir = intent_dir / "api"
+    api_dir.mkdir()
+    (api_dir / "api.ic").write_text(
+        "---\nname: api\ndepends_on:\n  - store\n---\nREST API layer.\n",
+        encoding="utf-8",
+    )
+
+    # .intentc/config.yaml
+    config_dir = tmp_path / ".intentc"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        "default_profile: cli\nprofiles:\n  cli:\n    provider: cli\n",
+        encoding="utf-8",
+    )
+
+    return tmp_path
+
+
+def _init_git(tmp_path: Path) -> None:
+    """Initialize a git repo with dummy user and an initial empty commit."""
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", "test"],
+        cwd=tmp_path, capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp_path, capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "initial"],
+        cwd=tmp_path, capture_output=True, check=True,
+    )
+
+
+def _wire_builder(
+    tmp_path: Path,
+    mock_agent: MockAgent | None = None,
+) -> tuple[Builder, StateManager, MockVersionControl, MockAgent]:
+    """Load the on-disk project and wire up a Builder with mock deps."""
+    project = load_project(tmp_path / "intent")
+
+    output_dir = str(tmp_path / "src")
+    os.makedirs(output_dir, exist_ok=True)
+
+    backend = SQLiteBackend(tmp_path, "src")
+    # Disable FK constraints so that ValidationSuite's internally-generated
+    # generation_id (val-xxx) doesn't fail the generations FK.
+    backend._conn.execute("PRAGMA foreign_keys=OFF")
+    state_manager = StateManager(tmp_path, "src", backend=backend)
+    vc = MockVersionControl()
+    profile = AgentProfile(name="test-agent", provider="cli")
+
+    builder = Builder(
+        project=project,
+        state_manager=state_manager,
+        version_control=vc,
+        agent_profile=profile,
+    )
+
+    agent = mock_agent or MockAgent()
+    builder._create_agent = lambda _p: agent
+
+    return builder, state_manager, vc, agent
+
+
+# ---------------------------------------------------------------------------
+# Tests
 # ---------------------------------------------------------------------------
 
 
 class TestEndToEnd:
-    """Full pipeline integration tests using on-disk project + mocked agent."""
+    """Integration tests exercising the full build pipeline."""
 
     @pytest.fixture(autouse=True)
-    def setup_project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def setup(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
-        _init_git_repo(tmp_path)
-        _create_project_on_disk(tmp_path)
-        # Patch create_from_profile in the validations module so that
-        # ValidationSuite (created during the build's validate step) uses
-        # a MockAgent instead of trying to spawn a real agent.
-        self._val_mock_agent = MockAgent()
-        import intentc.build.validations as val_mod
-        monkeypatch.setattr(val_mod, "create_from_profile", lambda p: self._val_mock_agent)
+        _init_git(tmp_path)
+        _setup_project(tmp_path)
+
+        # Patch create_from_profile in the validations module so that the
+        # ValidationSuite (created internally by the Builder) gets a MockAgent
+        # instead of a real CLIAgent.
+        self._val_patcher = patch(
+            "intentc.build.validations.create_from_profile",
+            side_effect=lambda _profile: MockAgent(),
+        )
+        self._val_patcher.start()
+
+    @pytest.fixture(autouse=True)
+    def teardown(self) -> None:
+        yield
+        self._val_patcher.stop()
+
+    # --- test_full_build_pipeline ------------------------------------------
 
     def test_full_build_pipeline(self) -> None:
-        builder, agent, vc, sm = _make_e2e_builder(self.tmp_path)
-        opts = BuildOptions(output_dir="src")
+        builder, state_manager, vc, agent = _wire_builder(self.tmp_path)
+        output_dir = str(self.tmp_path / "src")
 
-        results, err = builder.build(opts)
+        results, err = builder.build(BuildOptions(output_dir=output_dir))
 
+        # No error
         assert err is None
+
+        # 3 results, one per feature
         assert len(results) == 3
-        assert all(r.status == TargetStatus.BUILT for r in results)
+
+        # All built
+        for r in results:
+            assert r.status == TargetStatus.BUILT
 
         # Topological order: models before store before api
         targets = [r.target for r in results]
         assert targets.index("models") < targets.index("store")
         assert targets.index("store") < targets.index("api")
 
-        # Steps recorded for each result
+        # Each result has resolve_deps, build, checkpoint steps
         for r in results:
             phases = [s.phase for s in r.steps]
             assert "resolve_deps" in phases
             assert "build" in phases
             assert "checkpoint" in phases
 
-        # store has validations so it should have a validate step
-        store_result = [r for r in results if r.target == "store"][0]
+        # The store feature (which has validations) also has a validate step
+        store_result = next(r for r in results if r.target == "store")
         store_phases = [s.phase for s in store_result.steps]
         assert "validate" in store_phases
 
-        # Shared generation ID (valid UUID)
-        gen_ids = {r.generation_id for r in results}
-        assert len(gen_ids) == 1
-        uuid.UUID(gen_ids.pop())
+        # All share the same generation_id (valid UUID)
+        gen_id = results[0].generation_id
+        UUID(gen_id)  # raises if invalid
+        for r in results:
+            assert r.generation_id == gen_id
 
-        # Agent was called 3 times
+        # MockAgent received 3 build calls
         assert len(agent.build_calls) == 3
 
-        # State persisted
-        for t in ["models", "store", "api"]:
-            assert sm.get_status(t) == TargetStatus.BUILT
+        # StateManager reports BUILT for all targets
+        for t in ("models", "store", "api"):
+            assert state_manager.get_status(t) == TargetStatus.BUILT
+
+    # --- test_idempotent_rebuild -------------------------------------------
 
     def test_idempotent_rebuild(self) -> None:
-        builder, agent, vc, sm = _make_e2e_builder(self.tmp_path)
-        opts = BuildOptions(output_dir="src")
+        builder, state_manager, vc, agent = _wire_builder(self.tmp_path)
+        output_dir = str(self.tmp_path / "src")
 
-        builder.build(opts)
-        agent.build_calls.clear()
+        # First build
+        builder.build(BuildOptions(output_dir=output_dir))
+        first_call_count = len(agent.build_calls)
 
-        results, err = builder.build(opts)
+        # Second build — nothing to do
+        results, err = builder.build(BuildOptions(output_dir=output_dir))
 
         assert err is None
         assert len(results) == 0
-        assert len(agent.build_calls) == 0
+        assert len(agent.build_calls) == first_call_count  # no additional calls
+
+    # --- test_force_rebuild ------------------------------------------------
 
     def test_force_rebuild(self) -> None:
-        builder, agent, vc, sm = _make_e2e_builder(self.tmp_path)
-        opts = BuildOptions(output_dir="src")
+        builder, state_manager, vc, agent = _wire_builder(self.tmp_path)
+        output_dir = str(self.tmp_path / "src")
 
-        builder.build(opts)
+        # Initial build
+        builder.build(BuildOptions(output_dir=output_dir))
         agent.build_calls.clear()
 
-        force_opts = BuildOptions(output_dir="src", force=True)
-        results, err = builder.build(force_opts)
+        # Force rebuild
+        results, err = builder.build(
+            BuildOptions(output_dir=output_dir, force=True)
+        )
 
         assert err is None
         assert len(results) == 3
-        assert all(r.status == TargetStatus.BUILT for r in results)
         assert len(agent.build_calls) == 3
+        for r in results:
+            assert r.status == TargetStatus.BUILT
+
+    # --- test_targeted_build_with_ancestors --------------------------------
 
     def test_targeted_build_with_ancestors(self) -> None:
-        builder, agent, vc, sm = _make_e2e_builder(self.tmp_path)
-        opts = BuildOptions(target="api", output_dir="src")
+        builder, state_manager, vc, agent = _wire_builder(self.tmp_path)
+        output_dir = str(self.tmp_path / "src")
 
-        results, err = builder.build(opts)
+        results, err = builder.build(
+            BuildOptions(target="api", output_dir=output_dir)
+        )
 
         assert err is None
+        # All 3 built (api depends on store depends on models)
+        assert len(results) == 3
         targets = [r.target for r in results]
-        assert targets == ["models", "store", "api"]
+        assert targets.index("models") < targets.index("store")
+        assert targets.index("store") < targets.index("api")
+
+    # --- test_partial_build_then_continue ----------------------------------
 
     def test_partial_build_then_continue(self) -> None:
-        builder, agent, vc, sm = _make_e2e_builder(self.tmp_path)
+        builder, state_manager, vc, agent = _wire_builder(self.tmp_path)
+        output_dir = str(self.tmp_path / "src")
 
         # Build only models
-        results1, err1 = builder.build(BuildOptions(target="models", output_dir="src"))
+        results1, err1 = builder.build(
+            BuildOptions(target="models", output_dir=output_dir)
+        )
         assert err1 is None
         assert len(results1) == 1
         assert results1[0].target == "models"
 
-        agent.build_calls.clear()
-
-        # Build all — only store and api should be built
-        results2, err2 = builder.build(BuildOptions(output_dir="src"))
+        # Build all — models should be skipped
+        results2, err2 = builder.build(BuildOptions(output_dir=output_dir))
         assert err2 is None
-        built = [r.target for r in results2]
-        assert "models" not in built
-        assert "store" in built
-        assert "api" in built
         assert len(results2) == 2
+        built_targets = [r.target for r in results2]
+        assert "models" not in built_targets
+        assert "store" in built_targets
+        assert "api" in built_targets
+
+    # --- test_build_failure_stops_dag --------------------------------------
 
     def test_build_failure_stops_dag(self) -> None:
+        failing_agent = MockAgent()
         call_count = 0
+        original_build = failing_agent.build
 
-        def fail_on_store(ctx):
+        def fail_on_store(ctx: BuildContext) -> BuildResponse:
             nonlocal call_count
             call_count += 1
+            # Fail when building store (second target)
             if ctx.intent.name == "store":
-                raise AgentError("store exploded")
-            return BuildResponse(status="success", summary="ok")
+                raise AgentError("store build failed")
+            return original_build(ctx)
 
-        agent = MockAgent()
-        agent.build = MagicMock(side_effect=fail_on_store)
+        failing_agent.build = fail_on_store  # type: ignore[assignment]
 
-        builder, _, vc, sm = _make_e2e_builder(self.tmp_path, agent=agent)
-        opts = BuildOptions(output_dir="src")
+        builder, state_manager, vc, _ = _wire_builder(
+            self.tmp_path, mock_agent=failing_agent
+        )
+        output_dir = str(self.tmp_path / "src")
 
-        results, err = builder.build(opts)
+        results, err = builder.build(BuildOptions(output_dir=output_dir))
 
-        assert err is not None
+        # models succeeded
+        assert results[0].target == "models"
+        assert results[0].status == TargetStatus.BUILT
+
+        # store failed
+        assert results[1].target == "store"
+        assert results[1].status == TargetStatus.FAILED
+
+        # api was never attempted
         built_targets = [r.target for r in results]
-        assert "models" in built_targets
-        assert "store" in built_targets
         assert "api" not in built_targets
 
-        models_result = [r for r in results if r.target == "models"][0]
-        assert models_result.status == TargetStatus.BUILT
+        # Error is returned
+        assert err is not None
 
-        store_result = [r for r in results if r.target == "store"][0]
-        assert store_result.status == TargetStatus.FAILED
-
-        assert sm.get_status("store") == TargetStatus.FAILED
+        # State reflects failure
+        assert state_manager.get_status("store") == TargetStatus.FAILED

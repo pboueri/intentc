@@ -1,10 +1,13 @@
-"""StorageBackend ABC and GenerationStatus enum."""
+"""StorageBackend abstract interface and GenerationStatus enum."""
 
 from __future__ import annotations
 
 import abc
 import enum
 from pathlib import Path
+from typing import Any
+
+from intentc.build.state import BuildResult, BuildStep, TargetStatus
 
 
 class GenerationStatus(str, enum.Enum):
@@ -14,12 +17,16 @@ class GenerationStatus(str, enum.Enum):
 
 
 class StorageBackend(abc.ABC):
-    """Abstract interface for persistent storage of build state, results, logs, and agent responses."""
+    """Abstract interface for persistent build storage.
 
-    @abc.abstractmethod
-    def __init__(self, base_dir: Path, output_dir: str) -> None: ...
+    Scoped to a single output directory set at construction.
+    """
 
-    # -- Generation methods ------------------------------------------------
+    def __init__(self, base_dir: Path, output_dir: str) -> None:
+        self.base_dir = base_dir
+        self.output_dir = output_dir
+
+    # -- Generation methods --------------------------------------------------
 
     @abc.abstractmethod
     def create_generation(
@@ -27,34 +34,39 @@ class StorageBackend(abc.ABC):
         generation_id: str,
         output_dir: str,
         profile_name: str | None,
-        options: dict | None,
+        options: dict[str, Any] | None,
     ) -> None: ...
 
     @abc.abstractmethod
-    def complete_generation(self, generation_id: str, status: GenerationStatus) -> None: ...
+    def complete_generation(
+        self, generation_id: str, status: GenerationStatus
+    ) -> None: ...
 
     @abc.abstractmethod
     def log_generation_event(self, generation_id: str, message: str) -> None: ...
 
     @abc.abstractmethod
-    def get_generation(self, generation_id: str) -> dict | None: ...
+    def get_generation(self, generation_id: str) -> dict[str, Any] | None: ...
 
-    # -- Intent/Validation file version methods ----------------------------
-
-    @abc.abstractmethod
-    def record_intent_version(self, name: str, source_path: str, content_hash: str) -> int: ...
+    # -- Intent / validation file version methods ----------------------------
 
     @abc.abstractmethod
-    def record_validation_version(self, target: str, source_path: str, content_hash: str) -> int: ...
+    def record_intent_version(
+        self, name: str, source_path: str, content_hash: str
+    ) -> int: ...
 
-    # -- Build result methods ----------------------------------------------
+    @abc.abstractmethod
+    def record_validation_version(
+        self, target: str, source_path: str, content_hash: str
+    ) -> int: ...
+
+    # -- Build result methods ------------------------------------------------
 
     @abc.abstractmethod
     def save_build_result(
         self,
         target: str,
-        result_dict: dict,
-        generation_id: str,
+        result: BuildResult,
         intent_version_id: int | None,
         git_diff: str | None,
         files_created: list[str] | None,
@@ -62,19 +74,25 @@ class StorageBackend(abc.ABC):
     ) -> int: ...
 
     @abc.abstractmethod
-    def get_build_result(self, target: str) -> dict | None: ...
+    def get_build_result(self, target: str) -> BuildResult | None: ...
 
     @abc.abstractmethod
-    def get_build_history(self, target: str, limit: int = 50) -> list[dict]: ...
+    def get_build_history(
+        self, target: str, limit: int = 50
+    ) -> list[BuildResult]: ...
 
-    # -- Build step methods ------------------------------------------------
+    # -- Build step methods --------------------------------------------------
 
     @abc.abstractmethod
     def save_build_step(
-        self, build_result_id: int, step_dict: dict, log: str | None, step_order: int
+        self,
+        build_result_id: int,
+        step: BuildStep,
+        log: str,
+        step_order: int,
     ) -> None: ...
 
-    # -- Validation result methods -----------------------------------------
+    # -- Validation result methods -------------------------------------------
 
     @abc.abstractmethod
     def save_validation_result(
@@ -91,7 +109,7 @@ class StorageBackend(abc.ABC):
         duration_secs: float | None,
     ) -> int: ...
 
-    # -- Agent response methods --------------------------------------------
+    # -- Agent response methods ----------------------------------------------
 
     @abc.abstractmethod
     def save_agent_response(
@@ -99,19 +117,19 @@ class StorageBackend(abc.ABC):
         build_result_id: int | None,
         validation_result_id: int | None,
         response_type: str,
-        response_json: dict,
+        response_json: dict[str, Any],
     ) -> None: ...
 
-    # -- Target state methods ----------------------------------------------
+    # -- Target state methods ------------------------------------------------
 
     @abc.abstractmethod
-    def get_status(self, target: str) -> str: ...
+    def get_status(self, target: str) -> TargetStatus: ...
 
     @abc.abstractmethod
-    def set_status(self, target: str, status: str) -> None: ...
+    def set_status(self, target: str, status: TargetStatus) -> None: ...
 
     @abc.abstractmethod
-    def list_targets(self) -> list[tuple[str, str]]: ...
+    def list_targets(self) -> list[tuple[str, TargetStatus]]: ...
 
     @abc.abstractmethod
     def reset(self, target: str) -> None: ...

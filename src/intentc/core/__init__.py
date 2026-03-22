@@ -1,6 +1,10 @@
+"""Core public API for intentc."""
+
 from intentc.core.types import (
-    IntentFile,
     Implementation,
+    IntentFile,
+    ParseError,
+    ParseErrors,
     ProjectIntent,
     Severity,
     Validation,
@@ -9,8 +13,6 @@ from intentc.core.types import (
     extract_file_references,
 )
 from intentc.core.parser import (
-    ParseError,
-    ParseErrors,
     parse_intent_file,
     parse_validation_file,
     write_intent_file,
@@ -25,23 +27,23 @@ from intentc.core.project import (
 )
 
 __all__ = [
-    "FeatureNode",
-    "Implementation",
     "IntentFile",
+    "ProjectIntent",
+    "Implementation",
+    "ValidationFile",
+    "Validation",
+    "ValidationType",
+    "Severity",
+    "extract_file_references",
     "ParseError",
     "ParseErrors",
-    "Project",
-    "ProjectIntent",
-    "Severity",
-    "Validation",
-    "ValidationFile",
-    "ValidationType",
-    "blank_project",
-    "extract_file_references",
-    "load_project",
     "parse_intent_file",
     "parse_validation_file",
     "write_intent_file",
-    "write_project",
     "write_validation_file",
+    "FeatureNode",
+    "Project",
+    "load_project",
+    "write_project",
+    "blank_project",
 ]

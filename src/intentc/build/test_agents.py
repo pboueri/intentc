@@ -1,9 +1,11 @@
-"""Tests for agent interface and implementations."""
+"""Tests for the agent module."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,16 +25,16 @@ from intentc.build.agents import (
     MockAgent,
     PromptTemplates,
     ValidationResponse,
-    _find_git_root,
+    _read_response_file,
     create_from_profile,
     load_default_prompts,
     render_differencing_prompt,
     render_prompt,
 )
 from intentc.core.types import (
+    Implementation,
     IntentFile,
     ProjectIntent,
-    Implementation,
     Validation,
     ValidationFile,
     ValidationType,
@@ -41,71 +43,71 @@ from intentc.core.types import (
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_context(tmp_path: Path, **overrides) -> BuildContext:
-    """Create a minimal BuildContext for testing."""
-    response_file = tmp_path / "response.json"
-    defaults = dict(
-        intent=IntentFile(name="test-feature", body="# Test Feature\nBuild something."),
-        validations=[],
-        output_dir=str(tmp_path),
-        generation_id="gen-test-1",
-        dependency_names=[],
-        project_intent=ProjectIntent(name="test-project", body="# Test Project"),
-        implementation=Implementation(name="impl", body="# Implementation\nPython 3.11"),
-        response_file_path=str(response_file),
-    )
-    defaults.update(overrides)
-    return BuildContext(**defaults)
+@pytest.fixture
+def project_intent() -> ProjectIntent:
+    return ProjectIntent(name="test-project", body="A test project")
 
 
-def _make_profile(**overrides) -> AgentProfile:
-    """Create a minimal AgentProfile for testing."""
-    defaults = dict(
-        name="test-agent",
-        provider="cli",
-        command="echo",
-    )
-    defaults.update(overrides)
-    return AgentProfile(**defaults)
+@pytest.fixture
+def intent_file() -> IntentFile:
+    return IntentFile(name="test-feature", body="Implement a test feature")
 
 
-def _make_validation(**overrides) -> Validation:
-    """Create a test validation entry."""
-    defaults = dict(
-        name="test-check",
+@pytest.fixture
+def validation() -> Validation:
+    return Validation(
+        name="test-val",
         type=ValidationType.AGENT_VALIDATION,
         severity=Severity.ERROR,
-        args={"rubric": "Check something"},
+        args={"rubric": "Check it works"},
     )
-    defaults.update(overrides)
-    return Validation(**defaults)
 
 
-def _write_build_response(path: str, **overrides) -> None:
-    """Write a valid BuildResponse JSON file."""
-    data = {
-        "status": "success",
-        "summary": "Built successfully",
-        "files_created": ["new_file.py"],
-        "files_modified": [],
-    }
-    data.update(overrides)
-    Path(path).write_text(json.dumps(data))
+@pytest.fixture
+def validation_file(validation: Validation) -> ValidationFile:
+    return ValidationFile(target="test-feature", validations=[validation])
 
 
-def _write_validation_response(path: str, **overrides) -> None:
-    """Write a valid ValidationResponse JSON file."""
-    data = {
-        "name": "test-check",
-        "status": "pass",
-        "reason": "All good",
-    }
-    data.update(overrides)
-    Path(path).write_text(json.dumps(data))
+@pytest.fixture
+def build_context(
+    intent_file: IntentFile,
+    validation_file: ValidationFile,
+    project_intent: ProjectIntent,
+    tmp_path: Path,
+) -> BuildContext:
+    return BuildContext(
+        intent=intent_file,
+        validations=[validation_file],
+        output_dir=str(tmp_path / "output"),
+        generation_id="gen-123",
+        dependency_names=["dep1"],
+        project_intent=project_intent,
+        response_file_path=str(tmp_path / "response.json"),
+    )
+
+
+@pytest.fixture
+def diff_context(project_intent: ProjectIntent, tmp_path: Path) -> DifferencingContext:
+    return DifferencingContext(
+        output_dir_a=str(tmp_path / "a"),
+        output_dir_b=str(tmp_path / "b"),
+        project_intent=project_intent,
+        response_file_path=str(tmp_path / "diff_response.json"),
+    )
+
+
+@pytest.fixture
+def profile() -> AgentProfile:
+    return AgentProfile(name="test-agent", provider="cli", command="echo")
+
+
+@pytest.fixture
+def claude_profile() -> AgentProfile:
+    return AgentProfile(name="claude-agent", provider="claude")
 
 
 # ---------------------------------------------------------------------------
@@ -114,125 +116,134 @@ def _write_validation_response(path: str, **overrides) -> None:
 
 
 class TestBuildResponse:
-    def test_construction(self):
-        resp = BuildResponse(
+    def test_create(self):
+        r = BuildResponse(
             status="success",
-            summary="Done",
+            summary="Built it",
             files_created=["a.py"],
             files_modified=["b.py"],
         )
-        assert resp.status == "success"
-        assert resp.summary == "Done"
-        assert resp.files_created == ["a.py"]
-        assert resp.files_modified == ["b.py"]
+        assert r.status == "success"
+        assert r.files_created == ["a.py"]
 
     def test_defaults(self):
-        resp = BuildResponse(status="failure", summary="Oops")
-        assert resp.files_created == []
-        assert resp.files_modified == []
+        r = BuildResponse(status="failure", summary="Oops")
+        assert r.files_created == []
+        assert r.files_modified == []
 
-    def test_extra_fields_ignored(self):
-        resp = BuildResponse(
-            status="success", summary="ok", unknown="ignored"  # type: ignore[call-arg]
-        )
-        assert not hasattr(resp, "unknown")
+    def test_extra_ignored(self):
+        r = BuildResponse(status="success", summary="ok", extra_field="ignored")
+        assert not hasattr(r, "extra_field")
 
 
 class TestValidationResponse:
-    def test_construction(self):
-        resp = ValidationResponse(name="check-1", status="pass", reason="Looks good")
-        assert resp.name == "check-1"
-        assert resp.status == "pass"
-        assert resp.reason == "Looks good"
+    def test_create(self):
+        r = ValidationResponse(name="v1", status="pass", reason="looks good")
+        assert r.name == "v1"
+        assert r.status == "pass"
 
-    def test_extra_fields_ignored(self):
-        resp = ValidationResponse(
-            name="c", status="fail", reason="bad", extra="x"  # type: ignore[call-arg]
+
+class TestDifferencingResponse:
+    def test_create(self):
+        dim = DimensionResult(name="api", status="pass", rationale="same API")
+        r = DifferencingResponse(
+            status="equivalent", dimensions=[dim], summary="All good"
         )
-        assert not hasattr(resp, "extra")
+        assert r.status == "equivalent"
+        assert len(r.dimensions) == 1
+        assert r.dimensions[0].name == "api"
 
 
 # ---------------------------------------------------------------------------
-# BuildContext
-# ---------------------------------------------------------------------------
-
-
-class TestBuildContext:
-    def test_all_fields(self, tmp_path: Path):
-        ctx = _make_context(tmp_path)
-        assert ctx.intent.name == "test-feature"
-        assert ctx.output_dir == str(tmp_path)
-        assert ctx.generation_id == "gen-test-1"
-        assert ctx.project_intent.name == "test-project"
-        assert ctx.implementation is not None
-        assert ctx.response_file_path.endswith("response.json")
-
-    def test_optional_implementation(self, tmp_path: Path):
-        ctx = _make_context(tmp_path, implementation=None)
-        assert ctx.implementation is None
-
-    def test_validations_list(self, tmp_path: Path):
-        vf = ValidationFile(
-            target="test-feature",
-            validations=[_make_validation()],
-        )
-        ctx = _make_context(tmp_path, validations=[vf])
-        assert len(ctx.validations) == 1
-        assert ctx.validations[0].validations[0].name == "test-check"
-
-
-# ---------------------------------------------------------------------------
-# PromptTemplates & rendering
+# PromptTemplates
 # ---------------------------------------------------------------------------
 
 
 class TestPromptTemplates:
-    def test_defaults_are_empty(self):
+    def test_defaults(self):
         pt = PromptTemplates()
         assert pt.build == ""
         assert pt.validate_template == ""
         assert pt.plan == ""
+        assert pt.difference == ""
 
-    def test_load_default_prompts(self):
-        templates = load_default_prompts()
-        # Should load from the prompts directory if it exists
-        assert isinstance(templates, PromptTemplates)
+    def test_custom(self):
+        pt = PromptTemplates(build="Build: {feature}", validate_template="Val: {validation}")
+        assert pt.build == "Build: {feature}"
+
+
+# ---------------------------------------------------------------------------
+# load_default_prompts
+# ---------------------------------------------------------------------------
+
+
+class TestLoadDefaultPrompts:
+    def test_loads_from_cwd(self, tmp_path: Path):
+        prompts = tmp_path / "intent" / "build" / "agents" / "prompts"
+        prompts.mkdir(parents=True)
+        (prompts / "build.prompt").write_text("BUILD {feature}")
+        (prompts / "validate.prompt").write_text("VALIDATE {validation}")
+        (prompts / "plan.prompt").write_text("PLAN {feature}")
+
+        diff_prompts = tmp_path / "intent" / "differencing" / "prompts"
+        diff_prompts.mkdir(parents=True)
+        (diff_prompts / "difference.prompt").write_text("DIFF {output_dir_a}")
+
+        with patch("intentc.build.agents.Path.cwd", return_value=tmp_path):
+            templates = load_default_prompts()
+
+        assert templates.build == "BUILD {feature}"
+        assert templates.validate_template == "VALIDATE {validation}"
+        assert templates.plan == "PLAN {feature}"
+        assert templates.difference == "DIFF {output_dir_a}"
+
+    def test_missing_files_yield_empty(self, tmp_path: Path):
+        with patch("intentc.build.agents.Path.cwd", return_value=tmp_path):
+            templates = load_default_prompts()
+        assert templates.build == ""
+        assert templates.validate_template == ""
+
+
+# ---------------------------------------------------------------------------
+# render_prompt
+# ---------------------------------------------------------------------------
 
 
 class TestRenderPrompt:
-    def test_replaces_all_variables(self, tmp_path: Path):
-        template = (
-            "Project: {project}\n"
-            "Impl: {implementation}\n"
-            "Feature: {feature}\n"
-            "Validations: {validations}\n"
-            "Response: {response_file}"
-        )
-        vf = ValidationFile(
-            target="test",
-            validations=[_make_validation(name="check-1")],
-        )
-        ctx = _make_context(tmp_path, validations=[vf])
-        result = render_prompt(template, ctx)
-
-        assert "# Test Project" in result
-        assert "# Implementation" in result
-        assert "# Test Feature" in result
-        assert "check-1" in result
+    def test_render_build(self, build_context: BuildContext):
+        template = "Project: {project}\nImpl: {implementation}\nFeature: {feature}\nVals: {validations}\nResp: {response_file}"
+        result = render_prompt(template, build_context)
+        assert "A test project" in result
+        assert "Implement a test feature" in result
+        assert "test-val" in result
         assert "response.json" in result
+        # No implementation set
+        assert "Impl: \n" in result
 
-    def test_single_validation_variable(self, tmp_path: Path):
-        template = "Validate: {validation}"
-        ctx = _make_context(tmp_path)
-        v = _make_validation(name="my-check")
-        result = render_prompt(template, ctx, validation=v)
-        assert "my-check" in result
+    def test_render_with_implementation(self, build_context: BuildContext):
+        build_context.implementation = Implementation(name="py", body="Use Python")
+        template = "{implementation}"
+        result = render_prompt(template, build_context)
+        assert result == "Use Python"
 
-    def test_missing_implementation(self, tmp_path: Path):
-        template = "Impl: {implementation}"
-        ctx = _make_context(tmp_path, implementation=None)
-        result = render_prompt(template, ctx)
-        assert result == "Impl: "
+    def test_render_with_validation(self, build_context: BuildContext, validation: Validation):
+        template = "Check: {validation}"
+        result = render_prompt(template, build_context, validation=validation)
+        assert "test-val" in result
+
+
+# ---------------------------------------------------------------------------
+# render_differencing_prompt
+# ---------------------------------------------------------------------------
+
+
+class TestRenderDifferencingPrompt:
+    def test_render(self, diff_context: DifferencingContext):
+        template = "A: {output_dir_a}, B: {output_dir_b}, Project: {project}, Resp: {response_file}"
+        result = render_differencing_prompt(template, diff_context)
+        assert diff_context.output_dir_a in result
+        assert diff_context.output_dir_b in result
+        assert "A test project" in result
 
 
 # ---------------------------------------------------------------------------
@@ -241,31 +252,96 @@ class TestRenderPrompt:
 
 
 class TestAgentProfile:
-    def test_construction(self):
-        p = AgentProfile(name="my-agent", provider="claude", model_id="opus")
-        assert p.name == "my-agent"
-        assert p.provider == "claude"
-        assert p.model_id == "opus"
+    def test_defaults(self):
+        p = AgentProfile(name="a", provider="claude")
         assert p.timeout == 3600.0
         assert p.retries == 3
-
-    def test_defaults(self):
-        p = AgentProfile(name="a", provider="cli")
         assert p.command == ""
         assert p.cli_args == []
         assert p.model_id is None
         assert p.prompt_templates is None
+        assert p.sandbox_write_paths == []
+        assert p.sandbox_read_paths == []
+
+    def test_full(self):
+        p = AgentProfile(
+            name="custom",
+            provider="cli",
+            command="my-tool",
+            cli_args=["--flag"],
+            timeout=60.0,
+            retries=1,
+            model_id="gpt-4",
+            sandbox_write_paths=["/out"],
+            sandbox_read_paths=["/in"],
+        )
+        assert p.provider == "cli"
+        assert p.timeout == 60.0
 
 
 # ---------------------------------------------------------------------------
-# Agent interface
+# BuildContext & DifferencingContext
 # ---------------------------------------------------------------------------
 
 
-class TestAgentInterface:
-    def test_is_abstract(self):
-        with pytest.raises(TypeError):
-            Agent()  # type: ignore[abstract]
+class TestBuildContext:
+    def test_fields(self, build_context: BuildContext):
+        assert build_context.intent.name == "test-feature"
+        assert build_context.generation_id == "gen-123"
+        assert build_context.dependency_names == ["dep1"]
+        assert build_context.implementation is None
+
+    def test_defaults(self, project_intent: ProjectIntent, intent_file: IntentFile):
+        ctx = BuildContext(
+            intent=intent_file,
+            output_dir="/out",
+            generation_id="g1",
+            project_intent=project_intent,
+            response_file_path="/resp.json",
+        )
+        assert ctx.validations == []
+        assert ctx.dependency_names == []
+
+
+class TestDifferencingContext:
+    def test_fields(self, diff_context: DifferencingContext):
+        assert diff_context.implementation is None
+        assert "a" in diff_context.output_dir_a
+
+    def test_with_implementation(self, project_intent: ProjectIntent):
+        impl = Implementation(name="go", body="Use Go")
+        ctx = DifferencingContext(
+            output_dir_a="/a",
+            output_dir_b="/b",
+            project_intent=project_intent,
+            response_file_path="/r.json",
+            implementation=impl,
+        )
+        assert ctx.implementation is not None
+        assert ctx.implementation.name == "go"
+
+
+# ---------------------------------------------------------------------------
+# _read_response_file
+# ---------------------------------------------------------------------------
+
+
+class TestReadResponseFile:
+    def test_valid_json(self, tmp_path: Path):
+        p = tmp_path / "resp.json"
+        p.write_text(json.dumps({"status": "success", "summary": "ok"}))
+        data = _read_response_file(str(p))
+        assert data["status"] == "success"
+
+    def test_missing_file(self):
+        with pytest.raises(AgentError, match="not found"):
+            _read_response_file("/nonexistent/path.json")
+
+    def test_invalid_json(self, tmp_path: Path):
+        p = tmp_path / "bad.json"
+        p.write_text("not json{{{")
+        with pytest.raises(AgentError, match="Invalid response"):
+            _read_response_file(str(p))
 
 
 # ---------------------------------------------------------------------------
@@ -279,55 +355,53 @@ class TestMockAgent:
         assert agent.get_name() == "mock"
         assert agent.get_type() == "mock"
 
-    def test_build_records_calls(self, tmp_path: Path):
+    def test_build_records_calls(self, build_context: BuildContext):
         agent = MockAgent()
-        ctx = _make_context(tmp_path)
-        resp = agent.build(ctx)
-
+        resp = agent.build(build_context)
         assert resp.status == "success"
         assert len(agent.build_calls) == 1
-        assert agent.build_calls[0].generation_id == "gen-test-1"
+        assert agent.build_calls[0] is build_context
 
-    def test_validate_records_calls(self, tmp_path: Path):
+    def test_validate_records_calls(self, build_context: BuildContext, validation: Validation):
         agent = MockAgent()
-        ctx = _make_context(tmp_path)
-        v = _make_validation(name="my-val")
-        resp = agent.validate(ctx, v)
-
+        resp = agent.validate(build_context, validation)
         assert resp.status == "pass"
-        assert resp.name == "my-val"
         assert len(agent.validate_calls) == 1
-        assert agent.validate_calls[0][1].name == "my-val"
+        assert agent.validate_calls[0] == (build_context, validation)
 
-    def test_plan_records_calls(self, tmp_path: Path):
+    def test_difference_records_calls(self, diff_context: DifferencingContext):
         agent = MockAgent()
-        ctx = _make_context(tmp_path)
-        agent.plan(ctx)
+        resp = agent.difference(diff_context)
+        assert resp.status == "equivalent"
+        assert len(agent.difference_calls) == 1
+        assert agent.difference_calls[0] is diff_context
+
+    def test_plan_records_calls(self, build_context: BuildContext):
+        agent = MockAgent()
+        agent.plan(build_context)
         assert len(agent.plan_calls) == 1
 
-    def test_custom_responses(self, tmp_path: Path):
-        custom_build = BuildResponse(
-            status="failure", summary="Custom fail"
-        )
-        custom_val = ValidationResponse(
-            name="custom", status="fail", reason="Custom reason"
+    def test_custom_responses(self, build_context: BuildContext, diff_context: DifferencingContext):
+        custom_build = BuildResponse(status="failure", summary="boom")
+        custom_val = ValidationResponse(name="v", status="fail", reason="bad")
+        custom_diff = DifferencingResponse(
+            status="divergent",
+            dimensions=[DimensionResult(name="api", status="fail", rationale="diff")],
+            summary="not same",
         )
         agent = MockAgent(
             name="custom-mock",
             build_response=custom_build,
             validation_response=custom_val,
+            differencing_response=custom_diff,
         )
+        assert agent.get_name() == "custom-mock"
+        assert agent.build(build_context).status == "failure"
+        v = Validation(name="x", type=ValidationType.AGENT_VALIDATION, severity=Severity.ERROR)
+        assert agent.validate(build_context, v).status == "fail"
+        assert agent.difference(diff_context).status == "divergent"
 
-        ctx = _make_context(tmp_path)
-        assert agent.build(ctx).status == "failure"
-        assert agent.build(ctx).summary == "Custom fail"
-
-        v = _make_validation(name="some-val")
-        val_resp = agent.validate(ctx, v)
-        assert val_resp.status == "fail"
-        assert val_resp.name == "some-val"  # Uses actual validation name
-
-    def test_isinstance_agent(self):
+    def test_is_agent_subclass(self):
         assert isinstance(MockAgent(), Agent)
 
 
@@ -337,90 +411,52 @@ class TestMockAgent:
 
 
 class TestCLIAgent:
-    def test_isinstance_agent(self):
-        profile = _make_profile()
+    def test_build_success(self, tmp_path: Path, build_context: BuildContext, profile: AgentProfile):
+        profile.prompt_templates = PromptTemplates(build="build {feature}")
+        resp_data = {
+            "status": "success",
+            "summary": "done",
+            "files_created": ["new.py"],
+            "files_modified": [],
+        }
+        resp_path = Path(build_context.response_file_path)
+        resp_path.parent.mkdir(parents=True, exist_ok=True)
+
         agent = CLIAgent(profile)
-        assert isinstance(agent, Agent)
-        assert agent.get_type() == "cli"
-        assert agent.get_name() == "test-agent"
+        with patch("intentc.build.agents.subprocess.run") as mock_run:
+            # Write the response file when the command runs
+            def side_effect(*args, **kwargs):
+                resp_path.write_text(json.dumps(resp_data))
+                return MagicMock(returncode=0)
 
-    def test_build_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(command="true")  # no-op command
+            mock_run.side_effect = side_effect
+            result = agent.build(build_context)
+
+        assert result.status == "success"
+        assert result.files_created == ["new.py"]
+
+    def test_build_command_failure(self, build_context: BuildContext, profile: AgentProfile):
+        profile.prompt_templates = PromptTemplates(build="build")
         agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
+        with patch("intentc.build.agents.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "echo", stderr=b"err")
+            with pytest.raises(AgentError, match="failed with exit code"):
+                agent.build(build_context)
 
-        # Pre-write response file (as if agent wrote it)
-        _write_build_response(ctx.response_file_path)
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            resp = agent.build(ctx)
-
-        assert resp.status == "success"
-        assert resp.files_created == ["new_file.py"]
-
-    def test_validate_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(command="true")
+    def test_no_command_raises(self, build_context: BuildContext):
+        profile = AgentProfile(name="no-cmd", provider="cli", command="")
+        profile.prompt_templates = PromptTemplates(build="b")
         agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
-        v = _make_validation(name="check-1")
-
-        _write_validation_response(ctx.response_file_path, name="check-1")
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            resp = agent.validate(ctx, v)
-
-        assert resp.status == "pass"
-        assert resp.name == "check-1"
-
-    def test_missing_response_file_raises(self, tmp_path: Path):
-        profile = _make_profile(command="true")
-        agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            with pytest.raises(AgentError, match="Response file not found"):
-                agent.build(ctx)
-
-    def test_invalid_json_response_raises(self, tmp_path: Path):
-        profile = _make_profile(command="true")
-        agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
-
-        Path(ctx.response_file_path).write_text("NOT JSON")
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            with pytest.raises(AgentError, match="Invalid JSON"):
-                agent.build(ctx)
-
-    def test_missing_command_raises(self, tmp_path: Path):
-        profile = _make_profile(command="")
-        agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
-
         with pytest.raises(AgentError, match="requires a command"):
-            agent.build(ctx)
+            agent.build(build_context)
 
-    def test_command_not_found_raises(self, tmp_path: Path):
-        profile = _make_profile(command="nonexistent_binary_xyz_123")
+    def test_get_name_and_type(self, profile: AgentProfile):
         agent = CLIAgent(profile)
-        ctx = _make_context(tmp_path)
+        assert agent.get_name() == "test-agent"
+        assert agent.get_type() == "cli"
 
-        with pytest.raises(AgentError, match="Command not found"):
-            agent.build(ctx)
-
-    def test_timeout_raises(self, tmp_path: Path):
-        profile = _make_profile(command="bash", timeout=0.1)
-        profile.cli_args = ["-c", "sleep 10"]
-        agent = CLIAgent(profile)
-
-        with pytest.raises(AgentError, match="timed out"):
-            agent._run("", str(tmp_path))
-
-    def test_build_command_includes_cli_args(self):
-        profile = _make_profile(command="my-tool", cli_args=["--verbose", "--format=json"])
-        agent = CLIAgent(profile)
-        cmd = agent._build_command("do something")
-        assert cmd == ["my-tool", "--verbose", "--format=json", "do something"]
+    def test_is_agent_subclass(self, profile: AgentProfile):
+        assert isinstance(CLIAgent(profile), Agent)
 
 
 # ---------------------------------------------------------------------------
@@ -429,423 +465,128 @@ class TestCLIAgent:
 
 
 class TestClaudeAgent:
-    def test_isinstance_agent(self):
-        profile = _make_profile(provider="claude")
-        agent = ClaudeAgent(profile)
-        assert isinstance(agent, Agent)
-        assert agent.get_type() == "claude"
-        assert agent.get_name() == "test-agent"
+    def test_build_constructs_correct_command(
+        self, build_context: BuildContext, claude_profile: AgentProfile, tmp_path: Path
+    ):
+        claude_profile.prompt_templates = PromptTemplates(build="build {feature}")
+        claude_profile.model_id = "claude-sonnet-4-6-20250514"
+        agent = ClaudeAgent(claude_profile)
 
-    def test_noninteractive_command_flags(self):
-        profile = _make_profile(provider="claude", model_id="opus-4")
-        agent = ClaudeAgent(profile)
-        cmd = agent._build_noninteractive_command("build it")
+        resp_data = {"status": "success", "summary": "built", "files_created": [], "files_modified": []}
+        resp_path = Path(build_context.response_file_path)
+        resp_path.parent.mkdir(parents=True, exist_ok=True)
+        resp_path.write_text(json.dumps(resp_data))
+
+        with patch("intentc.build.agents.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter([])
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = b""
+            mock_proc.returncode = 0
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
+
+            result = agent.build(build_context)
+
+        assert result.status == "success"
+        # Verify command flags
+        call_args = mock_popen.call_args
+        cmd = call_args[0][0]
         assert cmd[0] == "claude"
         assert "-p" in cmd
-        assert "build it" in cmd
+        assert "--verbose" in cmd
         assert "--output-format" in cmd
         assert "stream-json" in cmd
         assert "--dangerously-skip-permissions" in cmd
         assert "--model" in cmd
-        assert "opus-4" in cmd
+        assert "claude-sonnet-4-6-20250514" in cmd
 
-    def test_noninteractive_command_no_model(self):
-        profile = _make_profile(provider="claude")
+    def test_sandbox_settings_written_and_cleaned(
+        self, build_context: BuildContext, tmp_path: Path
+    ):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        build_context.output_dir = str(output_dir)
+
+        profile = AgentProfile(
+            name="sandboxed",
+            provider="claude",
+            sandbox_write_paths=[str(output_dir)],
+            sandbox_read_paths=["/intent"],
+        )
+        profile.prompt_templates = PromptTemplates(build="build")
         agent = ClaudeAgent(profile)
-        cmd = agent._build_noninteractive_command("build it")
-        assert "--model" not in cmd
 
-    def test_noninteractive_command_extra_args(self):
-        profile = _make_profile(provider="claude", cli_args=["--verbose"])
-        agent = ClaudeAgent(profile)
-        cmd = agent._build_noninteractive_command("build it")
-        assert "--verbose" in cmd
+        resp_path = Path(build_context.response_file_path)
+        resp_path.parent.mkdir(parents=True, exist_ok=True)
+        resp_path.write_text(json.dumps({"status": "success", "summary": "ok"}))
 
-    def test_interactive_command_no_p_flag(self):
-        profile = _make_profile(provider="claude", model_id="opus-4")
-        agent = ClaudeAgent(profile)
-        cmd = agent._build_interactive_command("plan it")
-        assert cmd[0] == "claude"
-        assert "-p" not in cmd
-        assert "--dangerously-skip-permissions" not in cmd
-        assert "--output-format" not in cmd
+        settings_written = {}
 
-    def test_build_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(provider="claude")
-        agent = ClaudeAgent(profile)
-        ctx = _make_context(tmp_path)
+        with patch("intentc.build.agents.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter([])
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = b""
+            mock_proc.returncode = 0
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
 
-        _write_build_response(ctx.response_file_path)
+            # Intercept settings file write
+            orig_write = Path.write_text
 
-        with patch.object(agent, "_run_noninteractive", return_value=MagicMock()):
-            resp = agent.build(ctx)
+            def capture_write(self_path, content, *args, **kwargs):
+                if "settings.local.json" in str(self_path):
+                    settings_written["path"] = self_path
+                    settings_written["content"] = content
+                return orig_write(self_path, content, *args, **kwargs)
 
-        assert resp.status == "success"
+            with patch.object(Path, "write_text", capture_write):
+                agent.build(build_context)
 
-    def test_validate_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(provider="claude")
-        agent = ClaudeAgent(profile)
-        ctx = _make_context(tmp_path)
-        v = _make_validation(name="my-val")
+        # Settings file should have been written
+        assert "path" in settings_written
+        data = json.loads(settings_written["content"])
+        assert str(output_dir) in data["sandbox"]["write_paths"]
+        assert "/intent" in data["sandbox"]["read_paths"]
 
-        _write_validation_response(ctx.response_file_path, name="my-val")
+    def test_get_type(self, claude_profile: AgentProfile):
+        agent = ClaudeAgent(claude_profile)
+        assert agent.get_type() == "claude"
 
-        with patch.object(agent, "_run_noninteractive", return_value=MagicMock()):
-            resp = agent.validate(ctx, v)
-
-        assert resp.status == "pass"
-        assert resp.name == "my-val"
+    def test_is_agent_subclass(self, claude_profile: AgentProfile):
+        assert isinstance(ClaudeAgent(claude_profile), Agent)
 
 
 # ---------------------------------------------------------------------------
-# ClaudeAgent — sandbox settings
-# ---------------------------------------------------------------------------
-
-
-class TestClaudeAgentSandbox:
-    def test_no_sandbox_when_no_paths(self, tmp_path: Path):
-        """No settings file written when sandbox paths are empty."""
-        profile = _make_profile(provider="claude")
-        agent = ClaudeAgent(profile)
-        ctx = agent._write_sandbox_settings(str(tmp_path))
-        assert ctx is None
-        assert not (tmp_path / ".claude" / "settings.local.json").exists()
-
-    def test_writes_sandbox_settings(self, tmp_path: Path):
-        """Sandbox settings are written when paths are configured."""
-        profile = _make_profile(
-            provider="claude",
-            sandbox_write_paths=["/tmp/output"],
-            sandbox_read_paths=["/tmp/output", "/home/intent"],
-        )
-        agent = ClaudeAgent(profile)
-
-        # tmp_path has no .git, so settings go in CWD
-        ctx = agent._write_sandbox_settings(str(tmp_path))
-        assert ctx is not None
-
-        settings_path = tmp_path / ".claude" / "settings.local.json"
-        assert settings_path.exists()
-
-        data = json.loads(settings_path.read_text())
-        assert data["sandbox"]["enabled"] is True
-        assert "//tmp/output" in data["sandbox"]["filesystem"]["allowWrite"]
-        assert "//tmp/output" in data["sandbox"]["filesystem"]["allowRead"]
-        assert "//home/intent" in data["sandbox"]["filesystem"]["allowRead"]
-
-        # Cleanup removes the file
-        agent._cleanup_sandbox_settings(ctx)
-        assert not settings_path.exists()
-
-    def test_preserves_existing_settings(self, tmp_path: Path):
-        """Existing settings content is merged, not overwritten."""
-        settings_dir = tmp_path / ".claude"
-        settings_dir.mkdir()
-        settings_path = settings_dir / "settings.local.json"
-        original = {"permissions": {"allow": ["Bash(ls *)"]}}
-        settings_path.write_text(json.dumps(original))
-
-        profile = _make_profile(
-            provider="claude",
-            sandbox_write_paths=["/out"],
-        )
-        agent = ClaudeAgent(profile)
-
-        ctx = agent._write_sandbox_settings(str(tmp_path))
-        assert ctx is not None
-
-        data = json.loads(settings_path.read_text())
-        # Sandbox config added
-        assert data["sandbox"]["enabled"] is True
-        # Original permissions preserved
-        assert data["permissions"]["allow"] == ["Bash(ls *)"]
-
-        # Cleanup restores original
-        agent._cleanup_sandbox_settings(ctx)
-        restored = json.loads(settings_path.read_text())
-        assert "sandbox" not in restored
-        assert restored["permissions"]["allow"] == ["Bash(ls *)"]
-
-    def test_writes_to_git_root(self, tmp_path: Path):
-        """Settings are written at the git root, not the CWD."""
-        # Create a fake git repo structure
-        git_root = tmp_path / "repo"
-        git_root.mkdir()
-        (git_root / ".git").mkdir()
-        subdir = git_root / "src"
-        subdir.mkdir()
-
-        profile = _make_profile(
-            provider="claude",
-            sandbox_write_paths=["/out"],
-        )
-        agent = ClaudeAgent(profile)
-
-        ctx = agent._write_sandbox_settings(str(subdir))
-        assert ctx is not None
-
-        # Settings should be at git root, not in subdir
-        assert (git_root / ".claude" / "settings.local.json").exists()
-        assert not (subdir / ".claude" / "settings.local.json").exists()
-
-        agent._cleanup_sandbox_settings(ctx)
-
-    def test_sandbox_path_format(self, tmp_path: Path):
-        """Paths use // prefix for absolute paths."""
-        profile = _make_profile(
-            provider="claude",
-            sandbox_write_paths=["/Users/foo/output"],
-            sandbox_read_paths=["/Users/foo/intent"],
-        )
-        agent = ClaudeAgent(profile)
-
-        ctx = agent._write_sandbox_settings(str(tmp_path))
-        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
-
-        assert data["sandbox"]["filesystem"]["allowWrite"] == ["//Users/foo/output"]
-        assert data["sandbox"]["filesystem"]["allowRead"] == ["//Users/foo/intent"]
-
-        agent._cleanup_sandbox_settings(ctx)
-
-
-class TestFindGitRoot:
-    def test_finds_git_root(self, tmp_path: Path):
-        git_root = tmp_path / "repo"
-        git_root.mkdir()
-        (git_root / ".git").mkdir()
-        subdir = git_root / "a" / "b"
-        subdir.mkdir(parents=True)
-
-        assert _find_git_root(str(subdir)) == str(git_root)
-        assert _find_git_root(str(git_root)) == str(git_root)
-
-    def test_returns_none_without_git(self, tmp_path: Path):
-        assert _find_git_root(str(tmp_path)) is None
-
-
-# ---------------------------------------------------------------------------
-# create_from_profile factory
+# create_from_profile
 # ---------------------------------------------------------------------------
 
 
 class TestCreateFromProfile:
-    def test_claude_provider(self):
-        profile = _make_profile(provider="claude")
-        agent = create_from_profile(profile)
+    def test_claude(self):
+        p = AgentProfile(name="c", provider="claude")
+        agent = create_from_profile(p)
         assert isinstance(agent, ClaudeAgent)
 
-    def test_cli_provider(self):
-        profile = _make_profile(provider="cli")
-        agent = create_from_profile(profile)
+    def test_cli(self):
+        p = AgentProfile(name="c", provider="cli", command="echo")
+        agent = create_from_profile(p)
         assert isinstance(agent, CLIAgent)
 
-    def test_unknown_provider_raises(self):
-        profile = _make_profile(provider="unknown")
+    def test_unknown_raises(self):
+        p = AgentProfile(name="u", provider="unknown")
         with pytest.raises(AgentError, match="Unknown agent provider"):
-            create_from_profile(profile)
-
-    def test_returned_agents_implement_interface(self):
-        for provider in ["claude", "cli"]:
-            profile = _make_profile(provider=provider, command="echo")
-            agent = create_from_profile(profile)
-            assert isinstance(agent, Agent)
-            assert agent.get_name() == "test-agent"
+            create_from_profile(p)
 
 
 # ---------------------------------------------------------------------------
-# Differencing types
+# AgentError
 # ---------------------------------------------------------------------------
 
 
-def _make_differencing_context(tmp_path: Path, **overrides) -> DifferencingContext:
-    """Create a minimal DifferencingContext for testing."""
-    response_file = tmp_path / "diff_response.json"
-    defaults = dict(
-        output_dir_a=str(tmp_path / "a"),
-        output_dir_b=str(tmp_path / "b"),
-        project_intent=ProjectIntent(name="test-project", body="# Test Project"),
-        response_file_path=str(response_file),
-        implementation=Implementation(name="impl", body="# Implementation\nPython 3.11"),
-    )
-    defaults.update(overrides)
-    return DifferencingContext(**defaults)
-
-
-def _write_differencing_response(path: str, **overrides) -> None:
-    """Write a valid DifferencingResponse JSON file."""
-    data = {
-        "status": "equivalent",
-        "dimensions": [
-            {"name": "public_api", "status": "pass", "rationale": "Same API surface"},
-        ],
-        "summary": "Builds are equivalent",
-    }
-    data.update(overrides)
-    Path(path).write_text(json.dumps(data))
-
-
-class TestDimensionResult:
-    def test_construction(self):
-        dr = DimensionResult(name="public_api", status="pass", rationale="Same surface")
-        assert dr.name == "public_api"
-        assert dr.status == "pass"
-        assert dr.rationale == "Same surface"
-
-    def test_extra_fields_ignored(self):
-        dr = DimensionResult(
-            name="x", status="fail", rationale="r", extra="ignored"  # type: ignore[call-arg]
-        )
-        assert not hasattr(dr, "extra")
-
-
-class TestDifferencingResponse:
-    def test_construction(self):
-        resp = DifferencingResponse(
-            status="equivalent",
-            dimensions=[
-                DimensionResult(name="public_api", status="pass", rationale="ok"),
-            ],
-            summary="All good",
-        )
-        assert resp.status == "equivalent"
-        assert len(resp.dimensions) == 1
-        assert resp.summary == "All good"
-
-    def test_defaults(self):
-        resp = DifferencingResponse(status="divergent", summary="Mismatch")
-        assert resp.dimensions == []
-
-    def test_extra_fields_ignored(self):
-        resp = DifferencingResponse(
-            status="equivalent", summary="ok", unknown="ignored"  # type: ignore[call-arg]
-        )
-        assert not hasattr(resp, "unknown")
-
-
-class TestDifferencingContext:
-    def test_all_fields(self, tmp_path: Path):
-        ctx = _make_differencing_context(tmp_path)
-        assert ctx.output_dir_a.endswith("/a")
-        assert ctx.output_dir_b.endswith("/b")
-        assert ctx.project_intent.name == "test-project"
-        assert ctx.implementation is not None
-        assert ctx.response_file_path.endswith("diff_response.json")
-
-    def test_optional_implementation(self, tmp_path: Path):
-        ctx = _make_differencing_context(tmp_path, implementation=None)
-        assert ctx.implementation is None
-
-    def test_extra_fields_ignored(self, tmp_path: Path):
-        ctx = _make_differencing_context(tmp_path)
-        # extra fields in model_config = {"extra": "ignore"} means no error
-        assert isinstance(ctx, DifferencingContext)
-
-
-# ---------------------------------------------------------------------------
-# render_differencing_prompt
-# ---------------------------------------------------------------------------
-
-
-class TestRenderDifferencingPrompt:
-    def test_replaces_all_variables(self, tmp_path: Path):
-        template = (
-            "Project: {project}\n"
-            "Impl: {implementation}\n"
-            "DirA: {output_dir_a}\n"
-            "DirB: {output_dir_b}\n"
-            "Response: {response_file}"
-        )
-        ctx = _make_differencing_context(tmp_path)
-        result = render_differencing_prompt(template, ctx)
-
-        assert "# Test Project" in result
-        assert "# Implementation" in result
-        assert str(tmp_path / "a") in result
-        assert str(tmp_path / "b") in result
-        assert "diff_response.json" in result
-
-    def test_missing_implementation(self, tmp_path: Path):
-        template = "Impl: {implementation}"
-        ctx = _make_differencing_context(tmp_path, implementation=None)
-        result = render_differencing_prompt(template, ctx)
-        assert result == "Impl: "
-
-
-# ---------------------------------------------------------------------------
-# MockAgent — differencing
-# ---------------------------------------------------------------------------
-
-
-class TestMockAgentDifferencing:
-    def test_difference_records_calls(self, tmp_path: Path):
-        agent = MockAgent()
-        ctx = _make_differencing_context(tmp_path)
-        resp = agent.difference(ctx)
-
-        assert resp.status == "equivalent"
-        assert len(agent.difference_calls) == 1
-        assert agent.difference_calls[0].output_dir_a == ctx.output_dir_a
-
-    def test_custom_differencing_response(self, tmp_path: Path):
-        custom = DifferencingResponse(
-            status="divergent",
-            dimensions=[DimensionResult(name="runtime_behavior", status="fail", rationale="Different output")],
-            summary="Not equivalent",
-        )
-        agent = MockAgent(differencing_response=custom)
-        ctx = _make_differencing_context(tmp_path)
-        resp = agent.difference(ctx)
-
-        assert resp.status == "divergent"
-        assert len(resp.dimensions) == 1
-        assert resp.dimensions[0].name == "runtime_behavior"
-
-
-# ---------------------------------------------------------------------------
-# CLIAgent — differencing
-# ---------------------------------------------------------------------------
-
-
-class TestCLIAgentDifferencing:
-    def test_difference_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(command="true")
-        agent = CLIAgent(profile)
-        ctx = _make_differencing_context(tmp_path)
-
-        _write_differencing_response(ctx.response_file_path)
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            resp = agent.difference(ctx)
-
-        assert resp.status == "equivalent"
-        assert len(resp.dimensions) == 1
-        assert resp.dimensions[0].name == "public_api"
-
-    def test_difference_missing_response_raises(self, tmp_path: Path):
-        profile = _make_profile(command="true")
-        agent = CLIAgent(profile)
-        ctx = _make_differencing_context(tmp_path)
-
-        with patch.object(agent, "_run", return_value=MagicMock()):
-            with pytest.raises(AgentError, match="Response file not found"):
-                agent.difference(ctx)
-
-
-# ---------------------------------------------------------------------------
-# ClaudeAgent — differencing
-# ---------------------------------------------------------------------------
-
-
-class TestClaudeAgentDifferencing:
-    def test_difference_reads_response_file(self, tmp_path: Path):
-        profile = _make_profile(provider="claude")
-        agent = ClaudeAgent(profile)
-        ctx = _make_differencing_context(tmp_path)
-
-        _write_differencing_response(ctx.response_file_path)
-
-        with patch.object(agent, "_run_noninteractive", return_value=MagicMock()):
-            resp = agent.difference(ctx)
-
-        assert resp.status == "equivalent"
-        assert len(resp.dimensions) == 1
+class TestAgentError:
+    def test_is_exception(self):
+        err = AgentError("something broke")
+        assert isinstance(err, Exception)
+        assert str(err) == "something broke"

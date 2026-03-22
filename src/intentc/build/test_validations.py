@@ -1,14 +1,14 @@
-"""Tests for the validation suite."""
+"""Tests for intentc.build.validations."""
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from intentc.build.agents import (
     AgentProfile,
-    BuildContext,
     MockAgent,
     ValidationResponse,
 )
@@ -19,16 +19,17 @@ from intentc.build.validations import (
     ValidationSuite,
     ValidationSuiteResult,
 )
-from intentc.core.project import FeatureNode, Project
+from intentc.core.project import Project
 from intentc.core.types import (
+    Implementation,
     IntentFile,
     ProjectIntent,
-    Implementation,
     Severity,
     Validation,
     ValidationFile,
     ValidationType,
 )
+from intentc.core.project import FeatureNode
 
 
 # ---------------------------------------------------------------------------
@@ -36,485 +37,443 @@ from intentc.core.types import (
 # ---------------------------------------------------------------------------
 
 
-def _make_profile(**overrides) -> AgentProfile:
-    defaults = dict(name="test-agent", provider="cli", command="echo")
-    defaults.update(overrides)
-    return AgentProfile(**defaults)
-
-
-def _make_validation(
-    name: str = "check-1",
-    severity: Severity = Severity.ERROR,
-    **overrides,
-) -> Validation:
-    defaults = dict(
-        name=name,
-        type=ValidationType.AGENT_VALIDATION,
-        severity=severity,
-        args={"rubric": "Check something"},
-    )
-    defaults.update(overrides)
-    return Validation(**defaults)
-
-
 def _make_project(
     features: dict[str, FeatureNode] | None = None,
     assertions: list[ValidationFile] | None = None,
 ) -> Project:
+    """Create a minimal Project for testing."""
     return Project(
-        project_intent=ProjectIntent(name="test-project", body="# Test Project"),
-        implementation=Implementation(name="impl", body="# Implementation\nPython 3.11"),
+        project_intent=ProjectIntent(name="test-project", body="A test project."),
+        implementations={"default": Implementation(name="default", body="Python impl")},
         features=features or {},
         assertions=assertions or [],
     )
 
 
-def _simple_project() -> Project:
-    """A project with two features: a -> b, each with validations."""
-    return _make_project(
-        features={
-            "feat/a": FeatureNode(
-                path="feat/a",
-                intents=[IntentFile(name="a", body="# Feature A")],
-                validations=[
-                    ValidationFile(
-                        target="feat/a",
-                        validations=[
-                            _make_validation(name="a-check-1"),
-                            _make_validation(name="a-check-2"),
-                        ],
-                    ),
-                ],
-            ),
-            "feat/b": FeatureNode(
-                path="feat/b",
-                intents=[IntentFile(name="b", body="# Feature B", depends_on=["feat/a"])],
-                validations=[
-                    ValidationFile(
-                        target="feat/b",
-                        validations=[_make_validation(name="b-check-1")],
-                    ),
-                ],
-            ),
-        },
-    )
+def _mock_profile() -> AgentProfile:
+    return AgentProfile(name="mock", provider="mock")
 
 
-# ---------------------------------------------------------------------------
-# ValidationContext
-# ---------------------------------------------------------------------------
+class _CountingRunner(ValidationRunner):
+    """Test runner that counts invocations and returns configurable results."""
 
-
-class TestValidationContext:
-    def test_construction(self, tmp_path: Path):
-        ctx = ValidationContext(
-            project_intent=ProjectIntent(name="p", body="proj"),
-            implementation=Implementation(name="impl", body="impl"),
-            feature_intent=IntentFile(name="feat", body="feat body"),
-            output_dir=str(tmp_path),
-            response_file_path=str(tmp_path / "resp.json"),
-        )
-        assert ctx.project_intent.name == "p"
-        assert ctx.feature_intent.name == "feat"
-        assert ctx.output_dir == str(tmp_path)
-
-    def test_optional_implementation(self, tmp_path: Path):
-        ctx = ValidationContext(
-            project_intent=ProjectIntent(name="p", body="proj"),
-            implementation=None,
-            feature_intent=IntentFile(name="feat", body=""),
-            output_dir=str(tmp_path),
-            response_file_path=str(tmp_path / "resp.json"),
-        )
-        assert ctx.implementation is None
-
-
-# ---------------------------------------------------------------------------
-# ValidationSuiteResult
-# ---------------------------------------------------------------------------
-
-
-class TestValidationSuiteResult:
-    def test_construction(self):
-        result = ValidationSuiteResult(
-            target="feat/a",
-            results=[
-                ValidationResponse(name="c1", status="pass", reason="ok"),
-                ValidationResponse(name="c2", status="fail", reason="bad"),
-            ],
-            passed=False,
-            summary="1/2 passed, 1 error(s), 0 warning(s)",
-        )
-        assert result.target == "feat/a"
-        assert len(result.results) == 2
-        assert result.passed is False
-
-    def test_defaults(self):
-        result = ValidationSuiteResult(target="x")
-        assert result.results == []
-        assert result.passed is True
-        assert result.summary == ""
-
-
-# ---------------------------------------------------------------------------
-# ValidationRunner interface
-# ---------------------------------------------------------------------------
-
-
-class TestValidationRunnerInterface:
-    def test_is_abstract(self):
-        with pytest.raises(TypeError):
-            ValidationRunner()  # type: ignore[abstract]
-
-
-# ---------------------------------------------------------------------------
-# AgentValidationRunner
-# ---------------------------------------------------------------------------
-
-
-class TestAgentValidationRunner:
-    def test_delegates_to_agent(self, tmp_path: Path):
-        agent = MockAgent(
-            validation_response=ValidationResponse(
-                name="placeholder", status="pass", reason="All good"
-            )
-        )
-        runner = AgentValidationRunner(agent)
-        assert runner.type() == "agent_validation"
-
-        v = _make_validation(name="my-check")
-        ctx = ValidationContext(
-            project_intent=ProjectIntent(name="p", body=""),
-            feature_intent=IntentFile(name="f", body=""),
-            output_dir=str(tmp_path),
-            response_file_path=str(tmp_path / "resp.json"),
-        )
-        resp = runner.run(v, ctx)
-
-        assert resp.status == "pass"
-        assert resp.name == "my-check"
-        assert len(agent.validate_calls) == 1
-
-    def test_agent_error_returns_failure(self, tmp_path: Path):
-        """If the agent raises AgentError, the runner returns a fail response."""
-        from intentc.build.agents import AgentError
-
-        agent = MockAgent()
-        runner = AgentValidationRunner(agent)
-
-        # Make the agent raise on validate
-        def bad_validate(ctx, v):
-            raise AgentError("broken")
-
-        agent.validate = bad_validate  # type: ignore[assignment]
-
-        v = _make_validation(name="err-check")
-        ctx = ValidationContext(
-            project_intent=ProjectIntent(name="p", body=""),
-            feature_intent=IntentFile(name="f", body=""),
-            output_dir=str(tmp_path),
-            response_file_path=str(tmp_path / "resp.json"),
-        )
-        resp = runner.run(v, ctx)
-
-        assert resp.status == "fail"
-        assert resp.name == "err-check"
-        assert "Agent error" in resp.reason
-
-
-# ---------------------------------------------------------------------------
-# ValidationSuite — lifecycle
-# ---------------------------------------------------------------------------
-
-
-class TestValidationSuiteLifecycle:
-    def test_construction(self, tmp_path: Path):
-        """Suite is constructed from Project, AgentProfile, output dir, and runner registry."""
-        project = _simple_project()
-        profile = _make_profile()
-        suite = ValidationSuite(project, profile, str(tmp_path))
-
-        # Agent is created internally — we can verify via the runner registry
-        assert "agent_validation" in suite._runners
-
-    def test_validate_feature(self, tmp_path: Path):
-        """ValidateFeature loads .icv files and returns a ValidationSuiteResult."""
-        project = _simple_project()
-        profile = _make_profile()
-
-        # Use a mock agent by monkey-patching create_from_profile
-        mock_agent = MockAgent()
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-
-        def mock_create(p):
-            return mock_agent
-
-        val_mod.create_from_profile = mock_create
-        try:
-            suite = ValidationSuite(project, profile, str(tmp_path))
-            result = suite.validate_feature("feat/a")
-
-            assert isinstance(result, ValidationSuiteResult)
-            assert result.target == "feat/a"
-            assert len(result.results) == 2
-            assert result.results[0].name == "a-check-1"
-            assert result.results[1].name == "a-check-2"
-            assert result.passed is True
-            assert len(mock_agent.validate_calls) == 2
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_validate_feature_unknown_raises(self, tmp_path: Path):
-        """ValidateFeature with unknown feature raises KeyError."""
-        project = _simple_project()
-        profile = _make_profile()
-
-        mock_agent = MockAgent()
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, profile, str(tmp_path))
-            with pytest.raises(KeyError, match="not found"):
-                suite.validate_feature("nonexistent")
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_validate_project_topological_order(self, tmp_path: Path):
-        """ValidateProject runs all features in topological order plus assertions."""
-        assertions = [
-            ValidationFile(
-                target="project",
-                validations=[_make_validation(name="assert-1")],
-            ),
-        ]
-        project = _make_project(
-            features={
-                "feat/a": FeatureNode(
-                    path="feat/a",
-                    intents=[IntentFile(name="a", body="# A")],
-                    validations=[
-                        ValidationFile(
-                            target="feat/a",
-                            validations=[_make_validation(name="a-check")],
-                        ),
-                    ],
-                ),
-                "feat/b": FeatureNode(
-                    path="feat/b",
-                    intents=[IntentFile(name="b", body="# B", depends_on=["feat/a"])],
-                    validations=[
-                        ValidationFile(
-                            target="feat/b",
-                            validations=[_make_validation(name="b-check")],
-                        ),
-                    ],
-                ),
-            },
-            assertions=assertions,
-        )
-
-        mock_agent = MockAgent()
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-            results = suite.validate_project()
-
-            # feat/a first (no deps), then feat/b, then project assertions
-            assert len(results) == 3
-            assert results[0].target == "feat/a"
-            assert results[1].target == "feat/b"
-            assert results[2].target == "project"
-            assert results[2].results[0].name == "assert-1"
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_validate_entries(self, tmp_path: Path):
-        """ValidateEntries accepts an arbitrary list of entries for a target."""
-        project = _simple_project()
-        mock_agent = MockAgent()
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-
-            entries = [
-                _make_validation(name="custom-1"),
-                _make_validation(name="custom-2"),
-            ]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert result.target == "feat/a"
-            assert len(result.results) == 2
-            assert result.results[0].name == "custom-1"
-            assert result.results[1].name == "custom-2"
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_severity_rollup_error_blocks(self, tmp_path: Path):
-        """Error-severity failure causes passed=False."""
-        project = _simple_project()
-
-        fail_agent = MockAgent(
-            validation_response=ValidationResponse(
-                name="x", status="fail", reason="Failed"
-            )
-        )
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: fail_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-
-            entries = [_make_validation(name="err-check", severity=Severity.ERROR)]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert result.passed is False
-            assert "1 error" in result.summary
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_severity_rollup_warning_does_not_block(self, tmp_path: Path):
-        """Warning-severity failure does NOT cause passed=False."""
-        project = _simple_project()
-
-        fail_agent = MockAgent(
-            validation_response=ValidationResponse(
-                name="x", status="fail", reason="Not great"
-            )
-        )
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: fail_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-
-            entries = [_make_validation(name="warn-check", severity=Severity.WARNING)]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert result.passed is True
-            assert "1 warning" in result.summary
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_mixed_severity(self, tmp_path: Path):
-        """Mix of error pass + warning fail => passed=True."""
-        project = _simple_project()
-        mock_agent = MockAgent()
-
-        # Make agent fail only for warning-severity checks
-        call_count = [0]
-        original_validate = mock_agent.validate
-
-        def selective_validate(ctx, v):
-            call_count[0] += 1
-            if v.severity == Severity.WARNING:
-                return ValidationResponse(name=v.name, status="fail", reason="warn fail")
-            return ValidationResponse(name=v.name, status="pass", reason="ok")
-
-        mock_agent.validate = selective_validate  # type: ignore[assignment]
-
-        import intentc.build.validations as val_mod
-        original_create = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-
-            entries = [
-                _make_validation(name="err-ok", severity=Severity.ERROR),
-                _make_validation(name="warn-bad", severity=Severity.WARNING),
-            ]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert result.passed is True
-            assert result.results[0].status == "pass"
-            assert result.results[1].status == "fail"
-        finally:
-            val_mod.create_from_profile = original_create
-
-    def test_validation_response_file_in_custom_dir(self, tmp_path: Path):
-        """When val_response_dir is provided, response files go there."""
-        project = _simple_project()
-        mock_agent = MockAgent()
-        response_dir = tmp_path / "custom_responses"
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(
-                project, _make_profile(), str(tmp_path / "out"),
-                val_response_dir=response_dir,
-            )
-            result = suite.validate_feature("feat/a")
-
-            assert len(mock_agent.validate_calls) == 2
-            for call in mock_agent.validate_calls:
-                ctx = call[0]
-                assert ctx.response_file_path.startswith(str(response_dir))
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_no_validations_returns_passed(self, tmp_path: Path):
-        """Feature with no .icv entries returns passed=True with empty results."""
-        project = _make_project(
-            features={
-                "feat/empty": FeatureNode(
-                    path="feat/empty",
-                    intents=[IntentFile(name="empty", body="")],
-                    validations=[],
-                ),
-            },
-        )
-
-        mock_agent = MockAgent()
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-            result = suite.validate_feature("feat/empty")
-
-            assert result.passed is True
-            assert result.results == []
-        finally:
-            val_mod.create_from_profile = original
-
-
-# ---------------------------------------------------------------------------
-# Runner registry extensibility
-# ---------------------------------------------------------------------------
-
-
-class _MockRunner(ValidationRunner):
-    """A custom runner for testing the registry."""
-
-    def __init__(self, type_name: str = "custom_check"):
-        self._type = type_name
+    def __init__(self, type_name: str, status: str = "pass", reason: str = "ok") -> None:
+        self._type_name = type_name
+        self._status = status
+        self._reason = reason
         self.calls: list[tuple[Validation, ValidationContext]] = []
 
     def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
         self.calls.append((validation, ctx))
         return ValidationResponse(
             name=validation.name,
-            status="pass",
-            reason=f"Custom runner handled {validation.name}",
+            status=self._status,
+            reason=self._reason,
         )
 
     def type(self) -> str:
-        return self._type
+        return self._type_name
 
 
-class TestRunnerRegistryExtensibility:
-    def test_agent_runner_registered_by_default(self, tmp_path: Path):
-        """AgentValidationRunner is registered by default for 'agent_validation'."""
+# ---------------------------------------------------------------------------
+# ValidationSuiteResult tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidationSuiteResult:
+    def test_build_summary_all_pass(self) -> None:
+        validations = [
+            Validation(name="v1", severity=Severity.ERROR),
+            Validation(name="v2", severity=Severity.WARNING),
+        ]
+        result = ValidationSuiteResult(
+            target="feat",
+            results=[
+                ValidationResponse(name="v1", status="pass", reason="ok"),
+                ValidationResponse(name="v2", status="pass", reason="ok"),
+            ],
+        )
+        result._build_summary(validations)
+        assert result.passed is True
+        assert result.summary == "2/2 passed, 0 error(s), 0 warning(s)"
+
+    def test_build_summary_error_failure(self) -> None:
+        validations = [
+            Validation(name="v1", severity=Severity.ERROR),
+            Validation(name="v2", severity=Severity.WARNING),
+        ]
+        result = ValidationSuiteResult(
+            target="feat",
+            results=[
+                ValidationResponse(name="v1", status="fail", reason="bad"),
+                ValidationResponse(name="v2", status="pass", reason="ok"),
+            ],
+        )
+        result._build_summary(validations)
+        assert result.passed is False
+        assert result.summary == "1/2 passed, 1 error(s), 0 warning(s)"
+
+    def test_build_summary_warning_only_failure(self) -> None:
+        validations = [
+            Validation(name="v1", severity=Severity.WARNING),
+        ]
+        result = ValidationSuiteResult(
+            target="feat",
+            results=[
+                ValidationResponse(name="v1", status="fail", reason="warn"),
+            ],
+        )
+        result._build_summary(validations)
+        assert result.passed is True  # warnings don't block
+        assert result.summary == "0/1 passed, 0 error(s), 1 warning(s)"
+
+    def test_build_summary_non_pass_status(self) -> None:
+        """Any non-'pass' status counts as failure."""
+        validations = [
+            Validation(name="v1", severity=Severity.ERROR),
+        ]
+        result = ValidationSuiteResult(
+            target="feat",
+            results=[
+                ValidationResponse(name="v1", status="error", reason="something"),
+            ],
+        )
+        result._build_summary(validations)
+        assert result.passed is False
+        assert "1 error(s)" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# AgentValidationRunner tests
+# ---------------------------------------------------------------------------
+
+
+class TestAgentValidationRunner:
+    def test_run_calls_agent_validate(self) -> None:
+        mock_agent = MockAgent(
+            validation_response=ValidationResponse(
+                name="check-x", status="pass", reason="looks good"
+            )
+        )
+        runner = AgentValidationRunner(mock_agent)
+        assert runner.type() == "agent_validation"
+
+        validation = Validation(name="check-x", args={"rubric": "check x"})
+        ctx = ValidationContext(
+            project_intent=ProjectIntent(name="proj", body="body"),
+            implementation=None,
+            feature_intent=IntentFile(name="feat", body="feat body"),
+            output_dir="/tmp/out",
+            response_file_path="/tmp/resp.json",
+        )
+        resp = runner.run(validation, ctx)
+
+        assert resp.status == "pass"
+        assert resp.name == "check-x"
+        assert len(mock_agent.validate_calls) == 1
+
+        # Check that BuildContext was constructed correctly
+        build_ctx, val = mock_agent.validate_calls[0]
+        assert build_ctx.validations == []
+        assert build_ctx.dependency_names == []
+        assert build_ctx.generation_id.startswith("val-")
+        assert build_ctx.output_dir == "/tmp/out"
+        assert val is validation
+
+    def test_run_agent_error_returns_fail(self) -> None:
+        """If agent raises, runner returns a failure response."""
+        from intentc.build.agents import AgentError
+
+        class FailingAgent(MockAgent):
+            def validate(self, ctx, validation):
+                raise AgentError("boom")
+
+        runner = AgentValidationRunner(FailingAgent())
+        validation = Validation(name="will-fail")
+        ctx = ValidationContext(
+            project_intent=ProjectIntent(name="p", body=""),
+            implementation=None,
+            feature_intent=IntentFile(name="f", body=""),
+            output_dir="/tmp",
+            response_file_path="/tmp/r.json",
+        )
+        resp = runner.run(validation, ctx)
+        assert resp.status == "fail"
+        assert "boom" in resp.reason
+
+
+# ---------------------------------------------------------------------------
+# ValidationSuite lifecycle tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidationSuiteLifecycle:
+    def test_validate_feature_runs_icv_entries(self) -> None:
+        """ValidateFeature loads .icv files, runs each entry, returns result."""
+        validations = [
+            Validation(name="v1", args={"rubric": "check 1"}),
+            Validation(name="v2", severity=Severity.WARNING, args={"rubric": "check 2"}),
+        ]
+        node = FeatureNode(
+            path="feat/a",
+            intents=[IntentFile(name="feat-a", body="do something")],
+            validations=[ValidationFile(target="feat/a", validations=validations)],
+        )
+        project = _make_project(features={"feat/a": node})
+
+        mock_agent = MockAgent()
+        # Override create_from_profile to return our mock
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+
+        def mock_create(profile):
+            return mock_agent
+
+        val_mod.create_from_profile = mock_create
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            result = suite.validate_feature("feat/a")
+        finally:
+            val_mod.create_from_profile = original
+
+        assert result.target == "feat/a"
+        assert len(result.results) == 2
+        assert result.passed is True
+        assert "2/2 passed" in result.summary
+        # Agent was called twice
+        assert len(mock_agent.validate_calls) == 2
+
+    def test_validate_feature_unknown_returns_empty(self) -> None:
+        """Unknown feature returns an empty passing result."""
+        project = _make_project()
+
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            result = suite.validate_feature("nonexistent")
+        finally:
+            val_mod.create_from_profile = original
+
+        assert result.passed is True
+        assert len(result.results) == 0
+
+    def test_validate_project_topological_order(self) -> None:
+        """ValidateProject runs features in topological order."""
+        node_a = FeatureNode(
+            path="a",
+            intents=[IntentFile(name="a", body="a body")],
+            validations=[
+                ValidationFile(
+                    target="a",
+                    validations=[Validation(name="va")],
+                )
+            ],
+        )
+        node_b = FeatureNode(
+            path="b",
+            intents=[IntentFile(name="b", body="b body", depends_on=["a"])],
+            validations=[
+                ValidationFile(
+                    target="b",
+                    validations=[Validation(name="vb")],
+                )
+            ],
+        )
+        project = _make_project(features={"a": node_a, "b": node_b})
+
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            results = suite.validate_project()
+        finally:
+            val_mod.create_from_profile = original
+
+        # Should have 2 results (one per feature), in topological order
+        assert len(results) == 2
+        targets = [r.target for r in results]
+        assert targets.index("a") < targets.index("b")
+
+    def test_validate_project_includes_assertions(self) -> None:
+        """ValidateProject includes project-level assertions."""
+        assertions = [
+            ValidationFile(
+                target="project",
+                validations=[Validation(name="proj-check")],
+            )
+        ]
+        project = _make_project(assertions=assertions)
+
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            results = suite.validate_project()
+        finally:
+            val_mod.create_from_profile = original
+
+        # Should have 1 result for assertions
+        assert len(results) == 1
+        assert results[0].target == "project"
+
+    def test_validate_entries_directly(self) -> None:
+        """ValidateEntries accepts an arbitrary list of entries."""
+        entries = [
+            Validation(name="e1", args={"rubric": "r1"}),
+            Validation(name="e2", args={"rubric": "r2"}),
+        ]
+        project = _make_project()
+
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            result = suite.validate_entries("custom-target", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert result.target == "custom-target"
+        assert len(result.results) == 2
+        assert result.passed is True
+
+    def test_severity_rollup_error_blocks(self) -> None:
+        """Error-severity failure sets passed=False."""
+        mock_agent = MockAgent(
+            validation_response=ValidationResponse(
+                name="x", status="fail", reason="bad"
+            )
+        )
+        entries = [
+            Validation(name="x", severity=Severity.ERROR),
+        ]
+        project = _make_project()
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            result = suite.validate_entries("t", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert result.passed is False
+        assert "1 error(s)" in result.summary
+
+    def test_severity_rollup_warning_does_not_block(self) -> None:
+        """Warning-severity failure does NOT set passed=False."""
+        mock_agent = MockAgent(
+            validation_response=ValidationResponse(
+                name="w", status="fail", reason="warn"
+            )
+        )
+        entries = [
+            Validation(name="w", severity=Severity.WARNING),
+        ]
+        project = _make_project()
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            result = suite.validate_entries("t", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert result.passed is True
+        assert "1 warning(s)" in result.summary
+
+    def test_feature_intent_resolution_project(self) -> None:
+        """For target 'project', feature intent uses project body."""
+        mock_agent = MockAgent()
+        project = _make_project()
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            entries = [Validation(name="pc")]
+            suite.validate_entries("project", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        # Check the BuildContext intent
+        build_ctx, _ = mock_agent.validate_calls[0]
+        assert build_ctx.intent.name == "project"
+        assert build_ctx.intent.body == "A test project."
+
+    def test_feature_intent_resolution_known_feature(self) -> None:
+        """For a known feature, uses the first intent."""
+        node = FeatureNode(
+            path="f",
+            intents=[IntentFile(name="f", body="feature body")],
+            validations=[],
+        )
+        project = _make_project(features={"f": node})
+        mock_agent = MockAgent()
+
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            suite.validate_entries("f", [Validation(name="x")])
+        finally:
+            val_mod.create_from_profile = original
+
+        build_ctx, _ = mock_agent.validate_calls[0]
+        assert build_ctx.intent.name == "f"
+        assert build_ctx.intent.body == "feature body"
+
+    def test_feature_intent_resolution_unknown(self) -> None:
+        """For an unknown target, creates empty IntentFile."""
         project = _make_project()
         mock_agent = MockAgent()
 
@@ -522,158 +481,119 @@ class TestRunnerRegistryExtensibility:
         original = val_mod.create_from_profile
         val_mod.create_from_profile = lambda p: mock_agent
         try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-            assert "agent_validation" in suite._runners
-            assert isinstance(suite._runners["agent_validation"], AgentValidationRunner)
+            suite = ValidationSuite(
+                project=project,
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            suite.validate_entries("unknown", [Validation(name="x")])
         finally:
             val_mod.create_from_profile = original
 
-    def test_custom_runner_dispatched(self, tmp_path: Path):
-        """A custom runner registered for a type is invoked for matching entries."""
-        project = _make_project(
-            features={
-                "feat/a": FeatureNode(
-                    path="feat/a",
-                    intents=[IntentFile(name="a", body="")],
-                    validations=[],
-                ),
-            },
-        )
-        mock_agent = MockAgent()
-        custom_runner = _MockRunner(type_name="custom_check")
+        build_ctx, _ = mock_agent.validate_calls[0]
+        assert build_ctx.intent.name == "unknown"
+        assert build_ctx.intent.body == ""
 
+
+# ---------------------------------------------------------------------------
+# Runner registry tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunnerRegistry:
+    def test_default_agent_validation_runner(self) -> None:
+        """AgentValidationRunner is registered by default."""
+        mock_agent = MockAgent()
         import intentc.build.validations as val_mod
         original = val_mod.create_from_profile
         val_mod.create_from_profile = lambda p: mock_agent
         try:
             suite = ValidationSuite(
-                project,
-                _make_profile(),
-                str(tmp_path),
-                runner_registry={"custom_check": custom_runner},
+                project=_make_project(),
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
             )
-
-            entries = [
-                Validation(
-                    name="my-custom",
-                    type=ValidationType.FILE_CHECK,  # We'll use a type whose .value matches
-                    severity=Severity.ERROR,
-                    args={},
-                ),
-            ]
-            # Override type value to match our custom runner
-            # Since ValidationType is an enum, we need to use a type that exists
-            # or register for an existing type string.
-            # Better approach: register runner for "file_check" and use FILE_CHECK type
-            suite._runners["file_check"] = custom_runner
-
-            entries = [
-                Validation(
-                    name="my-custom",
-                    type=ValidationType.FILE_CHECK,
-                    severity=Severity.ERROR,
-                    args={"path": "some/file.py"},
-                ),
-            ]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert len(custom_runner.calls) == 1
-            assert custom_runner.calls[0][0].name == "my-custom"
-            assert result.results[0].status == "pass"
-            assert result.passed is True
+            entries = [Validation(name="av", type=ValidationType.AGENT_VALIDATION)]
+            result = suite.validate_entries("t", entries)
         finally:
             val_mod.create_from_profile = original
 
-    def test_register_runner_method(self, tmp_path: Path):
-        """Runners can be registered after construction via register_runner."""
-        project = _make_project(
-            features={
-                "feat/a": FeatureNode(
-                    path="feat/a",
-                    intents=[IntentFile(name="a", body="")],
-                    validations=[],
-                ),
-            },
-        )
+        assert len(result.results) == 1
+        assert result.results[0].status == "pass"
+        assert len(mock_agent.validate_calls) == 1
+
+    def test_custom_runner_dispatched(self) -> None:
+        """A custom runner is dispatched to when type matches."""
+        custom = _CountingRunner("custom_check", status="pass", reason="custom ok")
+
         mock_agent = MockAgent()
-        custom_runner = _MockRunner(type_name="llm_judge")
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-            suite.register_runner(custom_runner)
-
-            entries = [
-                Validation(
-                    name="judge-check",
-                    type=ValidationType.LLM_JUDGE,
-                    severity=Severity.ERROR,
-                    args={},
-                ),
-            ]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert len(custom_runner.calls) == 1
-            assert result.results[0].name == "judge-check"
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_unknown_type_fails_with_descriptive_error(self, tmp_path: Path):
-        """A validation entry with an unregistered type fails with a useful message."""
-        project = _make_project(
-            features={
-                "feat/a": FeatureNode(
-                    path="feat/a",
-                    intents=[IntentFile(name="a", body="")],
-                    validations=[],
-                ),
-            },
-        )
-        mock_agent = MockAgent()
-
-        import intentc.build.validations as val_mod
-        original = val_mod.create_from_profile
-        val_mod.create_from_profile = lambda p: mock_agent
-        try:
-            suite = ValidationSuite(project, _make_profile(), str(tmp_path))
-
-            entries = [
-                Validation(
-                    name="bad-type-check",
-                    type=ValidationType.COMMAND_CHECK,
-                    severity=Severity.ERROR,
-                    args={},
-                ),
-            ]
-            result = suite.validate_entries("feat/a", entries)
-
-            assert result.passed is False
-            assert result.results[0].status == "fail"
-            assert "command_check" in result.results[0].reason
-            assert "No runner registered" in result.results[0].reason
-        finally:
-            val_mod.create_from_profile = original
-
-    def test_constructor_registry_overrides_default(self, tmp_path: Path):
-        """A runner passed via constructor overrides the default for that type."""
-        project = _make_project()
-        mock_agent = MockAgent()
-        custom_agent_runner = _MockRunner(type_name="agent_validation")
-
         import intentc.build.validations as val_mod
         original = val_mod.create_from_profile
         val_mod.create_from_profile = lambda p: mock_agent
         try:
             suite = ValidationSuite(
-                project,
-                _make_profile(),
-                str(tmp_path),
-                runner_registry={"agent_validation": custom_agent_runner},
+                project=_make_project(),
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+                runner_registry={"custom_check": custom},
             )
-
-            # The custom runner should have replaced the default
-            assert suite._runners["agent_validation"] is custom_agent_runner
+            entries = [
+                Validation(name="cc", type="custom_check"),  # type: ignore[arg-type]
+            ]
+            result = suite.validate_entries("t", entries)
         finally:
             val_mod.create_from_profile = original
+
+        assert len(result.results) == 1
+        assert result.results[0].status == "pass"
+        assert result.results[0].reason == "custom ok"
+        assert len(custom.calls) == 1
+        # Agent should NOT have been called
+        assert len(mock_agent.validate_calls) == 0
+
+    def test_register_runner_post_construction(self) -> None:
+        """register_runner adds a runner after construction."""
+        custom = _CountingRunner("late_check")
+
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=_make_project(),
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            suite.register_runner(custom)
+            entries = [Validation(name="lc", type="late_check")]  # type: ignore[arg-type]
+            result = suite.validate_entries("t", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert len(custom.calls) == 1
+        assert result.results[0].status == "pass"
+
+    def test_unknown_type_fails_with_error(self) -> None:
+        """A validation entry with an unknown type fails with descriptive error."""
+        mock_agent = MockAgent()
+        import intentc.build.validations as val_mod
+        original = val_mod.create_from_profile
+        val_mod.create_from_profile = lambda p: mock_agent
+        try:
+            suite = ValidationSuite(
+                project=_make_project(),
+                agent_profile=_mock_profile(),
+                output_dir="/tmp/out",
+            )
+            entries = [
+                Validation(name="bad", type="nonexistent_type"),  # type: ignore[arg-type]
+            ]
+            result = suite.validate_entries("t", entries)
+        finally:
+            val_mod.create_from_profile = original
+
+        assert len(result.results) == 1
+        assert result.results[0].status == "fail"
+        assert "nonexistent_type" in result.results[0].reason
+        assert "no runner registered" in result.results[0].reason

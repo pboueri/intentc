@@ -189,11 +189,10 @@ Type AgentProfile:
 
 ## Module Layout
 
-This feature generates two locations:
+This feature generates:
 
 1. The canonical agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
 2. Tests for the agent module.
-3. **`agent/`** — A standalone copy of the agent module for use outside the main package. This is a mirror/copy of the canonical agent module implementation. **The standalone copy MUST have the same defaults** (e.g., `timeout=3600.0`).
 
 ## PromptTemplates
 
