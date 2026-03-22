@@ -106,21 +106,7 @@ function blank_project(name: string) -> Project:
 
 `load_project()` expands wildcard patterns in `depends_on` using glob-style matching. For example, `depends_on: [core/*]` matches all feature paths under `core/`. The expansion happens in-place during loading, mutating each intent's `depends_on` list to replace patterns with matched feature names. If a wildcard matches no features, a parse error is accumulated.
 
-```
-all_feature_paths = sorted(features)
-for each (fp, node) in features:
-    for each intent in node.intents:
-        expanded = []
-        for each dep in intent.depends_on:
-            if dep contains wildcard characters ("*", "?", "["):
-                matches = glob_style_filter(all_feature_paths, dep)
-                if no matches:
-                    errors.append(...)
-                expanded.extend(matches)
-            else:
-                expanded.append(dep)
-        intent.depends_on = expanded
-```
+Wildcard patterns in `depends_on` are expanded via glob-style matching against all feature paths during load. The expansion happens in-place, replacing patterns with matched feature names. If a wildcard matches no features, a parse error is accumulated.
 
 ## Requirements
 

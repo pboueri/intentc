@@ -38,19 +38,7 @@ Dependencies are injected at construction. The builder receives an `AgentProfile
 
 ### Progress Logging
 
-The builder accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wires this to `console.print()` so users see progress as the build runs. Log messages are emitted at the following points:
-
-- **Build start**: `"Building {n} target(s): {target_list}"` when the build plan is determined
-- **Target start**: `"[{index}/{total}] Building target '{target}'..."` before each target
-- **Target skip**: `"[{index}/{total}] Skipping target '{target}' (already built)"` when skipping
-- **resolve_deps**: `"  Resolved {n} dependencies"` after dependency resolution
-- **build step**: `"  Build step completed"` after agent invocation succeeds
-- **build failure**: `"  Build failed: {error}"` after all retries exhausted
-- **validate step**: `"  Running validations..."` before validation, `"  Validations {passed|failed}: {summary}"` after
-- **checkpoint**: `"  Checkpointed: commit {short_commit_id}"` after version control checkpoint including number of files generated
-- **Target complete**: `"  Target '{target}' built successfully"` after all steps pass
-- **Clean**: `"Cleaning target '{target}'..."`, `"  Reverting commit {commit_id}"`, `"  Resetting state to pending"`, `"  Marking dependents as outdated"`
-- **Clean all**: `"Resetting all state for output directory..."`, `"  State reset complete"`
+The builder accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wires this to `console.print()` so users see progress as the build runs. The builder emits progress callbacks at each significant step: build start (with target count and list), target start/skip (with index and target name), dependency resolution, build step completion/failure, validation start/result, checkpoint (with commit ID), target completion, and clean operations.
 
 ```
 Type Builder:
@@ -96,55 +84,13 @@ For each target in the build set:
 
    - **Skip check** — If the target is already `built` and `force` is false, skip it.
    - **Resolve agent profile** — Priority: `opts.profile_override` > builder's `agent_profile`.
-   - **Apply sandbox paths** — Compute filesystem boundaries from the project DAG and attach to the profile before creating the agent:
-
-     ```
-     method _apply_sandbox_paths(profile, target, opts):
-         output_dir_abs = absolute path of opts.output_dir
-         sandbox_write = [
-             output_dir_abs,
-             absolute path of state_manager.build_response_dir,
-             absolute path of state_manager.val_response_dir,
-         ]
-         sandbox_read = [output_dir_abs]
-         intent_dir = project.intent_dir
-         if intent_dir is not null:
-             ancestors = project.ancestors(target)
-             for each feat in ancestors union {target}:
-                 feat_dir = intent_dir / feat
-                 if feat_dir is a directory:
-                     append absolute path of feat_dir to sandbox_read
-             project_ic = intent_dir / "project.ic"
-             if project_ic exists:
-                 append absolute path of project_ic to sandbox_read
-             impl_dir = intent_dir / "implementations"
-             if impl_dir is a directory:
-                 append absolute path of impl_dir to sandbox_read
-             # Backward compat: legacy implementation.ic
-             impl_ic = intent_dir / "implementation.ic"
-             if impl_ic exists:
-                 append absolute path of impl_ic to sandbox_read
-         return copy of profile with updated sandbox_write_paths and sandbox_read_paths
-     ```
+   - **Apply sandbox paths** — The builder scopes agent filesystem access based on the project DAG. Write access is granted to the output directory, the build response directory, and the validation response directory. Read access is granted to the output directory plus the intent files for the target and all its ancestors, the project intent file, and the implementations directory. A legacy `implementation.ic` file is also included in read access if it exists. The method returns a copy of the profile with updated sandbox paths.
 
    - Use `create_from_profile` to get an agent instance from the sandboxed profile.
    - **Execute build steps**, each timed and recorded as a `BuildStep`:
 
      1. `resolve_deps` — Gather the target's dependency names from the DAG via `node.depends_on`. This is context for the agent, not a build action.
-     2. `build` — Construct a `BuildContext`:
-        ```
-        ctx = BuildContext(
-            intent = first element of node.intents if non-empty, otherwise IntentFile(name=target),
-            validations = node.validations,       # pass the target's validations
-            output_dir = opts.output_dir,
-            generation_id = generation_id,
-            dependency_names = dep_names,          # from resolve_deps step
-            project_intent = project.project_intent,
-            implementation = project.implementation,
-            response_file_path = absolute path of response_file,
-        )
-        ```
-        Invoke `agent.build(ctx)`. On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
+     2. `build` — Construct a `BuildContext` with the target's intent (first intent from the node, or a blank IntentFile if none), the target's validations, output directory, generation ID, dependency names from the resolve_deps step, project intent, implementation, and response file path. Invoke `agent.build(ctx)`. On `AgentError`, retry up to `profile.retries` times. If all retries exhausted, this step fails.
      3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, the output dir, the storage backend, and the `val_response_dir` from the state manager. The `val_response_dir` MUST be passed to the ValidationSuite so that validation response files are staged in the correct directory. Call `suite.validate_feature(target)`. If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
      4. `checkpoint` — Call `version_control.checkpoint()` with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`. Capture the git diff via `version_control.diff("{commit_id}~1", commit_id)` and store it on the build result.
 
@@ -160,22 +106,7 @@ The checkpoint happens only after both build and validation succeed. This means 
 
 ### Retries
 
-Retries apply only to `AgentError` exceptions (crashes, timeouts, malformed response files). They do **not** apply to validation failures or generic exceptions. The retry loop catches specifically `AgentError`:
-
-```
-build_error = null
-for attempt in range(profile.retries):
-    try:
-        agent.build(ctx)
-        build_error = null
-        break
-    on AgentError as exc:
-        build_error = exc
-        if attempt < profile.retries - 1:
-            continue
-```
-
-So `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
+Retries apply only to `AgentError` exceptions (crashes, timeouts, malformed response files). They do **not** apply to validation failures or generic exceptions. `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the target is marked `failed` with no retry.
 
 ## Clean
 
