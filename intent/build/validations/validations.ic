@@ -162,6 +162,16 @@ It then invokes `agent.validate(build_ctx, validation)`, reads the response file
 
 The **ValidationSuite** is responsible for creating the agent via `create_from_profile(agent_profile)` and passing it to the `AgentValidationRunner`. The runner does not create agents itself.
 
+## Progress Logging
+
+The `ValidationSuite` accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wires this to `console.print()`. Log messages are emitted at the following points:
+
+- **Feature validation start**: `"Validating feature '{feature}'... ({n} validations)"` before running entries
+- **Each validation**: `"  Running validation '{name}' ({type})..."` before each runner invocation
+- **Each result**: `"  Validation '{name}': {status}"` after each runner returns, including the reason on failure
+- **Project validation**: `"Validating project ({n} features)..."` at the start of project-wide validation
+- **Assertion start**: `"Running project-level assertions ({n} entries)..."` before running assertions
+
 ## Extensibility
 
 The `type` field on each validation entry selects a runner. For now, only `agent_validation` is implemented. Future types can be registered on the suite's runner registry without modifying the core validation loop. If no runner is found for a type, the validation fails with an error indicating the unknown type.

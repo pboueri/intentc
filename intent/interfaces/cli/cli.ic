@@ -78,8 +78,9 @@ Build features using the configured agent.
 4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
 5. Wire the `--implementation` flag into `BuildOptions(implementation=implementation)` so it is passed through to the builder. The builder resolves the implementation via `project.resolve_implementation()`.
 6. Call `builder.build(opts)`.
-7. Print results: for each target, show status, duration, and step summaries.
-8. Exit with code 1 if any target failed.
+7. Wire `console.print` as the `log` callback on the builder so that each build step is logged in real time (e.g., target start/complete, dependency resolution, validation pass/fail, checkpoint commit IDs).
+8. Print results: for each target, show status, duration, and step summaries.
+9. Exit with code 1 if any target failed.
 
 **Arguments:**
 - `target` (positional, optional) — specific feature path to build. If omitted, builds all pending/outdated targets.
@@ -98,8 +99,9 @@ Run validations independently of the build pipeline.
 1. Load the project via `_load_project_or_exit()`.
 2. Load config and resolve agent profile.
 3. If `--implementation` is specified, resolve it via `project.resolve_implementation(name)` so the correct implementation context is used during validation.
-4. Construct the `Builder` and call `builder.validate(target, output_dir)`.
-5. Print results: for each validation, show name, status, and reason.
+4. Construct the `Builder` and wire `console.print` as the `log` callback so that each validation step is logged in real time (e.g., which validation is running, pass/fail per entry).
+5. Call `builder.validate(target, output_dir)`.
+6. Print results: for each validation, show name, status, and reason.
 6. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
 6. Exit with code 1 if any error-severity validation failed.
 
@@ -116,9 +118,10 @@ Run validations independently of the build pipeline.
 Revert a target's generated code and reset its state.
 
 1. Load the project and config.
-2. If `--all` is passed, call `builder.clean_all(output_dir)`.
-3. Otherwise, call `builder.clean(target, output_dir)` for the specified target.
-4. Print what was cleaned.
+2. Wire `console.print` as the `log` callback on the builder so that each clean step is logged in real time (e.g., reverting commit, resetting state, marking dependents).
+3. If `--all` is passed, call `builder.clean_all(output_dir)`.
+4. Otherwise, call `builder.clean(target, output_dir)` for the specified target.
+5. Print what was cleaned.
 
 **Arguments:**
 - `target` (positional, required unless `--all`) — feature path to clean.

@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from pydantic import BaseModel
 
@@ -55,6 +55,7 @@ class Builder:
         state_manager: StateManager,
         version_control: VersionControl,
         agent_profile: AgentProfile,
+        log: Callable[[str], None] | None = None,
     ) -> None:
         self.project = project
         self.state_manager = state_manager
@@ -63,6 +64,7 @@ class Builder:
         self._storage: StorageBackend = state_manager.backend
         self._create_agent: Callable[[AgentProfile], Agent] = create_from_profile
         self._named_profiles: dict[str, AgentProfile] = {}
+        self._log: Callable[[str], None] = log or (lambda _: None)
 
     # ------------------------------------------------------------------
     # Build
@@ -101,15 +103,18 @@ class Builder:
             generation_id,
             f"Build plan: {', '.join(build_set)} ({len(build_set)} targets)",
         )
+        self._log(f"Building {len(build_set)} target(s): {', '.join(build_set)}")
         results: list[BuildResult] = []
         build_failed = False
         try:
-            for target in build_set:
+            for idx, target in enumerate(build_set, 1):
                 # Skip if already built and not forcing
                 if not opts.force and self.state_manager.get_status(target) == TargetStatus.BUILT:
                     self._storage.log_generation_event(generation_id, f"Skipping {target} (already built)")
+                    self._log(f"[{idx}/{len(build_set)}] Skipping target '{target}' (already built)")
                     continue
 
+                self._log(f"[{idx}/{len(build_set)}] Building target '{target}'...")
                 result = self._build_target(target, generation_id, opts)
                 results.append(result)
 
@@ -251,6 +256,7 @@ class Builder:
             duration=datetime.now() - step_start,
             summary=f"Resolved {len(dep_names)} dependencies",
         ))
+        self._log(f"  Resolved {len(dep_names)} dependencies")
 
         # Step 2: build (with retries)
         step_start = datetime.now()
@@ -283,6 +289,7 @@ class Builder:
                     continue
 
         if build_error is not None:
+            self._log(f"  Build failed: {build_error}")
             steps.append(BuildStep(
                 phase="build",
                 status="failure",
@@ -304,12 +311,14 @@ class Builder:
             duration=datetime.now() - step_start,
             summary="Build completed",
         ))
+        self._log("  Build step completed")
 
         # Step 3: validate (if validations exist)
         has_validations = any(
             vf.validations for vf in node.validations
         )
         if has_validations:
+            self._log("  Running validations...")
             step_start = datetime.now()
             suite = ValidationSuite(
                 project=self.project,
@@ -317,10 +326,12 @@ class Builder:
                 output_dir=opts.output_dir,
                 val_response_dir=self.state_manager.val_response_dir,
                 storage_backend=self._storage,
+                log=self._log,
             )
             suite_result = suite.validate_feature(target)
 
             if not suite_result.passed:
+                self._log(f"  Validations failed: {suite_result.summary}")
                 steps.append(BuildStep(
                     phase="validate",
                     status="failure",
@@ -342,6 +353,7 @@ class Builder:
                 duration=datetime.now() - step_start,
                 summary=suite_result.summary,
             ))
+            self._log(f"  Validations passed: {suite_result.summary}")
 
         # Step 4: checkpoint
         step_start = datetime.now()
@@ -360,6 +372,8 @@ class Builder:
             duration=datetime.now() - step_start,
             summary=f"Checkpoint {commit_id}",
         ))
+        self._log(f"  Checkpointed: commit {commit_id[:8]}")
+        self._log(f"  Target '{target}' built successfully")
 
         return BuildResult(
             target=target,
@@ -383,23 +397,30 @@ class Builder:
 
     def clean(self, target: str, output_dir: str) -> None:
         """Revert a target's generated code and reset its state."""
+        self._log(f"Cleaning target '{target}'...")
         result = self.state_manager.get_build_result(target)
         if result is None:
+            self._log(f"  No build result found for '{target}', nothing to clean")
             return
 
         # Create a revert via version control
         if result.commit_id:
+            self._log(f"  Reverting commit {result.commit_id[:8]}")
             self.version_control.restore(result.commit_id)
 
         # Reset target state to pending
+        self._log("  Resetting state to pending")
         self.state_manager.reset(target)
 
         # Mark descendants as outdated
+        self._log("  Marking dependents as outdated")
         self.state_manager.mark_dependents_outdated(target, self.project)
 
     def clean_all(self, output_dir: str) -> None:
         """Reset all state for the output directory."""
+        self._log("Resetting all state for output directory...")
         self.state_manager.reset_all()
+        self._log("  State reset complete")
 
     # ------------------------------------------------------------------
     # Validate
@@ -421,6 +442,7 @@ class Builder:
             output_dir=output_dir,
             val_response_dir=self.state_manager.val_response_dir,
             storage_backend=self._storage,
+            log=self._log,
         )
         if target is not None:
             return suite.validate_feature(target)

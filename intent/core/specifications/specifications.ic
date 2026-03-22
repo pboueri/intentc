@@ -48,7 +48,7 @@ Enum ValidationType (string-valued):
 
 ## Validation Files
 
-Validation files are `.icv` files that can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails.
+Validation files are `.icv` files written in **pure YAML** (no frontmatter delimiters — unlike `.ic` files which use `---`-delimited YAML frontmatter followed by markdown). They can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails. The parser reads `.icv` files using a YAML parser directly (e.g. `yaml.safe_load`), not the frontmatter splitter used for `.ic` files.
 
 ### Top Level
 - `target` (string) — feature this validates, using its path like `module/feature`
