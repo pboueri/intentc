@@ -15,12 +15,7 @@ Personal running notes — not for Claude to act on independently.
 - [ ] Progress tracking and time estimates
 
 ## Build Quality & Intelligence
-
-<<<<<<< HEAD
-- [ ] Add git work trees for builds so that they dont interrupt the current git branch (self-compilation uses temp-dir isolation instead — see `challenges/run_self_compilation.sh`)
-=======
 - [ ] Add git work trees for builds so that they dont interrupt the current git branch
->>>>>>> bb1edf9038924f018cf376c8b2dd0fb2dfe91cea
 - [ ] Token/cost tracking per build — log API token usage and cost per feature so you can budget and optimize intent verbosity
 - [ ] Determinism scoring — run the same build N times and measure how much output varies to validate whether intents are specific enough
 - [ ] Add more detail to differencing and think really hard about how to make it as good as possible
