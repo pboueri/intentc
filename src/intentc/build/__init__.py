@@ -1,5 +1,13 @@
 """Build package for intentc."""
 
+from intentc.build.storage import (
+    BuildResult,
+    BuildStep,
+    GenerationStatus,
+    SQLiteBackend,
+    StorageBackend,
+    TargetStatus,
+)
 from intentc.build.agents import (
     AgentError,
     Agent,
@@ -21,6 +29,12 @@ from intentc.build.agents import (
 )
 
 __all__ = [
+    "BuildResult",
+    "BuildStep",
+    "GenerationStatus",
+    "SQLiteBackend",
+    "StorageBackend",
+    "TargetStatus",
     "AgentError",
     "Agent",
     "AgentProfile",
