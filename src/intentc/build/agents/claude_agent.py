@@ -94,6 +94,10 @@ class ClaudeAgent:
                 cmd.extend(["--model", self._profile.model_id])
             cmd.extend(self._profile.cli_args)
 
+            import shlex
+            print(f"[agent] cwd={cwd}", file=sys.stderr, flush=True)
+            print(f"[agent] cmd={shlex.join(cmd)}", file=sys.stderr, flush=True)
+
             proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,

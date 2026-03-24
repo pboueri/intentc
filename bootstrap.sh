@@ -57,7 +57,7 @@ WORKTREE_DIR="${REPO_ROOT}/.worktrees/bootstrap-${TIMESTAMP}"
 if [[ -d "${WORKTREE_DIR}" ]]; then
     echo "A bootstrap worktree already exists at ${WORKTREE_DIR}."
     echo "Run './bootstrap.sh' after removing it, or clean up with:"
-    echo "  git worktree remove .worktrees/bootstrap"
+    echo "  git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
     exit 1
 fi
 
@@ -128,7 +128,7 @@ if ! (cd "${WORKTREE_DIR}" && "${BUILD_CMD[@]}"); then
     echo "Worktree preserved at: ${WORKTREE_DIR}"
     echo ""
     echo "To inspect:  cd ${WORKTREE_DIR}"
-    echo "To clean up: git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+    echo "To clean up: git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
     exit 1
 fi
 
@@ -182,10 +182,10 @@ case "${choice}" in
         echo ""
         echo "To inspect:      cd ${WORKTREE_DIR}"
         echo "To accept later: git merge ${WORKTREE_BRANCH}"
-        echo "To clean up:     git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+        echo "To clean up:     git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
         ;;
     *)
         echo "Unknown choice. Worktree preserved for safety."
-        echo "To clean up: git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+        echo "To clean up: git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
         ;;
 esac
