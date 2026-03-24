@@ -33,6 +33,14 @@ def load_default_prompts() -> PromptTemplates:
 
 def render_prompt(template: str, ctx: BuildContext) -> str:
     """Render a prompt template with BuildContext variables."""
+    previous_errors = ""
+    if ctx.previous_errors:
+        errors_list = "\n".join(f"- {err}" for err in ctx.previous_errors)
+        previous_errors = (
+            f"\n### Previous Errors\n"
+            f"This is a retry. Previous attempts failed with the following errors. "
+            f"You MUST fix these issues:\n{errors_list}\n"
+        )
     return template.format(
         project=ctx.project_intent.body,
         implementation=ctx.implementation.body if ctx.implementation else "",
@@ -42,6 +50,7 @@ def render_prompt(template: str, ctx: BuildContext) -> str:
         ),
         validation="",  # single validation placeholder for validate template
         response_file=ctx.response_file_path,
+        previous_errors=previous_errors,
     )
 
 

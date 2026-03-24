@@ -108,10 +108,32 @@ uv venv "${BOOTSTRAP_VENV}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# 3. Delete src/ in worktree and rebuild
+# 3. Delete src/ in worktree and set up hermetic environment
 # ---------------------------------------------------------------------------
 echo "--- Removing src/ in worktree ---"
 rm -rf "${WORKTREE_DIR}/src/"
+
+# Strip git history so the agent can't cheat by reading previous implementations.
+# Create an orphan commit with just the current tree (intent files, pyproject, etc).
+echo "--- Stripping git history ---"
+(cd "${WORKTREE_DIR}" && \
+    git checkout --orphan _bootstrap_clean && \
+    git add -A && \
+    git commit -m "bootstrap: clean slate" --quiet && \
+    git branch -D "${WORKTREE_BRANCH}" && \
+    git branch -m "${WORKTREE_BRANCH}")
+
+# Add a CLAUDE.md that reinforces no-history behavior
+cat > "${WORKTREE_DIR}/CLAUDE.md" << 'HEREDOC'
+# Bootstrap Build Rules
+
+You are building this project from intent files. Follow these rules strictly:
+
+- Do NOT use git log, git blame, git show, or any git history commands
+- Do NOT reference or reconstruct code from previous commits
+- Build everything from scratch using ONLY the intent files in intent/
+- The intent files are the sole source of truth
+HEREDOC
 echo ""
 
 echo "--- Building from intent/ ---"

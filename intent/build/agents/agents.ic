@@ -125,6 +125,7 @@ Type BuildContext:
     project_intent: ProjectIntent                  # project-level intent
     implementation: Implementation or null          # implementation.ic content, optional
     response_file_path: string                     # where to write the structured response
+    previous_errors: list of string                # errors from prior attempts in this retry cycle, default empty
 ```
 
 ## CLIAgent
@@ -220,3 +221,4 @@ Templates reference variables from BuildContext or DifferencingContext:
 - `{output_dir_a}` — reference output directory (difference)
 - `{output_dir_b}` — candidate output directory (difference)
 - `{response_file}` — path to the response file the agent must write to
+- `{previous_errors}` — errors from prior build/validation attempts in this retry cycle (empty on first attempt, bulleted list on retries)

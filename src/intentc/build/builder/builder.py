@@ -153,6 +153,7 @@ class Builder:
             last_step_summary = ""
 
             retries = profile.retries
+            previous_errors: list[str] = []
             for attempt in range(retries):
                 steps = []
                 build_response = None
@@ -189,6 +190,7 @@ class Builder:
                     project_intent=self._project.project_intent,
                     implementation=implementation,
                     response_file_path=response_file_path,
+                    previous_errors=previous_errors,
                 )
                 try:
                     agent = self._create_agent(profile)
@@ -205,6 +207,7 @@ class Builder:
                     if build_status == "failed":
                         failed = True
                         last_step_summary = build_response.summary
+                        previous_errors.append(f"Build failed: {build_response.summary}")
                         self._log(f"  build: FAILED - {build_response.summary}")
                         if attempt < retries - 1:
                             self._log(f"  Retrying ({attempt + 2}/{retries})...")
@@ -222,6 +225,7 @@ class Builder:
                     )
                     failed = True
                     last_step_summary = str(exc)
+                    previous_errors.append(f"Build error: {exc}")
                     self._log(f"  build: FAILED - {exc}")
                     if attempt < retries - 1:
                         self._log(f"  Retrying ({attempt + 2}/{retries})...")
@@ -252,6 +256,7 @@ class Builder:
                     if not suite_result.passed:
                         failed = True
                         last_step_summary = suite_result.summary
+                        previous_errors.append(f"Validation failed: {suite_result.summary}")
                         self._log(f"  validate: FAILED - {suite_result.summary}")
                         if attempt < retries - 1:
                             self._log(f"  Retrying ({attempt + 2}/{retries})...")

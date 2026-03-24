@@ -106,9 +106,11 @@ For each target in the build set:
 
 The checkpoint happens only after both build and validation succeed. This means the version control history is a clean sequence of successful target builds. Failed builds leave files on disk but are not checkpointed — a subsequent rebuild of the same target will overwrite them.
 
-### Retries
+### Retries and Error Feedback
 
 Retries apply to both `AgentError` exceptions (crashes, timeouts, malformed response files) and validation failures. `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the builder retries from the `build` step (not just validation), giving the agent a fresh attempt to produce code that passes. Only after all retry attempts are exhausted is the target marked `failed`.
+
+The builder maintains a `previous_errors` list across retry attempts for each target. On each build or validation failure, the error summary is appended to this list. The list is passed into `BuildContext.previous_errors` on the next attempt, and the prompt template renders it as a `{previous_errors}` section so the agent can see what went wrong and adjust. This creates a feedback loop: the agent sees the specific failures from prior attempts and can fix them rather than repeating the same mistakes.
 
 ## Clean
 

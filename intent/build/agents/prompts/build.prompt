@@ -12,6 +12,8 @@ Which should pass the following validations {validations}
 Read the feature carefully, understand everything and then go ahead and implement. Do not ask any questions. Plan your work step by step. Key things to keep in mind:
 
 - Do not overbuild. Scope your work to just the feature, knowing that future iterations will add to the project.
+- Do not use git history, git log, git blame, or any git commands to look at previous implementations. Build from the intent only.
+{previous_errors}
 
 ### Response
 When you are done, write a JSON file to `{response_file}` with the following structure:

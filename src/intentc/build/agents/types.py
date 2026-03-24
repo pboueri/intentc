@@ -43,6 +43,7 @@ class BuildContext(BaseModel):
     project_intent: ProjectIntent
     implementation: Implementation | None = None
     response_file_path: str
+    previous_errors: list[str] = Field(default_factory=list)
 
 
 class BuildResponse(BaseModel):
