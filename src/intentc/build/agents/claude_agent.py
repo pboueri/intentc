@@ -114,13 +114,15 @@ class ClaudeAgent:
                         continue
                     try:
                         event = json.loads(line)
+                        # Debug: log event types we're seeing
+                        print(f"[stream] type={event.get('type')}", file=sys.stderr, flush=True)
                         # Print assistant text events for user visibility
                         if event.get("type") in ("assistant", "content_block_delta"):
                             text = event.get("text", "") or event.get("delta", {}).get("text", "")
                             if text:
                                 print(text, end="", file=sys.stderr, flush=True)
                     except json.JSONDecodeError:
-                        pass
+                        print(f"[stream] raw (not json): {line[:100]}", file=sys.stderr, flush=True)
 
             proc.wait(timeout=self._profile.timeout)
 
