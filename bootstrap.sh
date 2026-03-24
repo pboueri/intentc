@@ -123,7 +123,7 @@ if ! (cd "${WORKTREE_DIR}" && "${BUILD_CMD[@]}"); then
     echo "Worktree preserved at: ${WORKTREE_DIR}"
     echo ""
     echo "To inspect:  cd ${WORKTREE_DIR}"
-    echo "To clean up: git worktree remove .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+    echo "To clean up: git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
     exit 1
 fi
 
@@ -161,7 +161,7 @@ case "${choice}" in
         git -C "${REPO_ROOT}" merge "${WORKTREE_BRANCH}" --no-edit
         echo ""
         echo "--- Cleaning up worktree ---"
-        git -C "${REPO_ROOT}" worktree remove "${WORKTREE_DIR}"
+        git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE_DIR}"
         git -C "${REPO_ROOT}" branch -d "${WORKTREE_BRANCH}"
         echo ""
         echo "Done. Bootstrap commits merged into ${CURRENT_BRANCH}."
@@ -177,10 +177,10 @@ case "${choice}" in
         echo ""
         echo "To inspect:      cd ${WORKTREE_DIR}"
         echo "To accept later: git merge ${WORKTREE_BRANCH}"
-        echo "To clean up:     git worktree remove .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+        echo "To clean up:     git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
         ;;
     *)
         echo "Unknown choice. Worktree preserved for safety."
-        echo "To clean up: git worktree remove .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
+        echo "To clean up: git worktree remove --force .worktrees/bootstrap && git branch -D ${WORKTREE_BRANCH}"
         ;;
 esac

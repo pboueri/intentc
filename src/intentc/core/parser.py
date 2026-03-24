@@ -94,6 +94,8 @@ def parse_validation_file(path: Path) -> ValidationFile:
         raise ParseErrors([ParseError(path=path, field=None, message="File not found")])
 
     data = yaml.safe_load(text)
+    if data is None:
+        return ValidationFile(target="", validations=[], source_path=path)
     if not isinstance(data, dict):
         raise ParseErrors([ParseError(path=path, field=None, message="File is not a valid YAML mapping")])
 
