@@ -206,8 +206,11 @@ class TestCompareCommand:
     def test_compare_no_differencing_module(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
         runner.invoke(app, ["init", "testproj"])
-        result = runner.invoke(app, ["compare", "dir_a", "dir_b"])
-        # Should fail gracefully since differencing module doesn't exist yet
+        import unittest.mock as mock
+
+        with mock.patch.dict("sys.modules", {"intentc.differencing": None}):
+            result = runner.invoke(app, ["compare", "dir_a", "dir_b"])
+        # Should fail gracefully when differencing module is not available
         assert result.exit_code == 2
 
 

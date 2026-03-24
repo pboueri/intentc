@@ -93,7 +93,6 @@ class ClaudeAgent(Agent):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
-                timeout=None,
             )
             assert proc.stdout is not None
             for line in proc.stdout:
