@@ -58,9 +58,12 @@ class Builder:
         self._state_manager = state_manager
         self._version_control = version_control
         self._agent_profile = agent_profile
-        self._create_agent = create_agent or create_from_profile
         self._storage: StorageBackend = state_manager._backend
         self._log = log or (lambda _: None)
+        if create_agent:
+            self._create_agent = create_agent
+        else:
+            self._create_agent = lambda profile: create_from_profile(profile, log=self._log)
 
     def build(
         self, opts: BuildOptions

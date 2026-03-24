@@ -38,12 +38,14 @@ Dependencies are injected at construction. The builder receives an `AgentProfile
 
 ### Progress Logging
 
-The builder accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wires this to `console.print()` so users see progress as the build runs. The builder emits progress callbacks at each significant step: build start (with target count and list), target start/skip (with index and target name), dependency resolution, build step completion/failure, validation start/result, checkpoint (with commit ID), target completion, and clean operations.
+The builder accepts an optional `log` callback (`callable taking a string, default no-op`) that is called at each significant step to provide real-time progress feedback to the user. The CLI wraps `console.print()` with a timestamped logger that prepends `HH:MM:SS` to every message. The builder emits progress callbacks at each significant step: build start (with target count and list), target start/skip (with index and target name), dependency resolution, build step completion/failure, validation start/result, checkpoint (with commit ID), target completion, and clean operations.
+
+The builder threads its `log` callback through to agents via the `create_from_profile` factory, so all agent output (streaming text, lifecycle events) flows through the same logging channel with consistent formatting. When no custom `create_agent` is provided, the builder wraps the default factory to pass its own `log` callback.
 
 ```
 Type Builder:
     constructor(project, state_manager, version_control, agent_profile):
-        _create_agent: callable taking AgentProfile returning Agent = create_from_profile
+        _create_agent: callable taking AgentProfile returning Agent = create_from_profile (wrapped to pass log)
         _storage: StorageBackend = state_manager.backend
 ```
 

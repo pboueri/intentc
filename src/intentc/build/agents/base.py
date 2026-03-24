@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from intentc.core.types import Validation
@@ -18,6 +18,8 @@ from intentc.build.agents.types import (
     ValidationResponse,
 )
 from intentc.build.agents.prompts import render_prompt, render_differencing_prompt, render_validate_prompt
+
+LogFn = Callable[[str], None]
 
 
 class Agent(ABC):
@@ -56,8 +58,9 @@ def _read_response_file(path: str) -> dict:
 class CLIAgent(Agent):
     """Generic agent that wraps any command-line tool."""
 
-    def __init__(self, profile: AgentProfile) -> None:
+    def __init__(self, profile: AgentProfile, log: LogFn | None = None) -> None:
         self._profile = profile
+        self._log = log or (lambda _: None)
 
     def get_name(self) -> str:
         return self._profile.name
@@ -131,13 +134,13 @@ class CLIAgent(Agent):
             ) from exc
 
 
-def create_from_profile(profile: AgentProfile) -> Agent:
+def create_from_profile(profile: AgentProfile, log: LogFn | None = None) -> Agent:
     """Factory function to create an agent from a profile."""
     from intentc.build.agents.claude_agent import ClaudeAgent
 
     if profile.provider == "claude":
-        return ClaudeAgent(profile)
+        return ClaudeAgent(profile, log=log)
     elif profile.provider == "cli":
-        return CLIAgent(profile)
+        return CLIAgent(profile, log=log)
     else:
         raise AgentError(f"Unknown agent provider: {profile.provider!r}")

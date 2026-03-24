@@ -78,7 +78,7 @@ Build features using the configured agent.
 4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
 5. Wire the `--implementation` flag into `BuildOptions(implementation=implementation)` so it is passed through to the builder. The builder resolves the implementation via `project.resolve_implementation()`.
 6. Call `builder.build(opts)`.
-7. Wire `console.print` as the `log` callback on the builder so that each build step is logged in real time (e.g., target start/complete, dependency resolution, validation pass/fail, checkpoint commit IDs).
+7. Wire a timestamped log callback (prepending `HH:MM:SS` via `datetime.now().strftime("%H:%M:%S")` and Rich `[dim]` markup) on the builder so that each build step is logged in real time (e.g., target start/complete, dependency resolution, validation pass/fail, checkpoint commit IDs).
 8. Print results: for each target, show status, duration, and step summaries.
 9. Exit with code 1 if any target failed.
 

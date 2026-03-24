@@ -28,6 +28,12 @@ app = typer.Typer(
 )
 
 
+def _timestamped_log(msg: str) -> None:
+    from datetime import datetime
+    ts = datetime.now().strftime("%H:%M:%S")
+    console.print(f"[dim]{ts}[/dim] {msg}")
+
+
 def _load_project_or_exit(intent_dir: Path) -> Project:
     """Load a project, printing a friendly error and exiting with code 2 on parse errors."""
     try:
@@ -98,7 +104,7 @@ def build(
         state_manager=state_manager,
         version_control=version_control,
         agent_profile=agent_profile,
-        log=console.print,
+        log=_timestamped_log,
     )
 
     opts = BuildOptions(
@@ -151,7 +157,7 @@ def validate(
         state_manager=state_manager,
         version_control=version_control,
         agent_profile=agent_profile,
-        log=console.print,
+        log=_timestamped_log,
     )
 
     result = builder.validate(target, resolved_output_dir)
@@ -197,7 +203,7 @@ def clean(
         state_manager=state_manager,
         version_control=version_control,
         agent_profile=config.default_profile,
-        log=console.print,
+        log=_timestamped_log,
     )
 
     if all_targets:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from intentc.core.types import Validation
@@ -23,8 +23,9 @@ from intentc.build.agents.prompts import render_prompt, render_differencing_prom
 class ClaudeAgent:
     """Agent specialization for Claude Code."""
 
-    def __init__(self, profile: AgentProfile) -> None:
+    def __init__(self, profile: AgentProfile, log: Callable[[str], None] | None = None) -> None:
         self._profile = profile
+        self._log = log or (lambda _: None)
 
     def get_name(self) -> str:
         return self._profile.name
@@ -94,9 +95,7 @@ class ClaudeAgent:
                 cmd.extend(["--model", self._profile.model_id])
             cmd.extend(self._profile.cli_args)
 
-            import shlex
-            print(f"[agent] cwd={cwd}", file=sys.stderr, flush=True)
-            print(f"[agent] cmd={shlex.join(cmd)}", file=sys.stderr, flush=True)
+            self._log("    agent: starting claude")
 
             proc = subprocess.Popen(
                 cmd,
@@ -121,9 +120,9 @@ class ClaudeAgent:
                                 if block.get("type") == "text":
                                     text = block.get("text", "")
                                     if text:
-                                        print(text, end="", file=sys.stderr, flush=True)
+                                        self._log(f"    agent: {text}")
                     except json.JSONDecodeError:
-                        print(f"[stream] raw (not json): {line[:100]}", file=sys.stderr, flush=True)
+                        pass
 
             proc.wait(timeout=self._profile.timeout)
 
