@@ -18,11 +18,11 @@ Read the feature carefully, understand everything and then go ahead and implemen
 ### Response
 When you are done, write a JSON file to `{response_file}` with the following structure:
 ```json
-{
+{{
   "status": "success" or "failure",
   "summary": "human-readable description of what was done or what went wrong",
   "files_created": ["list", "of", "new", "files"],
   "files_modified": ["list", "of", "modified", "files"]
-}
+}}
 ```
 You MUST write this file before you finish, even if the build failed.

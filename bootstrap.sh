@@ -118,8 +118,9 @@ rm -rf "${WORKTREE_DIR}/src/"
 echo "--- Stripping git history (orphan branch) ---"
 # Record the base commit so we know where to replay patches onto later.
 # Then create an orphan branch so the agent has zero history to read from.
+ORPHAN_BRANCH="_bootstrap_orphan_${TIMESTAMP}"
 (cd "${WORKTREE_DIR}" && \
-    git checkout --orphan _bootstrap_orphan --quiet && \
+    git checkout --orphan "${ORPHAN_BRANCH}" --quiet && \
     git add -A && \
     git commit -m "bootstrap: clean slate (no history)" --quiet)
 
@@ -209,7 +210,7 @@ case "${choice}" in
         git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE_DIR}"
         # The orphan branch isn't linked to our real branch, just force-delete it
         git -C "${REPO_ROOT}" branch -D "${WORKTREE_BRANCH}" 2>/dev/null || true
-        git -C "${REPO_ROOT}" branch -D _bootstrap_orphan 2>/dev/null || true
+        git -C "${REPO_ROOT}" branch -D "${ORPHAN_BRANCH}" 2>/dev/null || true
         echo ""
         echo "Done. ${PATCH_COUNT} build commit(s) applied to ${CURRENT_BRANCH}."
         ;;
