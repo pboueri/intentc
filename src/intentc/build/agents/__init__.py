@@ -1,0 +1,43 @@
+"""Agent module: interfaces, types, and implementations."""
+
+from intentc.build.agents.agents import (
+    Agent,
+    AgentError,
+    AgentProfile,
+    BuildContext,
+    BuildResponse,
+    CLIAgent,
+    ClaudeAgent,
+    DifferencingContext,
+    DifferencingResponse,
+    DimensionResult,
+    LogFn,
+    MockAgent,
+    PromptTemplates,
+    ValidationResponse,
+    create_from_profile,
+    load_default_prompts,
+    render_differencing_prompt,
+    render_prompt,
+)
+
+__all__ = [
+    "Agent",
+    "AgentError",
+    "AgentProfile",
+    "BuildContext",
+    "BuildResponse",
+    "CLIAgent",
+    "ClaudeAgent",
+    "DifferencingContext",
+    "DifferencingResponse",
+    "DimensionResult",
+    "LogFn",
+    "MockAgent",
+    "PromptTemplates",
+    "ValidationResponse",
+    "create_from_profile",
+    "load_default_prompts",
+    "render_differencing_prompt",
+    "render_prompt",
+]
