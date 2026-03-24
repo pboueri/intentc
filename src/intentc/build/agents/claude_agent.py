@@ -114,8 +114,11 @@ class ClaudeAgent:
                         continue
                     try:
                         event = json.loads(line)
-                        # Debug: log event types we're seeing
-                        print(f"[stream] type={event.get('type')}", file=sys.stderr, flush=True)
+                        # Debug: log full assistant events
+                        if event.get("type") == "assistant":
+                            print(f"[stream] assistant keys={list(event.keys())}", file=sys.stderr, flush=True)
+                            # Log first 200 chars of the event
+                            print(f"[stream] assistant event={json.dumps(event)[:200]}", file=sys.stderr, flush=True)
                         # Print assistant text events for user visibility
                         if event.get("type") in ("assistant", "content_block_delta"):
                             text = event.get("text", "") or event.get("delta", {}).get("text", "")
