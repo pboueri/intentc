@@ -98,7 +98,7 @@ class ClaudeAgent:
                 cmd,
                 cwd=cwd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
             )
 
@@ -114,16 +114,15 @@ class ClaudeAgent:
                         if event.get("type") in ("assistant", "content_block_delta"):
                             text = event.get("text", "") or event.get("delta", {}).get("text", "")
                             if text:
-                                print(text, end="", file=sys.stderr)
+                                print(text, end="", file=sys.stderr, flush=True)
                     except json.JSONDecodeError:
                         pass
 
             proc.wait(timeout=self._profile.timeout)
 
             if proc.returncode != 0:
-                stderr_out = proc.stderr.read() if proc.stderr else ""
                 raise AgentError(
-                    f"Claude agent failed (exit {proc.returncode}): {stderr_out}"
+                    f"Claude agent failed (exit {proc.returncode})"
                 )
         except subprocess.TimeoutExpired:
             proc.kill()

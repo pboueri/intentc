@@ -49,7 +49,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 CURRENT_BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKTREE_BRANCH="bootstrap/${TIMESTAMP}"
-WORKTREE_DIR="${REPO_ROOT}/.worktrees/bootstrap"
+WORKTREE_DIR="${REPO_ROOT}/.worktrees/bootstrap-${TIMESTAMP}"
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -96,10 +96,15 @@ cleanup() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Install intentc from the current source
+# 2. Install intentc into a local venv (avoids clobbering the global install)
 # ---------------------------------------------------------------------------
+BOOTSTRAP_VENV="${WORKTREE_DIR}/.bootstrap-venv"
+INTENTC="${BOOTSTRAP_VENV}/bin/intentc"
+
 echo "--- Installing intentc from current source ---"
-(cd "${WORKTREE_DIR}" && uv tool install . --force)
+echo "Venv: ${BOOTSTRAP_VENV}"
+uv venv "${BOOTSTRAP_VENV}"
+(cd "${WORKTREE_DIR}" && uv pip install --python "${BOOTSTRAP_VENV}/bin/python" .)
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -110,7 +115,7 @@ rm -rf "${WORKTREE_DIR}/src/"
 echo ""
 
 echo "--- Building from intent/ ---"
-BUILD_CMD=(intentc build)
+BUILD_CMD=("${INTENTC}" build)
 [[ -n "${FORCE}" ]] && BUILD_CMD+=(${FORCE})
 [[ -n "${TARGET}" ]] && BUILD_CMD+=("${TARGET}")
 
@@ -136,7 +141,7 @@ echo "Build complete."
 if [[ "${SKIP_COMPARE}" == "false" ]]; then
     echo ""
     echo "--- Comparing current src/ with rebuilt src/ ---"
-    (cd "${REPO_ROOT}" && intentc compare src/ "${WORKTREE_DIR}/src/") || true
+    (cd "${REPO_ROOT}" && "${INTENTC}" compare src/ "${WORKTREE_DIR}/src/") || true
 fi
 
 # ---------------------------------------------------------------------------
