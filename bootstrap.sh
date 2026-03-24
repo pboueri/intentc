@@ -2,8 +2,9 @@
 # bootstrap.sh — Rebuild src/ from intent/ in an isolated git worktree.
 #
 # This is the production self-compilation loop: install the current intentc,
-# rebuild all of src/ from intent files in a worktree, then choose to accept
-# (merge) or abort (delete the worktree).
+# rebuild all of src/ from intent files in a worktree with no git history
+# (so the agent builds purely from intent), then choose to accept (replay
+# the build commits onto your branch) or abort (delete everything).
 #
 # Usage:
 #   ./bootstrap.sh [options]
@@ -50,6 +51,7 @@ CURRENT_BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKTREE_BRANCH="bootstrap/${TIMESTAMP}"
 WORKTREE_DIR="${REPO_ROOT}/.worktrees/bootstrap-${TIMESTAMP}"
+PATCH_DIR="${WORKTREE_DIR}/.patches"
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -108,20 +110,18 @@ uv venv "${BOOTSTRAP_VENV}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# 3. Delete src/ in worktree and set up hermetic environment
+# 3. Delete src/, strip git history, set up hermetic environment
 # ---------------------------------------------------------------------------
 echo "--- Removing src/ in worktree ---"
 rm -rf "${WORKTREE_DIR}/src/"
 
-# Strip git history so the agent can't cheat by reading previous implementations.
-# Create an orphan commit with just the current tree (intent files, pyproject, etc).
-echo "--- Stripping git history ---"
+echo "--- Stripping git history (orphan branch) ---"
+# Record the base commit so we know where to replay patches onto later.
+# Then create an orphan branch so the agent has zero history to read from.
 (cd "${WORKTREE_DIR}" && \
-    git checkout --orphan _bootstrap_clean && \
+    git checkout --orphan _bootstrap_orphan --quiet && \
     git add -A && \
-    git commit -m "bootstrap: clean slate" --quiet && \
-    git branch -D "${WORKTREE_BRANCH}" && \
-    git branch -m "${WORKTREE_BRANCH}")
+    git commit -m "bootstrap: clean slate (no history)" --quiet)
 
 # Add a CLAUDE.md that reinforces no-history behavior
 cat > "${WORKTREE_DIR}/CLAUDE.md" << 'HEREDOC'
@@ -134,8 +134,16 @@ You are building this project from intent files. Follow these rules strictly:
 - Build everything from scratch using ONLY the intent files in intent/
 - The intent files are the sole source of truth
 HEREDOC
+(cd "${WORKTREE_DIR}" && git add CLAUDE.md && git commit -m "bootstrap: add CLAUDE.md" --quiet)
+
+# Record the root commit — build commits will be everything after this.
+ORPHAN_BASE="$(git -C "${WORKTREE_DIR}" rev-parse HEAD)"
+echo "Orphan base: ${ORPHAN_BASE}"
 echo ""
 
+# ---------------------------------------------------------------------------
+# 4. Build from intent/
+# ---------------------------------------------------------------------------
 echo "--- Building from intent/ ---"
 BUILD_CMD=("${INTENTC}" build)
 [[ -n "${FORCE}" ]] && BUILD_CMD+=(${FORCE})
@@ -158,7 +166,7 @@ echo ""
 echo "Build complete."
 
 # ---------------------------------------------------------------------------
-# 4. Compare (optional)
+# 5. Compare (optional)
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_COMPARE}" == "false" ]]; then
     echo ""
@@ -167,15 +175,25 @@ if [[ "${SKIP_COMPARE}" == "false" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Show diff stats and prompt
+# 6. Export build commits as patches
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Diff summary (worktree vs current branch) ---"
-git -C "${WORKTREE_DIR}" diff "${CURRENT_BRANCH}" --stat -- src/ || true
+echo "--- Exporting build commits as patches ---"
+mkdir -p "${PATCH_DIR}"
+PATCH_COUNT=$(git -C "${WORKTREE_DIR}" format-patch "${ORPHAN_BASE}..HEAD" -o "${PATCH_DIR}" | wc -l | tr -d ' ')
+echo "${PATCH_COUNT} patch(es) exported to ${PATCH_DIR}"
 
+# Show what will be applied
+echo ""
+echo "--- Build commits ---"
+git -C "${WORKTREE_DIR}" log --oneline "${ORPHAN_BASE}..HEAD"
+
+# ---------------------------------------------------------------------------
+# 7. Prompt
+# ---------------------------------------------------------------------------
 echo ""
 echo "What would you like to do?"
-echo "  [a] Accept — merge bootstrap commits into ${CURRENT_BRANCH}"
+echo "  [a] Accept — replay ${PATCH_COUNT} build commit(s) onto ${CURRENT_BRANCH}"
 echo "  [d] Abort  — delete the worktree, no changes to ${CURRENT_BRANCH}"
 echo "  [i] Inspect — keep the worktree open, decide later"
 echo ""
@@ -184,14 +202,16 @@ read -rp "Choice [a/d/i]: " choice
 case "${choice}" in
     a|A)
         echo ""
-        echo "--- Merging ${WORKTREE_BRANCH} into ${CURRENT_BRANCH} ---"
-        git -C "${REPO_ROOT}" merge "${WORKTREE_BRANCH}" --no-edit
+        echo "--- Applying patches to ${CURRENT_BRANCH} ---"
+        git -C "${REPO_ROOT}" am "${PATCH_DIR}"/*.patch
         echo ""
         echo "--- Cleaning up worktree ---"
         git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE_DIR}"
-        git -C "${REPO_ROOT}" branch -d "${WORKTREE_BRANCH}"
+        # The orphan branch isn't linked to our real branch, just force-delete it
+        git -C "${REPO_ROOT}" branch -D "${WORKTREE_BRANCH}" 2>/dev/null || true
+        git -C "${REPO_ROOT}" branch -D _bootstrap_orphan 2>/dev/null || true
         echo ""
-        echo "Done. Bootstrap commits merged into ${CURRENT_BRANCH}."
+        echo "Done. ${PATCH_COUNT} build commit(s) applied to ${CURRENT_BRANCH}."
         ;;
     d|D)
         cleanup
@@ -200,11 +220,11 @@ case "${choice}" in
     i|I)
         echo ""
         echo "Worktree preserved at: ${WORKTREE_DIR}"
-        echo "Branch: ${WORKTREE_BRANCH}"
+        echo "Patches at: ${PATCH_DIR}"
         echo ""
-        echo "To inspect:      cd ${WORKTREE_DIR}"
-        echo "To accept later: git merge ${WORKTREE_BRANCH}"
-        echo "To clean up:     git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
+        echo "To inspect:       cd ${WORKTREE_DIR}"
+        echo "To accept later:  git am ${PATCH_DIR}/*.patch"
+        echo "To clean up:      git worktree remove --force ${WORKTREE_DIR} && git branch -D ${WORKTREE_BRANCH}"
         ;;
     *)
         echo "Unknown choice. Worktree preserved for safety."

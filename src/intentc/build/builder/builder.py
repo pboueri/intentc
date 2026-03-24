@@ -456,13 +456,17 @@ class Builder:
     ) -> AgentProfile:
         node = self._project.features.get(target)
 
+        # All sandbox paths must be absolute — the agent's cwd is the output dir,
+        # so relative paths would resolve incorrectly.
+        abs_output = str(Path(output_dir).resolve())
+
         # Write paths: output dir, build response dir, validation response dir
-        write_paths = [output_dir] if output_dir else []
-        write_paths.append(str(self._state_manager.build_response_dir))
-        write_paths.append(str(self._state_manager.val_response_dir))
+        write_paths = [abs_output] if output_dir else []
+        write_paths.append(str(self._state_manager.build_response_dir.resolve()))
+        write_paths.append(str(self._state_manager.val_response_dir.resolve()))
 
         # Read paths: output dir, target+ancestor intents, project intent, implementations dir
-        read_paths = [output_dir] if output_dir else []
+        read_paths = [abs_output] if output_dir else []
         # Target and ancestor intent files
         targets_to_read = {target} | self._project.ancestors(target)
         for t in targets_to_read:
@@ -470,17 +474,17 @@ class Builder:
             if t_node:
                 for intent in t_node.intents:
                     if intent.source_path:
-                        read_paths.append(str(intent.source_path))
+                        read_paths.append(str(Path(intent.source_path).resolve()))
         # Project intent
         if self._project.project_intent.source_path:
-            read_paths.append(str(self._project.project_intent.source_path))
+            read_paths.append(str(Path(self._project.project_intent.source_path).resolve()))
         # Implementations directory
         if self._project.intent_dir:
-            impl_dir = self._project.intent_dir / "implementations"
+            impl_dir = Path(self._project.intent_dir / "implementations").resolve()
             if impl_dir.exists():
                 read_paths.append(str(impl_dir))
             # Legacy implementation.ic
-            legacy = self._project.intent_dir / "implementation.ic"
+            legacy = Path(self._project.intent_dir / "implementation.ic").resolve()
             if legacy.exists():
                 read_paths.append(str(legacy))
 

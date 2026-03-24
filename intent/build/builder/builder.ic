@@ -86,7 +86,7 @@ For each target in the build set:
 
    - **Skip check** — If the target is already `built` and `force` is false, skip it.
    - **Resolve agent profile** — Priority: `opts.profile_override` > builder's `agent_profile`.
-   - **Apply sandbox paths** — The builder scopes agent filesystem access based on the project DAG. Write access is granted to the output directory, the build response directory, and the validation response directory. Read access is granted to the output directory plus the intent files for the target and all its ancestors, the project intent file, and the implementations directory. A legacy `implementation.ic` file is also included in read access if it exists. The method returns a copy of the profile with updated sandbox paths.
+   - **Apply sandbox paths** — The builder scopes agent filesystem access based on the project DAG. **All sandbox paths must be absolute** (resolved via `Path.resolve()`) because the agent's cwd is the output directory — relative paths would resolve incorrectly from the agent's perspective. Write access is granted to the output directory, the build response directory, and the validation response directory. Read access is granted to the output directory plus the intent files for the target and all its ancestors, the project intent file, and the implementations directory. A legacy `implementation.ic` file is also included in read access if it exists. The method returns a copy of the profile with updated sandbox paths.
 
    - Use `create_from_profile` to get an agent instance from the sandboxed profile.
    - **Execute build steps**, each timed and recorded as a `BuildStep`:
