@@ -1,0 +1,22 @@
+[project]
+name = "intentc"
+version = "0.1.0"
+description = "A compiler of intent — build system that generates code from intent files using AI agents"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+intentc = "intentc.cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["intentc"]
+python_files = ["test_*.py"]
