@@ -4,6 +4,7 @@ import json
 import secrets
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -160,34 +161,42 @@ class ValidationSuite:
         return results
 
     def validate_entries(self, target: str, entries: list[Validation]) -> ValidationSuiteResult:
-        """Run a list of validation entries against a target."""
+        """Run a list of validation entries against a target (in parallel)."""
         suite_result = ValidationSuiteResult(target=target)
 
         # Resolve feature intent for context
         feature_intent = self._resolve_feature_intent(target)
         implementation = self._project.resolve_implementation()
 
-        for entry in entries:
+        def _run_one(entry: Validation) -> ValidationResponse:
             self._log(f"  Running validation '{entry.name}' ({entry.type})...")
-
             runner = self._registry.get(entry.type)
             if runner is None:
-                response = ValidationResponse(
+                return ValidationResponse(
                     name=entry.name,
                     status="fail",
                     reason=f"Unknown validation type: {entry.type!r}. No runner registered for this type.",
                 )
-            else:
-                response_file_path = self._get_response_file_path(entry.name)
-                ctx = ValidationContext(
-                    project_intent=self._project.project_intent,
-                    implementation=implementation,
-                    feature_intent=feature_intent,
-                    output_dir=self._output_dir,
-                    response_file_path=response_file_path,
-                )
-                response = runner.run(entry, ctx)
+            response_file_path = self._get_response_file_path(entry.name)
+            ctx = ValidationContext(
+                project_intent=self._project.project_intent,
+                implementation=implementation,
+                feature_intent=feature_intent,
+                output_dir=self._output_dir,
+                response_file_path=response_file_path,
+            )
+            return runner.run(entry, ctx)
 
+        # Run all validations in parallel, collect results in original order
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(_run_one, entry): i for i, entry in enumerate(entries)}
+            results_by_index: dict[int, ValidationResponse] = {}
+            for future in as_completed(futures):
+                idx = futures[future]
+                results_by_index[idx] = future.result()
+
+        for i, entry in enumerate(entries):
+            response = results_by_index[i]
             suite_result.results.append(response)
 
             # Check if error-severity validation failed

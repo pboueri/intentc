@@ -93,10 +93,11 @@ Profile resolution order for each validation: per-validation `agent_profile` ove
 
 1. The suite receives a feature path (or iterates all features for project-wide validation).
 2. It looks up the feature's .icv files from the parsed Project.
-3. For each validation entry (sequentially, in order):
-   - The runner for the entry's `type` is looked up in the registry.
-   - The runner is invoked with the validation entry and context (project intent, output dir, response file path).
-   - The runner returns a ValidationResponse.
+3. All validation entries are run **in parallel** using a thread pool (since runners are typically I/O-bound agent calls):
+   - The runner for each entry's `type` is looked up in the registry.
+   - Each runner is invoked concurrently with the validation entry and context (project intent, output dir, response file path).
+   - Each runner returns a ValidationResponse.
+   - Results are collected in the original entry order (not completion order) to ensure deterministic output.
 4. The suite collects all responses into a ValidationSuiteResult.
 5. `passed` is false if any `severity: error` validation has `status: "fail"`.
 
