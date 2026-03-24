@@ -105,7 +105,8 @@ class ClaudeAgent(Agent):
                     continue
                 # Forward assistant text events through the log callback
                 if event.get("type") == "assistant":
-                    for block in event.get("content", []):
+                    message = event.get("message", {})
+                    for block in message.get("content", []):
                         if block.get("type") == "text":
                             text = block.get("text", "")
                             if text:

@@ -6,10 +6,8 @@ validations:
     severity: error
     args:
       rubric: |
-        Verify that:
-        1. The agent module exists within the output directory's main package
-        2. The standalone agent copy exists as a separate package within the output directory
-        Both locations should contain the core agent types and implementations.
+        Verify that the agent module exists within the output directory's main package
+        and contains the core agent types and implementations.
 
   - name: agent-interface-defined
     type: agent_validation

@@ -144,7 +144,17 @@ All agents accept an optional `log` callback (`Callable[[str], None]`) passed th
 
 ### Streaming Output
 
-ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The subprocess stdout is read line-by-line as JSON events. Assistant text events (where `event.type == "assistant"` and content blocks have `type == "text"`) are forwarded through the `log` callback. Claude Code's stderr is discarded (`subprocess.DEVNULL`) to avoid pipe buffer deadlocks. The response file mechanism remains unchanged.
+ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The subprocess stdout is read line-by-line as JSON events. Claude Code's stderr is discarded (`subprocess.DEVNULL`) to avoid pipe buffer deadlocks. The response file mechanism remains unchanged.
+
+The `stream-json` format emits one JSON object per line. The relevant event types are:
+
+```
+{"type": "system", "subtype": "init", ...}          # session initialization metadata
+{"type": "assistant", "message": {"content": [...]}} # assistant turn with content blocks
+{"type": "result", "result": "...", ...}             # final result summary
+```
+
+To extract assistant text, parse events where `event.type == "assistant"`, then iterate over `event.message.content` (NOT `event.content`). Content blocks with `block.type == "text"` contain the assistant's text in `block.text`. Forward these through the `log` callback. Skip events that fail JSON parsing (non-JSON debug lines may appear).
 
 For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode, passing `--model` if set, all `cli_args`, and the prompt as a positional argument.
 
@@ -181,9 +191,9 @@ Type AgentProfile:
 
 ## Module Layout
 
-This feature generates two locations:
+This feature generates:
 
-1. The canonical agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
+1. The agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
 2. Tests for the agent module.
 
 ## PromptTemplates
@@ -207,9 +217,15 @@ Type PromptTemplates:
 
 ### Prompt Path Resolution
 
-Prompt template files are resolved relative to the current working directory joined with "intent" — NOT relative to the module's own file location. This is because intentc is always invoked from the project root where `intent/` lives. Build/validate/plan prompts live under `intent/build/agents/prompts/`, differencing prompts under `intent/differencing/prompts/`.
+Prompt template files are **bundled with the installed package** and loaded via `importlib.resources`. This ensures prompts are available regardless of which directory `intentc` is invoked from (self-compilation or external projects).
 
-`load_default_prompts()` reads these files. If a prompt file does not exist at the resolved path, the corresponding template field remains empty (no error raised).
+The prompt files are stored in the package at:
+- Build/validate/plan/init prompts: `intentc/build/agents/prompts/`
+- Differencing prompts: `intentc/differencing/prompts/`
+
+`load_default_prompts()` uses `importlib.resources.files()` to locate the prompt files within the installed package. If a prompt file does not exist, the corresponding template field remains empty (no error raised).
+
+The canonical source for prompt templates is `intent/build/agents/prompts/` and `intent/differencing/prompts/` in the intentc repository. During a build, these are copied into the package source tree so they are included in the installed package.
 
 Templates reference variables from BuildContext or DifferencingContext:
 - `{project}` — the project-level intent

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import resources
 from pathlib import Path
 from typing import Callable
 
@@ -58,23 +59,24 @@ class PromptTemplates(BaseModel):
 
 
 def load_default_prompts() -> PromptTemplates:
-    """Load default prompt templates from intent directory relative to CWD.
+    """Load default prompt templates bundled with the installed package.
 
-    Prompt files are resolved relative to CWD/intent/. Missing files result
-    in empty template strings (no error raised).
+    Prompt files are resolved via importlib.resources from the package data.
+    Missing files result in empty template strings (no error raised).
     """
-    base = Path.cwd() / "intent"
+    agents_pkg = resources.files("intentc.build.agents")
+    diff_pkg = resources.files("intentc.differencing")
     mapping = {
-        "build": base / "build" / "agents" / "prompts" / "build.prompt",
-        "validate_template": base / "build" / "agents" / "prompts" / "validate.prompt",
-        "plan": base / "build" / "agents" / "prompts" / "plan.prompt",
-        "difference": base / "differencing" / "prompts" / "difference.prompt",
+        "build": agents_pkg / "prompts" / "build.prompt",
+        "validate_template": agents_pkg / "prompts" / "validate.prompt",
+        "plan": agents_pkg / "prompts" / "plan.prompt",
+        "difference": diff_pkg / "prompts" / "difference.prompt",
     }
     values: dict[str, str] = {}
-    for field_name, path in mapping.items():
-        if path.exists():
-            values[field_name] = path.read_text()
-        else:
+    for field_name, traversable in mapping.items():
+        try:
+            values[field_name] = traversable.read_text()
+        except (FileNotFoundError, ModuleNotFoundError, TypeError):
             values[field_name] = ""
     return PromptTemplates(**values)
 

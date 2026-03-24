@@ -169,16 +169,13 @@ class TestDifferencingPromptRendering:
         assert "P:" in result
         assert "A:/a" in result
 
-    def test_prompt_loads_from_cwd_intent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Prompt loading resolves relative to CWD/intent/, not module location."""
-        monkeypatch.chdir(tmp_path)
-        prompt_dir = tmp_path / "intent" / "differencing" / "prompts"
-        prompt_dir.mkdir(parents=True)
-        (prompt_dir / "difference.prompt").write_text("DIFF: {output_dir_a} vs {output_dir_b}")
-
+    def test_prompt_loads_from_package(self) -> None:
+        """Prompt loading resolves from installed package data, not CWD."""
         from intentc.build.agents.models import load_default_prompts
         templates = load_default_prompts()
-        assert "DIFF:" in templates.difference
+        # The bundled difference prompt should contain the response file placeholder
+        assert "{response_file}" in templates.difference
+        assert "{output_dir_a}" in templates.difference
 
 
 # --- Workflow tests ---

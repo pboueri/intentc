@@ -1,0 +1,68 @@
+### Context
+You are working in the context of the following project {project} with the following implementation approach {implementation}
+
+### Task
+Evaluate functional equivalence between two output directories produced from the same intent.
+
+**Reference directory (A):** {output_dir_a}
+**Candidate directory (B):** {output_dir_b}
+
+Actively investigate both directories — read code, examine interfaces, run tests, and exercise the software. Determine whether these two builds are **functionally equivalent from the perspective of a user or consumer of the software**.
+
+**Cross-language note:** If the two directories contain implementations in different programming languages, focus entirely on behavioral equivalence at CLI and interface boundaries. Code-level differences are expected and irrelevant — what matters is that both implementations expose the same commands, flags, configuration surface, and produce the same outputs for the same inputs. Cross-execution of tests is not expected for different languages; instead evaluate whether both test suites pass against their own code and cover the same functionality.
+
+### What "Functional Equivalence" Means
+
+Two builds are equivalent if a user could swap one for the other and get the same results for the same workflows. This is NOT about code identity — it is about behavioral equivalence at the boundaries.
+
+**Things that DO NOT break equivalence:**
+- Internal attribute naming (public vs private, `self.x` vs `self._x`)
+- Internal error handling strategy (catching vs propagating, as long as the external behavior is the same)
+- Internal data structure choices (dict ordering, list vs set, sort order of status output)
+- Internal step/phase naming conventions (e.g., `"failure"` vs `"failed"` in internal logs)
+- Code style, variable naming, comment differences
+- Test count differences (as long as both test suites pass against their own code)
+- Internal helper functions or implementation decomposition
+- Whether an internal method takes 3 or 4 parameters
+- Response file naming conventions (UUID vs deterministic)
+- How gracefully corrupt state is handled (both should work correctly with valid state)
+
+**Things that DO break equivalence:**
+- CLI commands missing, having different flags, or producing different outputs for the same inputs
+- Public module imports that work in one but fail with ImportError in the other
+- Configuration files written by one that can't be read by the other
+- Different declared dependencies that would cause installation failures
+- Core workflows (build, validate, clean, plan, diff, compare) producing fundamentally different outcomes for the same project and intent files
+
+### Dimensions
+
+Evaluate the following dimensions:
+
+1. **public_api** — Do both builds expose the same **user-facing** interfaces? Focus on: CLI commands and their flags, module-level imports that a consumer would use, and the configuration surface. Internal class attributes, private methods, and implementation-level signatures are NOT part of the public API.
+
+2. **test_suite** — Do both builds have passing test suites? If cross-execution is possible (same language, compatible structure), attempt it. If not (e.g., due to co-located tests or different languages), evaluate based on whether both suites pass against their own code and cover the same functionality. Both suites passing independently is sufficient for a pass. Cross-execution is not expected when comparing different programming languages.
+
+3. **runtime_behavior** — Does the software behave the same **when used through its intended interfaces** (CLI, public module API)? Focus on the workflows a user would actually perform: building, validating, cleaning, planning, diffing, comparing. Internal differences in error handling, logging format, or state serialization details that don't affect the user-visible outcome are acceptable.
+
+4. **dependency_compatibility** — Do both builds declare compatible dependencies via their respective package systems? For same-language comparisons, this means compatible dependency manifests (e.g., both pyproject.toml files). For cross-language comparisons, this means both declare equivalent dependencies through their language's standard package system (e.g., pyproject.toml for Python, go.mod for Go) — the dependencies should cover the same functional needs.
+
+5. **configuration_compatibility** — Do both builds respect the same configuration surface? Can config files written by one be read by the other?
+
+The overall status is "equivalent" if all dimensions pass. If any dimension fails, the status is "divergent".
+
+### Response
+When you are done, write a JSON file to `{response_file}` with the following structure:
+```json
+{{
+  "status": "equivalent" or "divergent",
+  "dimensions": [
+    {{
+      "name": "dimension name",
+      "status": "pass" or "fail",
+      "rationale": "explanation of what was compared and why it passed or failed"
+    }}
+  ],
+  "summary": "human-readable overall assessment explaining the verdict"
+}}
+```
+You MUST write this file before you finish.
