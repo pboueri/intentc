@@ -32,6 +32,10 @@ from intentc.build.validations import (
     ValidationSuite,
     ValidationSuiteResult,
 )
+from intentc.build.builder.builder import (
+    Builder,
+    BuildOptions,
+)
 
 __all__ = [
     # agents
@@ -62,4 +66,7 @@ __all__ = [
     "ValidationRunner",
     "ValidationSuite",
     "ValidationSuiteResult",
+    # builder
+    "Builder",
+    "BuildOptions",
 ]
