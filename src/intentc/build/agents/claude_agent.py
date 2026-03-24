@@ -34,43 +34,27 @@ class ClaudeAgent:
         return "claude"
 
     def build(self, ctx: BuildContext) -> BuildResponse:
-        templates = self._profile.prompt_templates
-        if templates and templates.build:
-            prompt = render_prompt(templates.build, ctx)
-        else:
-            prompt = render_prompt("{feature}", ctx)
+        prompt = render_prompt(self._profile.prompt_templates.build, ctx)
         self._run_non_interactive(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return BuildResponse(**data)
 
     def validate(self, ctx: BuildContext, validation: Validation) -> ValidationResponse:
-        templates = self._profile.prompt_templates
         validation_text = f"{validation.name} ({validation.type}, {validation.severity.value}): {validation.args}"
-        if templates and templates.validate_template:
-            prompt = render_validate_prompt(templates.validate_template, ctx, validation_text)
-        else:
-            prompt = validation_text
+        prompt = render_validate_prompt(self._profile.prompt_templates.validate_template, ctx, validation_text)
         self._run_non_interactive(prompt, ctx.output_dir)
         data = _read_response_file(ctx.response_file_path)
         return ValidationResponse(**data)
 
     def difference(self, ctx: DifferencingContext) -> DifferencingResponse:
-        templates = self._profile.prompt_templates
-        if templates and templates.difference:
-            prompt = render_differencing_prompt(templates.difference, ctx)
-        else:
-            prompt = f"Compare {ctx.output_dir_a} and {ctx.output_dir_b}"
+        prompt = render_differencing_prompt(self._profile.prompt_templates.difference, ctx)
         self._run_non_interactive(prompt, ctx.output_dir_a)
         data = _read_response_file(ctx.response_file_path)
         return DifferencingResponse(**data)
 
     def plan(self, ctx: BuildContext) -> None:
         """Launch Claude Code in interactive REPL mode for planning."""
-        templates = self._profile.prompt_templates
-        if templates and templates.plan:
-            prompt = render_prompt(templates.plan, ctx)
-        else:
-            prompt = render_prompt("{feature}", ctx)
+        prompt = render_prompt(self._profile.prompt_templates.plan, ctx)
 
         cmd = ["claude"]
         if self._profile.model_id:

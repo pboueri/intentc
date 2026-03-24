@@ -363,7 +363,7 @@ class TestCLIAgent:
                 agent.build(ctx)
 
     def test_no_command_raises(self, tmp_path):
-        profile = AgentProfile(name="no-cmd", provider="cli")
+        profile = AgentProfile(name="no-cmd", provider="cli", prompt_templates=PromptTemplates(build="{feature}"))
         agent = CLIAgent(profile)
         ctx = _make_ctx(tmp_path)
         with pytest.raises(AgentError, match="requires a command"):
