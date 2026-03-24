@@ -30,28 +30,154 @@ The SQLite database lives at `.intentc/state/{output_dir}/intentc.db`. This para
 
 ## Schema
 
-The database contains 9 tables organized around these concepts. All tables use snake_case naming.
+The database contains 9 tables. All tables use snake_case naming. These definitions are the contract — a database created today must be readable by future builds. Use `CREATE TABLE IF NOT EXISTS` so existing databases are not destroyed on upgrade.
 
-### File Versioning
-- **intent_file_versions** — Tracks each unique version of an intent file by content hash (SHA-256). No file content stored — git is the source of truth. Unique constraint on `(name, content_hash)`.
-- **validation_file_versions** — Same versioning approach for validation files. Unique constraint on `(target, source_path, content_hash)`.
+### intent_file_versions
 
-### Generations and Logs
-- **generations** — A generation represents a single `build()` invocation (UUID primary key). All targets built in one call share the same generation ID. Stores output dir, profile name, options snapshot, and status (running/completed/failed).
-- **generation_logs** — Append-only log of cross-target events per generation: build plan, ordering decisions, early termination, summary.
+Tracks each unique version of an intent file by content hash. No file content stored — git is the source of truth.
 
-### Build Results and Steps
-- **build_results** — One row per target per build. Links to generation and intent file version. Stores status, commit ID, total duration, timestamp, git diff, and file manifests (files_created, files_modified as JSON arrays).
-- **build_steps** — One row per phase (resolve_deps, build, validate, checkpoint) per build result. Captures phase name, status, duration, summary, full log output, and execution ordering.
+```sql
+intent_file_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    source_path   TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE(name, content_hash)
+)
+```
 
-### Validation Results
-- **validation_results** — Every validation execution is recorded. Links to build_result (null for standalone validation runs) and generation. Stores validation name, type, severity, status, reason, duration, and timestamp.
+### validation_file_versions
 
-### Agent Responses
-- **agent_responses** — Raw agent JSON responses stored for audit and debugging. Links to either a build_result or validation_result (exactly one is non-null). Response files on disk are deleted after storage.
+Same versioning approach for validation files.
 
-### Target State
-- **target_state** — The only mutable table. Tracks current status of each target per output directory. Composite PK: `(target, output_dir)`. Points to the most recent build result for quick lookup.
+```sql
+validation_file_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    target        TEXT NOT NULL,
+    source_path   TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE(target, source_path, content_hash)
+)
+```
+
+### generations
+
+A generation represents a single `build()` invocation. All targets built in one call share the same generation ID.
+
+```sql
+generations (
+    generation_id  TEXT PRIMARY KEY,
+    output_dir     TEXT NOT NULL,
+    profile_name   TEXT,
+    options_json   TEXT,
+    status         TEXT NOT NULL DEFAULT 'running',
+    started_at     TEXT NOT NULL,
+    completed_at   TEXT
+)
+```
+
+### generation_logs
+
+Append-only log of cross-target events per generation.
+
+```sql
+generation_logs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_id  TEXT NOT NULL REFERENCES generations(generation_id),
+    message        TEXT NOT NULL,
+    logged_at      TEXT NOT NULL
+)
+```
+
+### build_results
+
+One row per target per build. Links to generation and intent file version. `files_created` and `files_modified` are JSON arrays.
+
+```sql
+build_results (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    target             TEXT NOT NULL,
+    generation_id      TEXT,
+    intent_version_id  INTEGER REFERENCES intent_file_versions(id),
+    status             TEXT NOT NULL,
+    commit_id          TEXT NOT NULL DEFAULT '',
+    total_duration_secs REAL NOT NULL DEFAULT 0.0,
+    timestamp          TEXT NOT NULL,
+    git_diff           TEXT,
+    files_created      TEXT,
+    files_modified     TEXT
+)
+```
+
+### build_steps
+
+One row per phase (resolve_deps, build, validate, checkpoint) per build result.
+
+```sql
+build_steps (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id  INTEGER NOT NULL REFERENCES build_results(id),
+    step_order       INTEGER NOT NULL,
+    phase            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    duration_secs    REAL NOT NULL DEFAULT 0.0,
+    summary          TEXT NOT NULL DEFAULT '',
+    log              TEXT NOT NULL DEFAULT ''
+)
+```
+
+### validation_results
+
+Every validation execution is recorded. Links to build_result (null for standalone runs) and generation.
+
+```sql
+validation_results (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id             INTEGER REFERENCES build_results(id),
+    generation_id               TEXT NOT NULL REFERENCES generations(generation_id),
+    target                      TEXT NOT NULL,
+    validation_file_version_id  INTEGER REFERENCES validation_file_versions(id),
+    name                        TEXT NOT NULL,
+    type                        TEXT NOT NULL,
+    severity                    TEXT NOT NULL,
+    status                      TEXT NOT NULL,
+    reason                      TEXT NOT NULL DEFAULT '',
+    duration_secs               REAL,
+    timestamp                   TEXT NOT NULL
+)
+```
+
+### agent_responses
+
+Raw agent JSON responses stored for audit and debugging. Links to either a build_result or validation_result (exactly one non-null).
+
+```sql
+agent_responses (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id       INTEGER REFERENCES build_results(id),
+    validation_result_id  INTEGER REFERENCES validation_results(id),
+    response_type         TEXT NOT NULL,
+    response_json         TEXT NOT NULL,
+    stored_at             TEXT NOT NULL
+)
+```
+
+### target_state
+
+The only mutable table. Tracks current status of each target per output directory.
+
+```sql
+target_state (
+    target               TEXT NOT NULL,
+    output_dir           TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    last_build_result_id INTEGER REFERENCES build_results(id),
+    updated_at           TEXT NOT NULL,
+    PRIMARY KEY (target, output_dir)
+)
+```
 
 ## GenerationStatus
 

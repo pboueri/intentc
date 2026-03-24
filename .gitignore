@@ -32,6 +32,9 @@ go.work.sum
 **/.intentc/state
 .intentc*
 
+# Bootstrap worktrees
+.worktrees/
+
 .DS_Store
 
 
