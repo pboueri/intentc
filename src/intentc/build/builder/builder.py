@@ -351,6 +351,7 @@ class Builder:
     def clean(self, target: str, output_dir: str) -> None:
         result = self._state_manager.get_build_result(target)
         if result is None:
+            self._log(f"  No build result found for '{target}', nothing to clean")
             return
 
         if result.commit_id:
