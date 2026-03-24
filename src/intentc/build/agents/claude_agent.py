@@ -114,16 +114,14 @@ class ClaudeAgent:
                         continue
                     try:
                         event = json.loads(line)
-                        # Debug: log full assistant events
-                        if event.get("type") == "assistant":
-                            print(f"[stream] assistant keys={list(event.keys())}", file=sys.stderr, flush=True)
-                            # Log first 200 chars of the event
-                            print(f"[stream] assistant event={json.dumps(event)[:200]}", file=sys.stderr, flush=True)
                         # Print assistant text events for user visibility
-                        if event.get("type") in ("assistant", "content_block_delta"):
-                            text = event.get("text", "") or event.get("delta", {}).get("text", "")
-                            if text:
-                                print(text, end="", file=sys.stderr, flush=True)
+                        if event.get("type") == "assistant":
+                            message = event.get("message", {})
+                            for block in message.get("content", []):
+                                if block.get("type") == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        print(text, end="", file=sys.stderr, flush=True)
                     except json.JSONDecodeError:
                         print(f"[stream] raw (not json): {line[:100]}", file=sys.stderr, flush=True)
 
