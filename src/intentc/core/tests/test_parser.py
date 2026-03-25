@@ -108,10 +108,10 @@ def test_parse_validation_file_basic(tmp_path: Path):
         "target: core/feature\n"
         "validations:\n"
         "  - name: has-files\n"
-        "    type: file_check\n"
+        "    type: agent_validation\n"
         "    severity: error\n"
         "    args:\n"
-        "      path: src/main.py\n"
+        "      rubric: Check that src/main.py exists\n"
     )
     result = parse_validation_file(icv)
     assert isinstance(result, ValidationFile)
@@ -119,9 +119,9 @@ def test_parse_validation_file_basic(tmp_path: Path):
     assert len(result.validations) == 1
     v = result.validations[0]
     assert v.name == "has-files"
-    assert v.type == ValidationType.FILE_CHECK
+    assert v.type == ValidationType.AGENT_VALIDATION
     assert v.severity == Severity.ERROR
-    assert v.args["path"] == "src/main.py"
+    assert v.args["rubric"] == "Check that src/main.py exists"
 
 
 def test_parse_validation_file_empty(tmp_path: Path):
@@ -195,9 +195,9 @@ def test_write_validation_file(tmp_path: Path):
         validations=[
             Validation(
                 name="check",
-                type=ValidationType.COMMAND_CHECK,
+                type=ValidationType.AGENT_VALIDATION,
                 severity=Severity.WARNING,
-                args={"cmd": "echo ok"},
+                args={"rubric": "echo ok"},
             )
         ],
     )
@@ -205,7 +205,7 @@ def test_write_validation_file(tmp_path: Path):
     assert out.exists()
     content = out.read_text()
     assert "target: core/feat" in content
-    assert "command_check" in content
+    assert "agent_validation" in content
     assert "warning" in content
 
 
@@ -243,7 +243,7 @@ def test_round_trip_validation_file(tmp_path: Path):
         target="core/spec",
         agent_profile="claude",
         validations=[
-            Validation(name="v1", type=ValidationType.LLM_JUDGE, args={"rubric": "check it"}),
+            Validation(name="v1", type=ValidationType.AGENT_VALIDATION, args={"rubric": "check it"}),
             Validation(name="v2", severity=Severity.WARNING),
         ],
     )
@@ -253,5 +253,5 @@ def test_round_trip_validation_file(tmp_path: Path):
     assert loaded.agent_profile == original.agent_profile
     assert len(loaded.validations) == 2
     assert loaded.validations[0].name == "v1"
-    assert loaded.validations[0].type == ValidationType.LLM_JUDGE
+    assert loaded.validations[0].type == ValidationType.AGENT_VALIDATION
     assert loaded.validations[1].severity == Severity.WARNING

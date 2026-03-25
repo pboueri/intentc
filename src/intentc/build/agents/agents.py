@@ -173,7 +173,7 @@ target: feature/path
 agent_profile: null
 validations:
   - name: validation_name
-    type: agent_validation  # or: file_check, folder_check, command_check
+    type: agent_validation
     severity: error  # or: warning
     args:
       rubric: "Description of what to validate..."
@@ -181,9 +181,6 @@ validations:
 
 Validation types:
 - `agent_validation` — evaluated by an AI agent using a rubric
-- `file_check` — checks a file exists (args: path)
-- `folder_check` — checks a folder exists (args: path)
-- `command_check` — runs a shell command (args: command, expected_exit_code)
 
 ### Directory structure
 
