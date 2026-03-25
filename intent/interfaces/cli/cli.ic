@@ -135,8 +135,13 @@ Revert a target's generated code and reset its state.
 Enter interactive planning mode with the agent for a specific feature.
 
 1. Load the project via `_load_project_or_exit()` and config.
-2. **Validate feature exists** — If `target` is not in `project.features`, print an error listing available features and exit with code 2.
-3. Resolve agent profile.
+2. Resolve agent profile and implementation.
+3. **Create feature if it doesn't exist** — If `target` is not in `project.features`, create a new blank feature:
+   - Derive the feature name from the last segment of the target path (e.g., `core/models` → `models`).
+   - Create a blank `IntentFile(name=feature_name)`.
+   - Write it to disk at `intent/<target>/<feature_name>.ic` via `write_intent_file()`.
+   - Print a confirmation message showing the created file path.
+   - Add a new `FeatureNode` with the intent to `project.features`.
 4. Construct a `BuildContext` for the target. If the feature exists but has no intents (empty intents list), create a synthetic `IntentFile(name=target)` so the agent still has context.
 5. Call `agent.plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
 

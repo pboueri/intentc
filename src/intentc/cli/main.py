@@ -21,6 +21,7 @@ from intentc.cli.output import (
     render_validation_results,
 )
 from intentc.core.models import IntentFile, ParseErrors
+from intentc.core.parser import write_intent_file
 from intentc.core.project import Project, blank_project, load_project, write_project
 
 app = typer.Typer(
@@ -262,20 +263,28 @@ def plan(
     project = _load_project_or_exit(cwd / "intent")
     config = load_config(cwd)
 
-    # Validate feature exists
-    if target not in project.features:
-        available = ", ".join(sorted(project.features.keys())) or "(none)"
-        print_error(f"Feature '{target}' not found. Available features: {available}")
-        raise typer.Exit(code=2)
-
     resolved_output = _resolve_output_dir(output_dir, config)
     resolved_profile = _resolve_profile(profile, config)
 
     # Resolve implementation if specified
     impl = project.resolve_implementation(implementation) if implementation else None
 
-    # Construct BuildContext
-    node = project.features[target]
+    # Create the feature if it doesn't exist
+    if target not in project.features:
+        from intentc.core.project import FeatureNode
+
+        intent_dir = cwd / "intent"
+        feature_name = target.rsplit("/", 1)[-1]
+        intent = IntentFile(name=feature_name)
+        ic_path = intent_dir / target / f"{feature_name}.ic"
+        write_intent_file(intent, ic_path)
+        console.print(f"[green]Created new feature:[/green] {ic_path.relative_to(cwd)}")
+
+        node = FeatureNode(path=target, intents=[intent], validations=[])
+        project.features[target] = node
+    else:
+        node = project.features[target]
+
     if node.intents:
         intent = node.intents[0]
     else:
