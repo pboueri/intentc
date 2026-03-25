@@ -252,6 +252,7 @@ def clean(
 @app.command()
 def plan(
     target: str = typer.Argument(..., help="Feature path to plan"),
+    prompt: str = typer.Argument(..., help="Seed prompt describing what to plan"),
     output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override output directory"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override"),
     implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
@@ -299,6 +300,7 @@ def plan(
         project_intent=project.project_intent,
         implementation=impl,
         response_file_path="",
+        seed_prompt=prompt,
     )
 
     agent = create_from_profile(resolved_profile)

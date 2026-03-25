@@ -106,6 +106,7 @@ def render_prompt(
         validation=validations_text,
         response_file=ctx.response_file_path,
         previous_errors=previous_errors_text,
+        seed_prompt=ctx.seed_prompt,
     )
 
 
@@ -160,6 +161,7 @@ class BuildContext(BaseModel):
     implementation: Implementation | None = None
     response_file_path: str
     previous_errors: list[str] = Field(default_factory=list)
+    seed_prompt: str = ""
 
 
 class DifferencingContext(BaseModel):

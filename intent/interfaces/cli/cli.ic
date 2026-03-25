@@ -130,7 +130,7 @@ Revert a target's generated code and reset its state.
 - `--all` — reset all state for the output directory.
 - `--output-dir / -o` — override the output directory.
 
-### `intentc plan <target>`
+### `intentc plan <target> <prompt>`
 
 Enter interactive planning mode with the agent for a specific feature.
 
@@ -142,11 +142,12 @@ Enter interactive planning mode with the agent for a specific feature.
    - Write it to disk at `intent/<target>/<feature_name>.ic` via `write_intent_file()`.
    - Print a confirmation message showing the created file path.
    - Add a new `FeatureNode` with the intent to `project.features`.
-4. Construct a `BuildContext` for the target. If the feature exists but has no intents (empty intents list), create a synthetic `IntentFile(name=target)` so the agent still has context.
-5. Call `agent.plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode).
+4. Construct a `BuildContext` for the target with `seed_prompt=prompt`. If the feature exists but has no intents (empty intents list), create a synthetic `IntentFile(name=target)` so the agent still has context.
+5. Call `agent.plan(ctx)` which drops into an interactive session (or single-shot if the agent doesn't support interactive mode). The seed prompt is included in the rendered plan prompt so the agent has the user's initial description of what they want to plan.
 
 **Arguments:**
 - `target` (positional, required) — feature path to plan.
+- `prompt` (positional, required) — seed prompt describing what to plan for this feature.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
