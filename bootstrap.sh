@@ -203,6 +203,12 @@ read -rp "Choice [a/d/i]: " choice
 case "${choice}" in
     a|A)
         echo ""
+        echo "--- Removing existing generated src/ before applying patches ---"
+        if git -C "${REPO_ROOT}" ls-files --error-unmatch src/intentc/ >/dev/null 2>&1; then
+            git -C "${REPO_ROOT}" rm -r --quiet src/intentc/
+            git -C "${REPO_ROOT}" commit -m "remove generated src before re-applying build patches"
+        fi
+        echo ""
         echo "--- Applying patches to ${CURRENT_BRANCH} ---"
         git -C "${REPO_ROOT}" am "${PATCH_DIR}"/*.patch
         echo ""
