@@ -1,0 +1,46 @@
+You are evaluating whether two output directories are functionally equivalent.
+
+## Project Intent
+{project}
+
+## Implementation
+{implementation}
+
+## Directories to Compare
+- Reference (A): {output_dir_a}
+- Candidate (B): {output_dir_b}
+
+## Instructions
+
+Compare the two output directories and evaluate functional equivalence across these dimensions, in order:
+
+1. **public_api** — Do both builds expose the same public interfaces? Compare module exports, function signatures, class hierarchies, CLI commands, API endpoints, or whatever constitutes the public surface. Structural differences (file layout, naming) are acceptable as long as the contract is the same.
+
+2. **test_suite** — Can the test suite from build A pass against build B, and vice versa? Attempt to run any existing tests from each build against the other's code. If tests are tightly coupled to internal structure and cannot be cross-run, note this and evaluate based on test coverage and intent rather than literal cross-execution.
+
+3. **runtime_behavior** — Does the software behave the same when used? Exercise the software through its primary interface (CLI invocations, API calls, imports) with representative inputs and compare outputs. This is the most important dimension.
+
+4. **dependency_compatibility** — Do both builds declare compatible dependencies? Significant version mismatches or missing dependencies that affect runtime behavior are divergences. Minor version differences in pinned dependencies are acceptable.
+
+5. **configuration_compatibility** — Do both builds respect the same configuration surface? Config files, environment variables, and default values should be compatible.
+
+The overall status is "equivalent" only if all evaluated dimensions pass. If any dimension fails, the status is "divergent".
+
+## Response
+
+Write a JSON response to: {response_file}
+
+The JSON must have this structure:
+```json
+{{
+  "status": "equivalent" or "divergent",
+  "dimensions": [
+    {{
+      "name": "dimension_name",
+      "status": "pass" or "fail",
+      "rationale": "explanation"
+    }}
+  ],
+  "summary": "overall assessment"
+}}
+```

@@ -1,4 +1,4 @@
-"""Load, write, and traverse an intentc project as a dependency DAG."""
+"""Project structure: DAG of features, loading, writing, and blank projects."""
 
 from __future__ import annotations
 
@@ -7,104 +7,96 @@ import shutil
 from collections import deque
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from intentc.core.parser import (
+from intentc.core.models import (
+    Implementation,
+    IntentFile,
     ParseError,
     ParseErrors,
+    ProjectIntent,
+    ValidationFile,
+)
+from intentc.core.parser import (
     parse_intent_file,
     parse_validation_file,
     write_intent_file,
     write_validation_file,
 )
-from intentc.core.types import (
-    Implementation,
-    IntentFile,
-    ProjectIntent,
-    ValidationFile,
-)
 
 
 class FeatureNode(BaseModel):
-    """A feature in the project DAG — corresponds to a directory under intent/."""
-
-    model_config = {"extra": "ignore"}
+    """A feature in the project DAG."""
 
     path: str
-    intents: list[IntentFile] = []
-    validations: list[ValidationFile] = []
+    intents: list[IntentFile] = Field(default_factory=list)
+    validations: list[ValidationFile] = Field(default_factory=list)
 
     @property
     def depends_on(self) -> list[str]:
-        """Combined dependencies from all intent files in this feature."""
+        """Combined dependencies from all intent files, deduplicated, order-preserving."""
         seen: set[str] = set()
-        deps: list[str] = []
+        result: list[str] = []
         for intent in self.intents:
             for dep in intent.depends_on:
                 if dep not in seen:
-                    deps.append(dep)
                     seen.add(dep)
-        return deps
+                    result.append(dep)
+        return result
 
 
 class Project(BaseModel):
-    """The full intentc project parsed from an intent/ directory.
-
-    Provides DAG traversal over features and their dependencies.
-    """
-
-    model_config = {"extra": "ignore"}
+    """The full intentc project loaded into memory."""
 
     project_intent: ProjectIntent
-    implementations: dict[str, Implementation] = {}
-    assertions: list[ValidationFile] = []
-    features: dict[str, FeatureNode] = {}
+    implementations: dict[str, Implementation] = Field(default_factory=dict)
+    assertions: list[ValidationFile] = Field(default_factory=list)
+    features: dict[str, FeatureNode] = Field(default_factory=dict)
     intent_dir: Path | None = None
 
     def resolve_implementation(self, name: str | None = None) -> Implementation | None:
         """Resolve which implementation to use.
 
-        Args:
-            name: Explicit implementation name. If None, uses the default.
-
-        Returns:
-            The resolved Implementation, or None if no implementations exist.
-
-        Raises:
-            KeyError: If the named implementation is not found.
-            ValueError: If multiple implementations exist and no default can be determined.
+        If name is given, look it up. If null, use the single one or 'default'.
+        Raises KeyError if name not found, ValueError if ambiguous.
         """
         if not self.implementations:
             return None
-        if name:
+        if name is not None:
             if name not in self.implementations:
-                available = ", ".join(sorted(self.implementations))
                 raise KeyError(
                     f"Implementation '{name}' not found. "
-                    f"Available implementations: {available}"
+                    f"Available: {', '.join(sorted(self.implementations))}"
                 )
             return self.implementations[name]
         if len(self.implementations) == 1:
             return next(iter(self.implementations.values()))
         if "default" in self.implementations:
             return self.implementations["default"]
-        available = ", ".join(sorted(self.implementations))
         raise ValueError(
-            f"Multiple implementations found but no default. "
-            f"Use --implementation to select one. "
-            f"Available: {available}"
+            f"Ambiguous: multiple implementations available "
+            f"({', '.join(sorted(self.implementations))}) and no 'default'. "
+            f"Specify which one to use."
         )
+
+    def _require_feature(self, feature_path: str) -> None:
+        """Raise KeyError if feature_path not in features."""
+        if feature_path not in self.features:
+            raise KeyError(
+                f"Feature '{feature_path}' not found. "
+                f"Available: {', '.join(sorted(self.features)) or '(none)'}"
+            )
 
     def parents(self, feature_path: str) -> list[str]:
         """Direct dependencies of a feature."""
         self._require_feature(feature_path)
-        return list(self.features[feature_path].depends_on)
+        return self.features[feature_path].depends_on
 
     def ancestors(self, feature_path: str) -> set[str]:
-        """All transitive dependencies of a feature."""
+        """All transitive dependencies (BFS)."""
         self._require_feature(feature_path)
         result: set[str] = set()
-        queue = deque(self.features[feature_path].depends_on)
+        queue: deque[str] = deque(self.features[feature_path].depends_on)
         while queue:
             dep = queue.popleft()
             if dep in result:
@@ -118,191 +110,160 @@ class Project(BaseModel):
         """Features that directly depend on this feature."""
         self._require_feature(feature_path)
         return [
-            fp
-            for fp, node in self.features.items()
+            fp for fp, node in self.features.items()
             if feature_path in node.depends_on
         ]
 
     def descendants(self, feature_path: str) -> set[str]:
-        """All features that transitively depend on this feature."""
+        """All features that transitively depend on this feature (BFS)."""
         self._require_feature(feature_path)
         result: set[str] = set()
-        queue = deque(self.children(feature_path))
+        queue: deque[str] = deque(self.children(feature_path))
         while queue:
             fp = queue.popleft()
             if fp in result:
                 continue
             result.add(fp)
-            queue.extend(self.children(fp))
+            if fp in self.features:
+                queue.extend(self.children(fp))
         return result
 
     def topological_order(self) -> list[str]:
         """Return feature paths in dependency-first topological order.
 
-        Raises:
-            ValueError: If the graph contains a cycle.
+        Raises ValueError on cycle.
         """
+        # Kahn's algorithm
         in_degree: dict[str, int] = {fp: 0 for fp in self.features}
-        adj: dict[str, list[str]] = {fp: [] for fp in self.features}
-
         for fp, node in self.features.items():
             for dep in node.depends_on:
-                if dep in self.features:
-                    adj[dep].append(fp)
+                if dep in in_degree:
                     in_degree[fp] += 1
 
-        queue = deque(fp for fp, deg in in_degree.items() if deg == 0)
-        order: list[str] = []
-
+        queue: deque[str] = deque(
+            fp for fp, deg in in_degree.items() if deg == 0
+        )
+        result: list[str] = []
         while queue:
             fp = queue.popleft()
-            order.append(fp)
-            for child in adj[fp]:
+            result.append(fp)
+            for child in self.children(fp):
                 in_degree[child] -= 1
                 if in_degree[child] == 0:
                     queue.append(child)
 
-        if len(order) != len(self.features):
-            remaining = sorted(set(self.features) - set(order))
+        if len(result) != len(self.features):
+            missing = set(self.features) - set(result)
             raise ValueError(
-                f"Dependency cycle detected among features: {', '.join(remaining)}"
+                f"Dependency cycle detected involving: {', '.join(sorted(missing))}"
             )
-
-        return order
-
-    def _require_feature(self, feature_path: str) -> None:
-        if feature_path not in self.features:
-            available = ", ".join(sorted(self.features)) or "(none)"
-            raise KeyError(
-                f"Feature '{feature_path}' not found in project. "
-                f"Available features: {available}"
-            )
-
-
-# ---------------------------------------------------------------------------
-# Load
-# ---------------------------------------------------------------------------
+        return result
 
 
 def load_project(intent_dir: Path) -> Project:
-    """Load an entire intentc project from its intent/ directory.
-
-    Parses all .ic and .icv files, builds the feature DAG, and validates
-    the dependency graph. Accumulates all parsing errors and raises them
-    together.
-
-    Raises:
-        ParseErrors: If any files fail to parse (all errors accumulated).
-    """
+    """Load the full project from an intent/ directory. Raises ParseErrors on failure."""
     intent_dir = Path(intent_dir)
     errors: list[ParseError] = []
 
-    if not intent_dir.is_dir():
-        raise ParseErrors(
-            [ParseError(path=intent_dir, field=None, message="Intent directory not found")]
-        )
+    # Parse project.ic
+    project_ic = intent_dir / "project.ic"
+    if not project_ic.exists():
+        errors.append(ParseError(project_ic, "project.ic not found in intent directory"))
+        raise ParseErrors(errors)
 
-    # --- project.ic (required) ---
-    project_path = intent_dir / "project.ic"
-    project_intent: ProjectIntent | None = None
-    if not project_path.exists():
-        errors.append(
-            ParseError(
-                path=project_path,
-                field=None,
-                message="Required file project.ic not found. "
-                "Run 'intentc init' to create a new project.",
-            )
-        )
-    else:
-        try:
-            project_intent = parse_intent_file(project_path, as_project=True)  # type: ignore[assignment]
-        except ParseErrors as exc:
-            errors.extend(exc.errors)
+    try:
+        project_intent = parse_intent_file(project_ic, as_project=True)
+    except ParseErrors as exc:
+        errors.extend(exc.errors)
+        raise ParseErrors(errors) from exc
 
-    # --- implementations/ directory (optional, replaces legacy implementation.ic) ---
+    # Parse implementations
     implementations: dict[str, Implementation] = {}
     impl_dir = intent_dir / "implementations"
     if impl_dir.is_dir():
-        for ic_path in sorted(impl_dir.glob("*.ic")):
+        for ic_file in sorted(impl_dir.glob("*.ic")):
             try:
-                impl = parse_intent_file(ic_path, as_implementation=True)  # type: ignore[assignment]
-                implementations[ic_path.stem] = impl
-            except ParseErrors as exc:
-                errors.extend(exc.errors)
-    else:
-        # Backward compat: check for legacy intent/implementation.ic
-        impl_path = intent_dir / "implementation.ic"
-        if impl_path.exists():
-            try:
-                impl = parse_intent_file(impl_path, as_implementation=True)  # type: ignore[assignment]
-                implementations["default"] = impl
+                impl = parse_intent_file(ic_file, as_implementation=True)
+                assert isinstance(impl, Implementation)
+                implementations[impl.name] = impl
             except ParseErrors as exc:
                 errors.extend(exc.errors)
 
-    # --- assertions/*.icv (optional) ---
+    # Parse assertions
     assertions: list[ValidationFile] = []
-    assertions_dir = intent_dir / "assertions"
-    if assertions_dir.is_dir():
-        for icv_path in sorted(assertions_dir.glob("*.icv")):
+    assert_dir = intent_dir / "assertions"
+    if assert_dir.is_dir():
+        for icv_file in sorted(assert_dir.glob("*.icv")):
             try:
-                assertions.append(parse_validation_file(icv_path))
+                vf = parse_validation_file(icv_file)
+                assertions.append(vf)
             except ParseErrors as exc:
                 errors.extend(exc.errors)
 
-    # --- Feature directories (everything else) ---
+    # Discover features: any directory under intent_dir that contains .ic files,
+    # excluding top-level special dirs and files
     features: dict[str, FeatureNode] = {}
-    skip_dirs = {intent_dir, assertions_dir, impl_dir}
+    skip_dirs = {"implementations", "assertions"}
 
-    for ic_path in sorted(intent_dir.rglob("*.ic")):
-        if ic_path.parent in skip_dirs:
+    for ic_file in sorted(intent_dir.rglob("*.ic")):
+        rel = ic_file.relative_to(intent_dir)
+        # Skip top-level project.ic and files in special dirs
+        if len(rel.parts) < 2:
+            continue
+        if rel.parts[0] in skip_dirs:
             continue
 
-        feature_path = str(ic_path.parent.relative_to(intent_dir))
+        # Feature path is the directory relative to intent_dir
+        feature_path = str(rel.parent).replace("\\", "/")
 
         if feature_path not in features:
             features[feature_path] = FeatureNode(path=feature_path)
 
         try:
-            intent = parse_intent_file(ic_path)
+            intent = parse_intent_file(ic_file)
+            assert isinstance(intent, IntentFile)
             features[feature_path].intents.append(intent)
         except ParseErrors as exc:
             errors.extend(exc.errors)
 
-    for icv_path in sorted(intent_dir.rglob("*.icv")):
-        if icv_path.parent in skip_dirs:
+    # Discover validation files for features
+    for icv_file in sorted(intent_dir.rglob("*.icv")):
+        rel = icv_file.relative_to(intent_dir)
+        if len(rel.parts) < 2:
+            continue
+        if rel.parts[0] in skip_dirs:
             continue
 
-        # Skip empty placeholder files
-        if icv_path.stat().st_size == 0:
-            continue
-
-        feature_path = str(icv_path.parent.relative_to(intent_dir))
+        feature_path = str(rel.parent).replace("\\", "/")
 
         if feature_path not in features:
-            features[feature_path] = FeatureNode(path=feature_path)
+            # Validation file in a dir with no .ic files — still a valid feature dir
+            # but we don't create a feature node for it since it has no intents
+            continue
 
         try:
-            vf = parse_validation_file(icv_path)
+            vf = parse_validation_file(icv_file)
             features[feature_path].validations.append(vf)
         except ParseErrors as exc:
             errors.extend(exc.errors)
 
-    # --- Expand wildcard dependencies ---
-    all_feature_paths = sorted(features)
-    for fp, node in features.items():
+    # Wildcard dependency expansion
+    all_feature_paths = set(features.keys())
+    for node in features.values():
         for intent in node.intents:
             expanded: list[str] = []
             for dep in intent.depends_on:
-                if any(c in dep for c in "*?["):
-                    matches = fnmatch.filter(all_feature_paths, dep)
+                if "*" in dep or "?" in dep:
+                    matches = sorted(
+                        fp for fp in all_feature_paths
+                        if fnmatch.fnmatch(fp, dep)
+                    )
                     if not matches:
                         errors.append(
                             ParseError(
-                                path=intent.source_path or Path(fp),
+                                intent.source_path or Path("<unknown>"),
+                                f"wildcard dependency '{dep}' matched no features",
                                 field="depends_on",
-                                message=f"Wildcard '{dep}' matched no features. "
-                                f"Available features: {', '.join(all_feature_paths)}",
                             )
                         )
                     expanded.extend(matches)
@@ -310,28 +271,10 @@ def load_project(intent_dir: Path) -> Project:
                     expanded.append(dep)
             intent.depends_on = expanded
 
-    # --- Validate dependency references ---
-    for fp, node in features.items():
-        for dep in node.depends_on:
-            if dep not in features:
-                for intent in node.intents:
-                    if dep in intent.depends_on:
-                        errors.append(
-                            ParseError(
-                                path=intent.source_path or Path(fp),
-                                field="depends_on",
-                                message=f"Dependency '{dep}' not found. "
-                                f"Available features: {', '.join(sorted(features))}",
-                            )
-                        )
-                        break
-
     if errors:
         raise ParseErrors(errors)
 
-    assert project_intent is not None
-
-    project = Project(
+    return Project(
         project_intent=project_intent,
         implementations=implementations,
         assertions=assertions,
@@ -339,118 +282,83 @@ def load_project(intent_dir: Path) -> Project:
         intent_dir=intent_dir,
     )
 
-    # --- Check for cycles ---
-    try:
-        project.topological_order()
-    except ValueError as exc:
-        raise ParseErrors(
-            [ParseError(path=intent_dir, field=None, message=str(exc))]
-        )
-
-    return project
-
-
-# ---------------------------------------------------------------------------
-# Write
-# ---------------------------------------------------------------------------
-
 
 def write_project(project: Project, dest_dir: Path) -> Path:
-    """Write an entire project to a new intent/ directory.
-
-    Writes all intent files, validation files, and copies referenced
-    supporting files to preserve relative references.
-
-    Returns:
-        The destination directory.
-    """
+    """Write a project to a new directory. Returns the dest_dir path."""
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    # Write project.ic
     write_intent_file(project.project_intent, dest_dir / "project.ic")
-    _copy_file_references(project.project_intent, dest_dir)
 
-    for impl_name, impl in project.implementations.items():
-        impl_path = dest_dir / "implementations" / f"{impl_name}.ic"
+    # Write implementations
+    for impl in project.implementations.values():
+        impl_path = dest_dir / "implementations" / f"{impl.name}.ic"
         write_intent_file(impl, impl_path)
-        _copy_file_references(impl, impl_path.parent)
 
+    # Write assertions
     for vf in project.assertions:
         if vf.source_path:
-            dest_path = dest_dir / "assertions" / vf.source_path.name
+            # Preserve original filename
+            assert_path = dest_dir / "assertions" / vf.source_path.name
         else:
-            dest_path = dest_dir / "assertions" / f"{vf.target.replace('/', '_')}.icv"
-        write_validation_file(vf, dest_path)
+            assert_path = dest_dir / "assertions" / "assertion.icv"
+        write_validation_file(vf, assert_path)
 
-    for fp, node in project.features.items():
-        feature_dir = dest_dir / fp
-
+    # Write features
+    for feature_path, node in project.features.items():
+        feature_dir = dest_dir / feature_path
         for intent in node.intents:
             if intent.source_path:
-                dest_path = feature_dir / intent.source_path.name
+                ic_path = feature_dir / intent.source_path.name
             else:
-                dest_path = feature_dir / f"{intent.name}.ic"
-            write_intent_file(intent, dest_path)
-            _copy_file_references(intent, feature_dir)
+                ic_path = feature_dir / f"{intent.name}.ic"
+            write_intent_file(intent, ic_path)
 
         for vf in node.validations:
             if vf.source_path:
-                dest_path = feature_dir / vf.source_path.name
+                icv_path = feature_dir / vf.source_path.name
             else:
-                dest_path = feature_dir / f"{vf.target.replace('/', '_')}.icv"
-            write_validation_file(vf, dest_path)
+                icv_path = feature_dir / "validations.icv"
+            write_validation_file(vf, icv_path)
+
+        # Copy supporting files referenced by intents
+        for intent in node.intents:
+            if not intent.source_path:
+                continue
+            src_dir = intent.source_path.parent
+            for ref in intent.file_references:
+                src_file = (src_dir / ref).resolve()
+                if src_file.exists() and src_file.is_file():
+                    dest_file = feature_dir / ref
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    if not dest_file.exists():
+                        shutil.copy2(src_file, dest_file)
 
     return dest_dir
 
 
-def _copy_file_references(
-    intent: IntentFile | ProjectIntent | Implementation,
-    dest_dir: Path,
-) -> None:
-    """Copy files referenced in an intent body to the destination directory."""
-    if not intent.file_references or not intent.source_path:
-        return
-
-    source_dir = intent.source_path.parent
-
-    for ref in intent.file_references:
-        src = (source_dir / ref).resolve()
-        if not src.exists():
-            continue
-        dest = (dest_dir / ref).resolve()
-        if dest.exists():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-
-
-# ---------------------------------------------------------------------------
-# Blank project
-# ---------------------------------------------------------------------------
-
-
 def blank_project(name: str) -> Project:
-    """Create a minimal blank project ready to be written to disk.
-
-    Returns a Project with a project.ic and a single starter feature.
-    """
+    """Create a minimal starter project with project.ic and one starter feature."""
     project_intent = ProjectIntent(
         name=name,
-        tags=["project"],
         body=f"# {name}\n\nDescribe your project here.",
     )
-
-    starter = IntentFile(
-        name="starter",
-        body="# Starter Feature\n\nDescribe what this feature should do.",
+    impl = Implementation(
+        name="default",
+        body="# Default Implementation\n\nDescribe your implementation choices here.",
     )
-
+    starter_intent = IntentFile(
+        name="starter",
+        depends_on=[],
+        body="# Starter Feature\n\nDescribe your first feature here.",
+    )
+    starter_node = FeatureNode(
+        path="starter",
+        intents=[starter_intent],
+    )
     return Project(
         project_intent=project_intent,
-        features={
-            "starter": FeatureNode(
-                path="starter",
-                intents=[starter],
-            ),
-        },
+        implementations={"default": impl},
+        features={"starter": starter_node},
     )

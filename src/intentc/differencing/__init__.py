@@ -1,5 +1,5 @@
-"""Differencing module — evaluates functional equivalence between two builds."""
+"""Differencing package for intentc."""
 
-from intentc.differencing.differencing import run_differencing
+from intentc.differencing.differencing import load_differencing_prompt, run_differencing
 
-__all__ = ["run_differencing"]
+__all__ = ["load_differencing_prompt", "run_differencing"]

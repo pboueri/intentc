@@ -1,3 +1,5 @@
+"""Build package for intentc."""
+
 from intentc.build.agents import (
     Agent,
     AgentError,
@@ -19,7 +21,10 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
-from intentc.build.storage import SQLiteBackend, StorageBackend
+from intentc.build.storage import (
+    SQLiteBackend,
+    StorageBackend,
+)
 from intentc.build.validations import (
     AgentValidationRunner,
     ValidationContext,
@@ -32,7 +37,6 @@ __all__ = [
     "Agent",
     "AgentError",
     "AgentProfile",
-    "AgentValidationRunner",
     "BuildContext",
     "BuildResponse",
     "BuildResult",
@@ -46,8 +50,9 @@ __all__ = [
     "StateManager",
     "StorageBackend",
     "TargetStatus",
-    "ValidationContext",
     "ValidationResponse",
+    "AgentValidationRunner",
+    "ValidationContext",
     "ValidationRunner",
     "ValidationSuite",
     "ValidationSuiteResult",

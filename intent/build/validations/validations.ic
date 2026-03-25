@@ -44,7 +44,7 @@ class ValidationSuiteResult:
     summary: string = ""            # default empty, filled by the suite
 ```
 
-The summary string uses the format: `"{passed}/{total} passed, {errors} error(s), {warnings} warning(s)"` where passed/total/errors/warnings are counts. The `_build_summary` helper computes this from the results and their severities.
+The summary string reports the count of passed validations, total validations, error-severity failures, and warning-severity failures in a human-readable format.
 
 Important implementation details for counting:
 - A validation **passes** when `r.status == "pass"`
@@ -93,10 +93,11 @@ Profile resolution order for each validation: per-validation `agent_profile` ove
 
 1. The suite receives a feature path (or iterates all features for project-wide validation).
 2. It looks up the feature's .icv files from the parsed Project.
-3. For each validation entry (sequentially, in order):
-   - The runner for the entry's `type` is looked up in the registry.
-   - The runner is invoked with the validation entry and context (project intent, output dir, response file path).
-   - The runner returns a ValidationResponse.
+3. All validation entries are run **in parallel** using a thread pool (since runners are typically I/O-bound agent calls):
+   - The runner for each entry's `type` is looked up in the registry.
+   - Each runner is invoked concurrently with the validation entry and context (project intent, output dir, response file path).
+   - Each runner returns a ValidationResponse.
+   - Results are collected in the original entry order (not completion order) to ensure deterministic output.
 4. The suite collects all responses into a ValidationSuiteResult.
 5. `passed` is false if any `severity: error` validation has `status: "fail"`.
 
@@ -143,22 +144,7 @@ class AgentValidationRunner implements ValidationRunner:
         # Takes an already-created Agent instance (not an AgentProfile).
 ```
 
-The runner uses the provided Agent to call `agent.validate()`. It constructs a `BuildContext` from the `ValidationContext` with these exact fields:
-
-```
-build_ctx = BuildContext(
-    intent=ctx.feature_intent,
-    validations=[],              # explicitly empty for validation runs
-    output_dir=ctx.output_dir,
-    generation_id="val-{random_hex_8}",
-    dependency_names=[],         # explicitly empty for validation runs
-    project_intent=ctx.project_intent,
-    implementation=ctx.implementation,
-    response_file_path=ctx.response_file_path,
-)
-```
-
-It then invokes `agent.validate(build_ctx, validation)`, reads the response file, and returns the parsed `ValidationResponse`. If the agent raises an error or returns an invalid response, returns a failure response.
+The runner constructs a `BuildContext` from the `ValidationContext` with the feature intent, empty validations and dependency_names (since this is a validation run, not a build), the output dir, a validation-specific generation ID (`"val-{random_hex_8}"`), project intent, implementation, and response file path. It invokes `agent.validate(build_ctx, validation)`, reads the response file, and returns the parsed `ValidationResponse`. If the agent raises an error or returns an invalid response, returns a failure response.
 
 The **ValidationSuite** is responsible for creating the agent via `create_from_profile(agent_profile)` and passing it to the `AgentValidationRunner`. The runner does not create agents itself.
 

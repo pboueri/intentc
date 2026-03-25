@@ -1,8 +1,9 @@
-"""Differencing workflow — evaluates functional equivalence between two builds."""
+"""Differencing workflow: evaluate functional equivalence between two output directories."""
 
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -11,9 +12,33 @@ from intentc.build.agents import (
     AgentProfile,
     DifferencingContext,
     DifferencingResponse,
+    PromptTemplates,
     create_from_profile,
+    load_default_prompts,
 )
 from intentc.core.project import Project
+
+
+def load_differencing_prompt(intent_dir: Path) -> str:
+    """Load the differencing prompt template from the intent directory.
+
+    Resolves the prompt file relative to the intent directory's
+    differencing/prompts/ folder.  Falls back to the bundled package
+    default when the file does not exist on disk.
+
+    Args:
+        intent_dir: Root intent directory (e.g. ``<project>/intent``).
+
+    Returns:
+        The prompt template string.
+    """
+    prompt_path = intent_dir / "differencing" / "prompts" / "difference.prompt"
+    if prompt_path.is_file():
+        return prompt_path.read_text(encoding="utf-8")
+
+    # Fallback: bundled package default
+    defaults = load_default_prompts()
+    return defaults.difference
 
 
 def run_differencing(
@@ -21,101 +46,60 @@ def run_differencing(
     output_dir_b: str,
     project: Project,
     profile: AgentProfile,
-    *,
     implementation: str | None = None,
 ) -> DifferencingResponse:
     """Evaluate functional equivalence between two output directories.
 
-    This is a pure evaluation — no build state is modified.
-
     Args:
         output_dir_a: Path to the reference output directory.
         output_dir_b: Path to the candidate output directory.
-        project: The loaded project (provides project_intent and implementations).
-        profile: Agent profile to use for the evaluation.
-        implementation: Name of the implementation to use. If None, uses the default.
+        project: The loaded project.
+        profile: Agent profile to use.
+        implementation: Implementation name to resolve (None for default).
 
     Returns:
-        A DifferencingResponse with per-dimension results and overall status.
+        DifferencingResponse with the evaluation result.
 
     Raises:
-        AgentError: If the response file is missing or contains invalid JSON.
+        AgentError: If the response file is missing, empty, or malformed.
     """
-    resolved_impl = project.resolve_implementation(implementation)
+    impl = project.resolve_implementation(implementation)
 
-    # Create a temporary response file
-    response_file = tempfile.NamedTemporaryFile(
-        prefix="intentc-diff-",
-        suffix=".json",
-        delete=False,
-    )
-    response_file.close()
-    response_file_path = response_file.name
+    # Load the differencing prompt from the intent directory
+    prompt_text = load_differencing_prompt(project.intent_dir)
+    templates = profile.prompt_templates or load_default_prompts()
+    templates = templates.model_copy(update={"difference": prompt_text})
+    profile = profile.model_copy(update={"prompt_templates": templates})
+
+    # Create a temporary response file (not auto-deleted)
+    fd, response_path = tempfile.mkstemp(suffix=".json", prefix="diff-response-")
+    os.close(fd)
 
     ctx = DifferencingContext(
         output_dir_a=output_dir_a,
         output_dir_b=output_dir_b,
         project_intent=project.project_intent,
-        implementation=resolved_impl,
-        response_file_path=response_file_path,
+        response_file_path=response_path,
+        implementation=impl,
     )
-
-    # Compute sandbox paths for differencing
-    sandbox_read = [
-        str(Path(output_dir_a).resolve()),
-        str(Path(output_dir_b).resolve()),
-    ]
-    sandbox_write = [str(Path(response_file_path).parent.resolve())]
-
-    if project.intent_dir is not None:
-        intent_dir = project.intent_dir
-        project_ic = intent_dir / "project.ic"
-        if project_ic.exists():
-            sandbox_read.append(str(project_ic.resolve()))
-        impl_dir = intent_dir / "implementations"
-        if impl_dir.is_dir():
-            sandbox_read.append(str(impl_dir.resolve()))
-        # Backward compat: legacy implementation.ic
-        impl_ic = intent_dir / "implementation.ic"
-        if impl_ic.exists():
-            sandbox_read.append(str(impl_ic.resolve()))
-
-    profile = profile.model_copy(update={
-        "sandbox_write_paths": sandbox_write,
-        "sandbox_read_paths": sandbox_read,
-    })
 
     agent = create_from_profile(profile)
     agent.difference(ctx)
 
-    # Read and parse the response
-    path = Path(response_file_path)
-    if not path.exists():
-        raise AgentError(
-            f"Differencing response file not found: {response_file_path}. "
-            f"The agent did not write the expected output."
-        )
+    # Manually read and parse the response file
+    response_file = Path(response_path)
+    if not response_file.exists():
+        raise AgentError(f"Differencing response file not found: {response_path}")
+
+    content = response_file.read_text(encoding="utf-8")
+    if not content.strip():
+        raise AgentError(f"Differencing response file is empty: {response_path}")
 
     try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise AgentError(f"Failed to read differencing response file: {exc}")
-
-    if not raw.strip():
-        raise AgentError(
-            f"Differencing response file is empty: {response_file_path}"
-        )
-
-    try:
-        data = json.loads(raw)
+        data = json.loads(content)
     except json.JSONDecodeError as exc:
         raise AgentError(
-            f"Malformed JSON in differencing response file {response_file_path}: {exc}"
-        )
+            f"Malformed JSON in differencing response file {response_path}: {exc}"
+        ) from exc
 
-    try:
-        return DifferencingResponse(**data)
-    except Exception as exc:
-        raise AgentError(
-            f"Invalid differencing response structure in {response_file_path}: {exc}"
-        )
+    return DifferencingResponse(**data)

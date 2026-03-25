@@ -30,109 +30,154 @@ The SQLite database lives at `.intentc/state/{output_dir}/intentc.db`. This para
 
 ## Schema
 
-All tables use snake_case. `?` denotes nullable. `PK` = primary key, `FK→table` = foreign key reference. `json` columns store JSON-encoded text.
+The database contains 9 tables. All tables use snake_case naming. These definitions are the contract — a database created today must be readable by future builds. Use `CREATE TABLE IF NOT EXISTS` so existing databases are not destroyed on upgrade.
 
 ### intent_file_versions
-- id: integer PK autoincrement
-- name: text not null
-- source_path: text not null
-- content_hash: text not null
-- created_at: datetime not null
 
-Tracks each unique version of an intent file by its content hash (SHA-256 of file bytes). A new row is inserted when the hash changes. No file content is stored — git is the source of truth. The `content_hash` enables the build system to detect when a file has changed without comparing timestamps.
+Tracks each unique version of an intent file by content hash. No file content stored — git is the source of truth.
 
-Unique constraint on `(name, content_hash)`.
+```sql
+intent_file_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    source_path   TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE(name, content_hash)
+)
+```
 
 ### validation_file_versions
-- id: integer PK autoincrement
-- target: text not null
-- source_path: text not null
-- content_hash: text not null
-- created_at: datetime not null
 
-Same versioning approach as intent files — one row per unique content hash. No file content stored.
+Same versioning approach for validation files.
 
-Unique constraint on `(target, source_path, content_hash)`.
+```sql
+validation_file_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    target        TEXT NOT NULL,
+    source_path   TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE(target, source_path, content_hash)
+)
+```
 
 ### generations
-- id: text PK (UUID)
-- created_at: datetime not null
-- output_dir: text not null
-- profile_name: text?
-- options_json: json?
-- status: text not null (running, completed, failed)
 
-A generation represents a single `build()` invocation. All targets built in one call share the same generation ID. `options_json` is a snapshot of the `BuildOptions` used.
+A generation represents a single `build()` invocation. All targets built in one call share the same generation ID.
+
+```sql
+generations (
+    generation_id  TEXT PRIMARY KEY,
+    output_dir     TEXT NOT NULL,
+    profile_name   TEXT,
+    options_json   TEXT,
+    status         TEXT NOT NULL DEFAULT 'running',
+    started_at     TEXT NOT NULL,
+    completed_at   TEXT
+)
+```
 
 ### generation_logs
-- id: integer PK autoincrement
-- generation_id: text not null FK->generations
-- message: text not null
-- timestamp: datetime not null
 
-Append-only log at the generation level. Captures cross-target events: build plan, ordering decisions, early termination, summary. One row per meaningful event (not per line of output — see `build_steps.log` for verbose phase output).
+Append-only log of cross-target events per generation.
+
+```sql
+generation_logs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_id  TEXT NOT NULL REFERENCES generations(generation_id),
+    message        TEXT NOT NULL,
+    logged_at      TEXT NOT NULL
+)
+```
 
 ### build_results
-- id: integer PK autoincrement
-- generation_id: text not null FK->generations
-- target: text not null
-- intent_file_version_id: integer? FK->intent_file_versions
-- status: text not null (pending, built, failed, outdated)
-- commit_id: text?
-- total_duration_secs: real not null
-- timestamp: datetime not null
-- git_diff: text?
-- files_created_json: json?
-- files_modified_json: json?
 
-One row per target per build. `git_diff` captures the full diff output from the checkpoint. `files_created_json` and `files_modified_json` are JSON arrays of relative paths from the `BuildResponse`.
+One row per target per build. Links to generation and intent file version. `files_created` and `files_modified` are JSON arrays.
+
+```sql
+build_results (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    target             TEXT NOT NULL,
+    generation_id      TEXT,
+    intent_version_id  INTEGER REFERENCES intent_file_versions(id),
+    status             TEXT NOT NULL,
+    commit_id          TEXT NOT NULL DEFAULT '',
+    total_duration_secs REAL NOT NULL DEFAULT 0.0,
+    timestamp          TEXT NOT NULL,
+    git_diff           TEXT,
+    files_created      TEXT,
+    files_modified     TEXT
+)
+```
 
 ### build_steps
-- id: integer PK autoincrement
-- build_result_id: integer not null FK->build_results
-- phase: text not null
-- status: text not null (success, failure)
-- duration_secs: real not null
-- summary: text not null
-- log: text?
-- step_order: integer not null
 
-One row per phase (resolve_deps, build, validate, checkpoint) per build result. `log` is the full captured output for this phase — agent streaming output, validation runner output, error traces — as a single text blob. `step_order` preserves execution ordering.
+One row per phase (resolve_deps, build, validate, checkpoint) per build result.
+
+```sql
+build_steps (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id  INTEGER NOT NULL REFERENCES build_results(id),
+    step_order       INTEGER NOT NULL,
+    phase            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    duration_secs    REAL NOT NULL DEFAULT 0.0,
+    summary          TEXT NOT NULL DEFAULT '',
+    log              TEXT NOT NULL DEFAULT ''
+)
+```
 
 ### validation_results
-- id: integer PK autoincrement
-- build_result_id: integer? FK->build_results
-- generation_id: text not null FK->generations
-- target: text not null
-- validation_file_version_id: integer? FK->validation_file_versions
-- validation_name: text not null
-- validation_type: text not null
-- severity: text not null (error, warning)
-- status: text not null (pass, fail)
-- reason: text not null
-- duration_secs: real?
-- timestamp: datetime not null
 
-Every validation execution is recorded. `build_result_id` is null for standalone validation runs (not triggered by a build). Links to the specific validation file version used.
+Every validation execution is recorded. Links to build_result (null for standalone runs) and generation.
+
+```sql
+validation_results (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id             INTEGER REFERENCES build_results(id),
+    generation_id               TEXT NOT NULL REFERENCES generations(generation_id),
+    target                      TEXT NOT NULL,
+    validation_file_version_id  INTEGER REFERENCES validation_file_versions(id),
+    name                        TEXT NOT NULL,
+    type                        TEXT NOT NULL,
+    severity                    TEXT NOT NULL,
+    status                      TEXT NOT NULL,
+    reason                      TEXT NOT NULL DEFAULT '',
+    duration_secs               REAL,
+    timestamp                   TEXT NOT NULL
+)
+```
 
 ### agent_responses
-- id: integer PK autoincrement
-- build_result_id: integer? FK->build_results
-- validation_result_id: integer? FK->validation_results
-- response_type: text not null (build, validation)
-- response_json: json not null
-- created_at: datetime not null
 
-Raw agent JSON responses stored for audit and debugging. Exactly one of `build_result_id` or `validation_result_id` is non-null. The response file on disk is deleted after the JSON is stored here.
+Raw agent JSON responses stored for audit and debugging. Links to either a build_result or validation_result (exactly one non-null).
+
+```sql
+agent_responses (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_result_id       INTEGER REFERENCES build_results(id),
+    validation_result_id  INTEGER REFERENCES validation_results(id),
+    response_type         TEXT NOT NULL,
+    response_json         TEXT NOT NULL,
+    stored_at             TEXT NOT NULL
+)
+```
 
 ### target_state
-- target: text not null
-- output_dir: text not null
-- status: text not null (pending, built, failed, outdated)
-- last_build_result_id: integer? FK->build_results
-- updated_at: datetime not null
 
-Composite PK: `(target, output_dir)`. This is the only mutable table — it tracks the current status of each target. Replaces `state.json`. `last_build_result_id` points to the most recent build result for quick lookup.
+The only mutable table. Tracks current status of each target per output directory.
+
+```sql
+target_state (
+    target               TEXT NOT NULL,
+    output_dir           TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    last_build_result_id INTEGER REFERENCES build_results(id),
+    updated_at           TEXT NOT NULL,
+    PRIMARY KEY (target, output_dir)
+)
+```
 
 ## GenerationStatus
 

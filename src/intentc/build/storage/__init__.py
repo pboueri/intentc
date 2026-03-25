@@ -1,4 +1,19 @@
-from intentc.build.storage.backend import GenerationStatus, StorageBackend
-from intentc.build.storage.sqlite import SQLiteBackend
+"""Storage sub-package: persistent build state backed by pluggable databases."""
 
-__all__ = ["GenerationStatus", "SQLiteBackend", "StorageBackend"]
+from intentc.build.storage.backend import (
+    BuildResult,
+    BuildStep,
+    GenerationStatus,
+    StorageBackend,
+    TargetStatus,
+)
+from intentc.build.storage.sqlite_backend import SQLiteBackend
+
+__all__ = [
+    "BuildResult",
+    "BuildStep",
+    "GenerationStatus",
+    "SQLiteBackend",
+    "StorageBackend",
+    "TargetStatus",
+]

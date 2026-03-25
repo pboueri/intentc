@@ -56,7 +56,7 @@ Plan is the exception to permissionless execution. When the agent supports it, P
 
 The system needs structured data back from agents after builds and validations. Since agents are CLI tools that may not support structured output natively, the canonical mechanism is a **response file**: a known path the system provides to the agent via the BuildContext and the prompt template. The agent writes structured JSON to this path before exiting. The system reads the file after the agent process terminates.
 
-If the response file is missing or contains invalid JSON, the invocation is treated as a failure with a generic error message.
+If the response file contains invalid JSON, the invocation is treated as a failure with a generic error message. 
 
 For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
 
@@ -125,6 +125,7 @@ Type BuildContext:
     project_intent: ProjectIntent                  # project-level intent
     implementation: Implementation or null          # implementation.ic content, optional
     response_file_path: string                     # where to write the structured response
+    previous_errors: list of string                # errors from prior attempts in this retry cycle, default empty
 ```
 
 ## CLIAgent
@@ -133,32 +134,33 @@ Generic base that wraps any command-line tool. Constructs a prompt from BuildCon
 
 ## ClaudeAgent
 
-Specialization for Claude Code. The non-interactive command is built as:
-```
-cmd = ["claude", "-p", prompt, "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"]
-if profile.model_id is set:
-    append "--model" and profile.model_id to cmd
-append all profile.cli_args to cmd
-```
+Specialization for Claude Code. Non-interactive invocations use the `claude` CLI with `-p` (prompt), `--verbose`, `--output-format stream-json`, and `--dangerously-skip-permissions`. If `profile.model_id` is set, `--model` is also passed. All `profile.cli_args` are appended.
 
 When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
+### Logging
+
+All agents accept an optional `log` callback (`Callable[[str], None]`) passed through the constructor. This callback is the single channel for all agent output — agents must never write directly to stdout or stderr. The builder threads its own `log` function through `create_from_profile` so that agent messages appear with the same timestamp and context formatting as builder messages. Agent log messages should be indented (e.g., `"    agent: starting claude"`, `"    agent: <text>"`) to visually nest under the builder's step output.
+
 ### Streaming Output
 
-ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The non-interactive command flags are: `-p`, `--verbose`, `--output-format`, `stream-json`, `--dangerously-skip-permissions`, and optionally `--model`. The subprocess is launched and stdout is read line-by-line. Each line is a JSON event. Relevant events (assistant text, content deltas) are printed to stderr as they arrive so the user can follow what the agent is doing without interfering with structured response handling. The response file mechanism remains unchanged.
+ClaudeAgent uses `--output-format stream-json` so that Claude's progress is visible in real-time during builds and validations. The subprocess stdout is read line-by-line as JSON events. Claude Code's stderr is discarded (`subprocess.DEVNULL`) to avoid pipe buffer deadlocks. The response file mechanism remains unchanged.
 
-For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode:
+The `stream-json` format emits one JSON object per line. The relevant event types are:
+
 ```
-cmd = ["claude"]
-if profile.model_id is set:
-    append "--model" and profile.model_id to cmd
-append all profile.cli_args to cmd
-append prompt as last positional argument to cmd
+{"type": "system", "subtype": "init", ...}          # session initialization metadata
+{"type": "assistant", "message": {"content": [...]}} # assistant turn with content blocks
+{"type": "result", "result": "...", ...}             # final result summary
 ```
 
-## create_from_profile(profile: AgentProfile) -> Agent
+To extract assistant text, parse events where `event.type == "assistant"`, then iterate over `event.message.content` (NOT `event.content`). Content blocks with `block.type == "text"` contain the assistant's text in `block.text`. Forward these through the `log` callback. Skip events that fail JSON parsing (non-JSON debug lines may appear).
 
-Factory function. Reads the profile's `provider` field and returns the appropriate agent:
+For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode, passing `--model` if set, all `cli_args`, and the prompt as a positional argument.
+
+## create_from_profile(profile: AgentProfile, log: LogFn | None = None) -> Agent
+
+Factory function. Reads the profile's `provider` field and returns the appropriate agent, passing the `log` callback through:
 - `"claude"` -> ClaudeAgent
 - `"cli"` -> CLIAgent with the profile's command
 - Unknown provider -> error
@@ -189,11 +191,10 @@ Type AgentProfile:
 
 ## Module Layout
 
-This feature generates two locations:
+This feature generates:
 
-1. The canonical agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
+1. The agent module within the main package. All other modules (builder, validations, CLI, differencing) import from here. Contains ALL types (responses, contexts, profile, prompt templates), the Agent interface, all implementations (CLIAgent, ClaudeAgent, MockAgent), factory function, and helpers.
 2. Tests for the agent module.
-3. **`agent/`** — A standalone copy of the agent module for use outside the main package. This is a mirror/copy of the canonical agent module implementation. **The standalone copy MUST have the same defaults** (e.g., `timeout=3600.0`).
 
 ## PromptTemplates
 
@@ -216,17 +217,15 @@ Type PromptTemplates:
 
 ### Prompt Path Resolution
 
-Prompt template files are resolved relative to the current working directory joined with "intent" — NOT relative to the module's own file location. This is because intentc is always invoked from the project root where `intent/` lives. The helper functions are:
+Prompt template files are **bundled with the installed package** and loaded via `importlib.resources`. This ensures prompts are available regardless of which directory `intentc` is invoked from (self-compilation or external projects).
 
-```
-function prompts_dir() -> path:
-    return current_working_directory / "intent" / "build" / "agents" / "prompts"
+The prompt files are stored in the package at:
+- Build/validate/plan/init prompts: `intentc/build/agents/prompts/`
+- Differencing prompts: `intentc/differencing/prompts/`
 
-function diff_prompts_dir() -> path:
-    return current_working_directory / "intent" / "differencing" / "prompts"
-```
+`load_default_prompts()` uses `importlib.resources.files()` to locate the prompt files within the installed package. If a prompt file does not exist, the corresponding template field remains empty (no error raised).
 
-`load_default_prompts()` uses these helpers. If a prompt file does not exist at the resolved path, the corresponding template field remains empty (no error raised).
+The canonical source for prompt templates is `intent/build/agents/prompts/` and `intent/differencing/prompts/` in the intentc repository. During a build, these are copied into the package source tree so they are included in the installed package.
 
 Templates reference variables from BuildContext or DifferencingContext:
 - `{project}` — the project-level intent
@@ -237,3 +236,4 @@ Templates reference variables from BuildContext or DifferencingContext:
 - `{output_dir_a}` — reference output directory (difference)
 - `{output_dir_b}` — candidate output directory (difference)
 - `{response_file}` — path to the response file the agent must write to
+- `{previous_errors}` — errors from prior build/validation attempts in this retry cycle (empty on first attempt, bulleted list on retries)
