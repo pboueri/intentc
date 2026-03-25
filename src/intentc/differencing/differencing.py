@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -11,9 +12,33 @@ from intentc.build.agents import (
     AgentProfile,
     DifferencingContext,
     DifferencingResponse,
+    PromptTemplates,
     create_from_profile,
+    load_default_prompts,
 )
 from intentc.core.project import Project
+
+
+def load_differencing_prompt(intent_dir: Path) -> str:
+    """Load the differencing prompt template from the intent directory.
+
+    Resolves the prompt file relative to the intent directory's
+    differencing/prompts/ folder.  Falls back to the bundled package
+    default when the file does not exist on disk.
+
+    Args:
+        intent_dir: Root intent directory (e.g. ``<project>/intent``).
+
+    Returns:
+        The prompt template string.
+    """
+    prompt_path = intent_dir / "differencing" / "prompts" / "difference.prompt"
+    if prompt_path.is_file():
+        return prompt_path.read_text(encoding="utf-8")
+
+    # Fallback: bundled package default
+    defaults = load_default_prompts()
+    return defaults.difference
 
 
 def run_differencing(
@@ -40,9 +65,14 @@ def run_differencing(
     """
     impl = project.resolve_implementation(implementation)
 
+    # Load the differencing prompt from the intent directory
+    prompt_text = load_differencing_prompt(project.intent_dir)
+    templates = profile.prompt_templates or load_default_prompts()
+    templates = templates.model_copy(update={"difference": prompt_text})
+    profile = profile.model_copy(update={"prompt_templates": templates})
+
     # Create a temporary response file (not auto-deleted)
     fd, response_path = tempfile.mkstemp(suffix=".json", prefix="diff-response-")
-    import os
     os.close(fd)
 
     ctx = DifferencingContext(
