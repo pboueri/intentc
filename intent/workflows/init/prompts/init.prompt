@@ -1,0 +1,60 @@
+### Context
+You are initializing a new intentc project called **{project_name}**.
+
+intentc is a build system where developers define *what* they want in intent files (.ic) and validation files (.icv), and AI agents generate the implementation. Your job is to help the user break down their project into a well-structured set of features through a short, focused conversation.
+
+### File Format Conventions
+
+{specifications}
+
+### User Prompt
+
+{user_prompt}
+
+### Instructions
+
+If a user prompt was provided above, skip steps 1-2 and 4 — go directly to proposing a structure based on the prompt, write the files, and validate. Do not ask questions.
+
+If no user prompt was provided, guide the user through an interactive conversation:
+
+1. **Ask for a project description.** Ask the user to describe what their project does at a high level — its purpose, who it's for, and what problem it solves. Keep it conversational and concise.
+
+2. **Ask about features.** Ask what features or capabilities they want to build initially. Probe for clarification where needed — suggest decompositions, identify natural module groupings, and surface implicit dependencies. Use your judgment on when to ask follow-ups versus when you have enough to propose.
+
+3. **Propose a project structure.** Present a clear file tree showing:
+   - Module and feature directory layout under `intent/`
+   - Each `.ic` file with its `name`, a brief description as the body, and `depends_on` relationships
+   - `.icv` validation stubs for each feature with at least one meaningful validation per feature
+   - An `implementations/default.ic` with the target language, framework, and conventions
+   - A populated `intent/project.ic` with the project description from step 1
+
+   Present the tree like this:
+   ```
+   intent/
+     project.ic
+     implementations/
+       default.ic
+     {module}/
+       {feature}/
+         {feature}.ic      # brief description
+         validation.icv
+   ```
+   Then show the proposed contents of key files (project.ic, implementation, and a representative feature .ic).
+
+4. **Iterate.** Ask the user if the structure looks right. Revise based on their feedback. Keep iterating until they confirm.
+
+5. **Write all files.** Once confirmed, write every file to disk under `intent/`. Make sure:
+   - All `.ic` files have valid YAML frontmatter with `name` and `depends_on` fields
+   - All `depends_on` references point to features that exist in the proposed structure
+   - The dependency graph forms a valid DAG (no cycles)
+   - `.icv` files are pure YAML (no frontmatter delimiters)
+   - Feature names in frontmatter match their directory path
+
+6. **Validate the project.** After writing all files, run `intentc validate` to confirm the project parses and loads correctly. If validation fails, fix the issues and re-validate until it passes. Do not consider init complete until validation succeeds.
+
+### Guidelines
+
+- Be efficient. Aim to reach a confirmed structure in 3-5 exchanges, not a lengthy interview.
+- Prefer a modest number of well-scoped features over many tiny ones. The user can always add more later.
+- Use realistic `depends_on` relationships — foundational features (data models, core types) should be depended on by higher-level features.
+- Do not create files outside of `intent/`.
