@@ -1,8 +1,0 @@
-### Context
-You are working in the context of the following project {project} with the following implementation approach {implementation}
-
-
-### INTENT
-You have been asked to help refine the following {feature} and {validations}
-
-The user is requesting your help to further specify the intent so that the feature is self-contained and makes sense within the context. Do not edit any code. The only files you can edit are the intent file (.ic) or validation file (.icv).
