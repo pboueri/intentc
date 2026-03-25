@@ -158,10 +158,12 @@ Enter interactive planning mode with the agent for a specific feature.
 
 Show the build state for all tracked targets.
 
-1. Load config.
-2. Construct a `StateManager` for the output directory.
-3. Call `list_targets()` and display a table with columns: target, status, last build timestamp, generation ID.
-4. If `--outdated` is passed, also run `builder.detect_outdated()` and annotate stale targets.
+1. Load the project via `_load_project_or_exit()`.
+2. Load config and construct a `StateManager` for the output directory.
+3. Call `list_targets()` to get targets with build state from the database.
+4. **Merge with project features:** combine the database targets with all features from `project.features`. Features that exist in the project graph but have no build state yet are shown as `PENDING`. The merged list is sorted by target name.
+5. Display a table with columns: target, status, last build timestamp, generation ID.
+6. If `--outdated` is passed, also run `builder.detect_outdated()` and annotate stale targets.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.

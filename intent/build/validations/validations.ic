@@ -77,7 +77,7 @@ class ValidationSuite:
 - `output_dir` — the output directory
 - `runner_registry` — optional map of custom runners (merged with defaults)
 - `val_response_dir` — optional directory for writing temporary validation response files. If null, response files are written under the output directory.
-- `storage_backend` — optional storage backend for persisting validation results and agent responses. When provided, each `ValidationResponse` is saved via `backend.save_validation_result(...)` and the raw agent response JSON is saved via `backend.save_agent_response(...)` after the response file is read. The response file is then deleted.
+- `storage_backend` — optional storage backend for persisting validation results and agent responses. When provided, each `ValidationResponse` is saved via `backend.save_validation_result(...)` and the raw agent response JSON is saved via `backend.save_agent_response(...)` after the response file is read. The response file is then deleted. **Important:** Before saving a validation result, a `generations` row must be created via `backend.create_generation(generation_id, output_dir)` because the `validation_results` table has a foreign key constraint on `generation_id` referencing the `generations` table.
 
 The suite receives an AgentProfile (the default validation profile, typically a lighter/faster model than the build profile). It passes this to `AgentValidationRunner`, which creates agents on demand per validation call, merging any per-validation `agent_profile` override.
 

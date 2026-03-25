@@ -209,6 +209,15 @@ case "${choice}" in
             git -C "${REPO_ROOT}" commit -m "remove generated src before re-applying build patches"
         fi
         echo ""
+        echo "--- Copying state database to repo root ---"
+        if [[ -d "${WORKTREE_DIR}/.intentc/state" ]]; then
+            mkdir -p "${REPO_ROOT}/.intentc/state"
+            cp -R "${WORKTREE_DIR}/.intentc/state/." "${REPO_ROOT}/.intentc/state/"
+            echo "State database copied to ${REPO_ROOT}/.intentc/state/"
+        else
+            echo "No state database found in worktree (skipping)."
+        fi
+        echo ""
         echo "--- Applying patches to ${CURRENT_BRANCH} ---"
         git -C "${REPO_ROOT}" am "${PATCH_DIR}"/*.patch
         echo ""
