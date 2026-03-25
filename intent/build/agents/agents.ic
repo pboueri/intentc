@@ -56,7 +56,7 @@ Plan is the exception to permissionless execution. When the agent supports it, P
 
 The system needs structured data back from agents after builds and validations. Since agents are CLI tools that may not support structured output natively, the canonical mechanism is a **response file**: a known path the system provides to the agent via the BuildContext and the prompt template. The agent writes structured JSON to this path before exiting. The system reads the file after the agent process terminates.
 
-If the response file contains invalid JSON, the invocation is treated as a failure with a generic error message. For **build** invocations specifically, if the response file is missing but the agent exited successfully (exit code 0), the ClaudeAgent synthesizes a success response by scanning the output directory for all files. This handles the common case where Claude Code completes the work but doesn't write the response file. For validate and difference invocations, a missing response file is still treated as a failure.
+If the response file contains invalid JSON, the invocation is treated as a failure with a generic error message. 
 
 For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
 
