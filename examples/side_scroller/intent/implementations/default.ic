@@ -1,0 +1,35 @@
+---
+name: default
+---
+
+# Default Implementation
+
+## Technology Stack
+
+- **Language:** JavaScript (ES modules)
+- **Rendering:** HTML5 Canvas 2D API — all geometry rendered procedurally, no sprite sheets or image assets
+- **Build:** Vite for dev server and production bundling
+- **Package manager:** npm
+- **Testing:** Vitest for unit tests
+- **No external game frameworks** — the game engine is built from scratch using Canvas 2D to keep the project lightweight and educational
+
+## Architecture
+
+- Game loop using `requestAnimationFrame` with fixed-timestep physics updates
+- Entity-component pattern: game objects (player, enemies, platforms, hazards) share common interfaces for update/render/collision
+- Collision detection via axis-aligned bounding boxes (AABB) with shape-specific refinement (triangle point-in-polygon, circle radius checks)
+- Level data defined as JavaScript modules exporting platform/enemy/hazard configurations
+- Single HTML entry point with a full-viewport `<canvas>` element
+
+## Project Structure
+
+```
+src/
+  index.html
+  main.js            # Entry point, initializes canvas and game
+  engine/            # Core engine: game loop, input, physics, rendering
+  entities/          # Player, enemies, hazards, platforms
+  levels/            # Level definitions and level manager
+  ui/                # HUD, menus, screens
+  utils/             # Math helpers, collision detection
+```

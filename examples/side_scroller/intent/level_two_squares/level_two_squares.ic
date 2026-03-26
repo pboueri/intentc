@@ -1,0 +1,46 @@
+---
+name: level_two_squares
+depends_on:
+  - player
+  - level_system
+tags:
+  - level
+  - gameplay
+---
+
+# Level Two — Squares
+
+The second level shifts to a rigid, mechanical feel built entirely from squares and rectangles. The mood is industrial and precise — everything snaps to grids, moves on rails, and operates with clockwork timing. The contrast with Level One's angular momentum is deliberate.
+
+## Platforms
+
+- Platforms are rectangles and squares, some static, some moving.
+- **Sliding blocks:** Platforms that move horizontally or vertically on fixed rails, like pistons. The player must time jumps to ride them.
+- **Stacking blocks:** Some blocks stack and unstack dynamically, creating temporary staircases that collapse after a few seconds.
+- **Breakable walls:** Certain square walls can be destroyed by the star's spin/dash attack, revealing hidden passages or shortcuts.
+
+## Enemies
+
+- **Sentry blocks:** Square enemies that patrol in rigid grid patterns — moving in straight horizontal or vertical lines, pausing at corners, then turning 90 degrees. Predictable but positioned in tight corridors.
+- **Turret blocks:** Stationary square enemies that fire small square projectiles at regular intervals in cardinal directions.
+- The star's spin/dash attack shatters square enemies into pixel-like square fragment particles.
+
+## Hazards
+
+- **Crushers:** Large blocks that slam downward (or together from both sides) on a timed cycle. The player must observe the rhythm and pass through during the safe window.
+- **Piston corridors:** Narrow passages where blocks extend from the walls in alternating patterns, requiring careful timing to navigate.
+- **Falling blocks:** Blocks that crumble and fall a few seconds after the player steps on them, with a visible crack/shake warning.
+
+## Atmosphere
+
+- Color palette: deep blues, grays, and orange accents on a dark background.
+- Background: faint grid lines and drifting square shapes that densify as the timer counts down.
+- Particle effects on enemy death: square pixel fragments that scatter.
+- Music/sound feel: mechanical, rhythmic, industrial tones.
+
+## Layout
+
+- ~60 seconds of horizontal scrolling gameplay.
+- More vertical platforming than Level One — tall shafts with moving platforms, crusher gauntlets.
+- A checkpoint at roughly the halfway point.
+- The level ends at the right edge with a transition to Level Three.

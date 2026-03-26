@@ -1,0 +1,48 @@
+---
+name: level_one_triangles
+depends_on:
+  - player
+  - level_system
+tags:
+  - level
+  - gameplay
+---
+
+# Level One — Triangles
+
+The first level introduces the player to the game through triangle-themed geometry. The mood is sharp, angular, and momentum-driven. Everything in this level — platforms, enemies, hazards, and particles — is built from triangles.
+
+## Platforms
+
+- Platforms are triangles in various orientations:
+  - **Flat-side-up triangles** are safe to stand on.
+  - **Point-side-up triangles** act as spikes — landing on them damages the player.
+  - The player must quickly read triangle orientation to decide where to land.
+- Ramp surfaces: triangles naturally create slopes. The player slides down steep faces and builds momentum running up shallow ramps.
+- Some platforms rotate slowly, cycling between safe and dangerous orientations.
+
+## Enemies
+
+- **Dart enemies:** Triangles that spin and launch toward the star like arrows. They travel in straight lines and embed in surfaces.
+- **Patrol triangles:** Small triangles that slide back and forth along platform edges, reversing at the end.
+- The star's spin/dash attack slices through triangle enemies, splitting them into smaller triangle shard particles.
+
+## Hazards
+
+- **Saw blades:** Circular arrangements of interlocking triangles that rotate rapidly. They are placed in gaps the player must jump over or time their way past.
+- **Spike pits:** Rows of point-up triangles at the bottom of gaps. Falling in means damage and a reset to the nearest safe platform.
+- **Falling spikes:** Point-down triangles that drop from the ceiling when the player passes underneath, with a brief visual warning (a shake or flash).
+
+## Atmosphere
+
+- Color palette: sharp greens, teals, and whites on a dark background.
+- Background: faint drifting triangles that intensify as the timer counts down.
+- Particle effects on enemy death: triangle shards that scatter and fade.
+- Music/sound feel: sharp, staccato rhythms.
+
+## Layout
+
+- ~60 seconds of horizontal scrolling gameplay.
+- Difficulty ramps gently — early platforms are large and stable, later ones are smaller and rotating.
+- A checkpoint at roughly the halfway point.
+- The level ends at the right edge with a transition to Level Two.

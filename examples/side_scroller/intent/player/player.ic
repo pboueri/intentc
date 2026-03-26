@@ -1,0 +1,46 @@
+---
+name: player
+depends_on:
+  - game_engine
+tags:
+  - gameplay
+---
+
+# Player — The Star
+
+The player character is a five-pointed star. It is the primary actor in the game and the only entity the player directly controls.
+
+## Appearance
+
+- Rendered as a five-pointed star using Canvas path drawing.
+- Glows subtly (outer stroke or shadow) to distinguish it from the geometric environment.
+- Rotates slightly when airborne; stays upright when grounded.
+- Flashes or becomes translucent during invincibility frames after taking damage.
+
+## Movement
+
+- Horizontal movement: left/right with acceleration and deceleration (not instant max speed).
+- Jump: variable-height jump — holding the jump button longer produces a higher jump, releasing early cuts upward velocity.
+- Air control: the player can adjust horizontal direction mid-air, but with reduced acceleration compared to ground movement.
+- Wall slide: the star slides slowly down walls and can wall-jump off them.
+
+## Spin/Dash Attack
+
+- Activated with shift or Z. The star spins rapidly and dashes forward a short distance.
+- Brief cooldown between uses (visual indicator shows when ready).
+- Shape-specific interactions:
+  - **Triangles:** Slices through triangle enemies, splitting them into smaller triangle shards (particle effect).
+  - **Squares:** Shatters square enemies and breakable walls into pixel-like square fragments.
+  - **Circles:** Pops circular enemies and bubble shields, releasing circular spark particles.
+
+## Health & Lives
+
+- The star has 3 hit points per life and 3 lives.
+- Taking damage triggers invincibility frames (~1.5 seconds) where the star flashes and cannot be hit.
+- Falling off the bottom of the screen is instant death (lose a life, respawn at last checkpoint or level start).
+- Losing all lives triggers game over.
+
+## Respawn
+
+- On death, the star respawns at the start of the current level (or a mid-level checkpoint if one has been passed).
+- Brief respawn animation: the star materializes from spinning particles.

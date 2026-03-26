@@ -1,0 +1,49 @@
+---
+name: game_engine
+tags:
+  - core
+---
+
+# Game Engine
+
+The foundational layer that everything else builds on. Provides the game loop, rendering pipeline, input handling, physics, and collision detection.
+
+## Game Loop
+
+- Uses `requestAnimationFrame` with a fixed-timestep accumulator for physics (e.g., 60 updates/sec) and variable rendering.
+- Exposes hooks for update (game logic) and render (drawing) phases.
+- Supports pause/resume.
+
+## Rendering
+
+- Manages a full-viewport HTML5 `<canvas>` element that resizes with the browser window.
+- Provides drawing primitives for geometric shapes: triangles, squares/rectangles, circles, stars, and arbitrary polygons.
+- Supports transformations (translate, rotate, scale) for spinning and morphing geometry.
+- Camera system that scrolls horizontally to follow the player, with vertical tracking for jumps.
+
+## Input
+
+- Keyboard input: arrow keys / WASD for movement, spacebar for jump, shift or Z for spin/dash attack.
+- Tracks key-down and key-up states so held keys produce continuous movement.
+- Touch input support for mobile browsers (virtual d-pad and action buttons).
+
+## Physics
+
+- Gravity applied to entities each update tick.
+- Velocity-based movement with configurable friction and acceleration.
+- Ground detection and slope handling (important for triangle level ramps).
+
+## Collision Detection
+
+- Broad phase: axis-aligned bounding box (AABB) overlap checks.
+- Narrow phase: shape-specific collision refinement:
+  - Point-in-triangle for triangular platforms and hazards.
+  - AABB for square/rectangular geometry.
+  - Circle-radius intersection for circular geometry.
+- Collision response: blocking (platforms), damage (hazards/enemies), and trigger (level transitions, pickups).
+
+## Particle System
+
+- A lightweight particle emitter that spawns short-lived particles on events (enemy death, player dash, hazard activation).
+- Particle shape is configurable per level — triangle shards, square pixels, or circular sparks.
+- Particles have velocity, gravity, fade-out, and rotation.
