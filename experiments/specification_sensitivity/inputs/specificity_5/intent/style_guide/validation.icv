@@ -1,0 +1,56 @@
+target: style_guide
+validations:
+  - name: palette_consistency
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that every hex color value used in the renderer, UI, and HUD drawing code
+        matches a value defined in the style guide palette. No hard-coded hex values should
+        appear in rendering code that are not present in the palette. Check at least:
+        grass fill, path fill, water fill, HUD background, sidebar background, button colors,
+        and health/happiness status bar colors. Each must trace back to a palette constant.
+
+  - name: font_sizes_minimum
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that no text rendered on the canvas uses a font size smaller than 12px.
+        The minimum readable size is 12px for tooltip body text. HUD text must be 16px.
+        Menu title text must be at least 32px. Check every ctx.font assignment in the
+        codebase and confirm it meets the minimum for its category as specified in the
+        style guide FONTS object.
+
+  - name: tile_size_constant
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that all tile-to-pixel and pixel-to-tile conversions use the TILE_SIZE
+        constant (32) from constants.js, never a hard-coded literal 32. Search for
+        multiplications and divisions by 32 in map.js, renderer.js, input.js, and
+        visitors.js. Every instance should reference TILE_SIZE instead.
+
+  - name: animation_timing
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify that animal idle animation uses a 2-frame cycle at 500ms per frame (1s total)
+        and visitor walk animation uses a 4-frame cycle at 200ms per frame (800ms total).
+        Check the frame calculation logic in the renderer. The formulas should be:
+        animalFrame = floor((tick % 1000) / 500) yielding 0 or 1, and
+        visitorFrame = floor((tick % 800) / 200) yielding 0, 1, 2, or 3.
+
+  - name: layer_ordering
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the renderer draws layers in the correct back-to-front order:
+        1) ground tiles, 2) enclosure fills, 3) enclosure borders, 4) path tiles,
+        5) animals (y-sorted), 6) visitors (y-sorted), 7) build ghost overlay,
+        8) UI overlays (HUD, sidebar, info bar, tooltips, toasts), 9) mini-map.
+        Each layer's draw calls must complete before the next layer begins. No
+        interleaving of entity types across layers.

@@ -1,0 +1,82 @@
+---
+name: animals
+depends_on:
+  - enclosures
+tags: [gameplay]
+---
+
+# Animals
+
+Animals are the core attraction of the zoo and the metric the player is trying to maximize. There are ten purchasable species, each with unique traits, costs, and biome requirements. Animals are purchased from the shop with in-game currency and assigned to a compatible enclosure. Once placed, animals have ongoing needs — they get hungry, their happiness fluctuates based on conditions, and their health declines if needs are neglected for too long.
+
+The breeding system is the primary growth engine. When two or more animals of the same species share an enclosure and both have happiness above 80, there is a small chance each tick that a new baby animal spawns in the same enclosure. This is the most cost-efficient way to increase the animal count because babies are free — no purchase cost, only the ongoing food expense. The player is incentivized to keep animals happy and well-housed to maximize breeding rates.
+
+Animals can die. If an animal's health reaches zero — which happens after prolonged starvation when hunger maxes out and happiness bottoms out — it is removed from the game. Death reduces the animal count and the zoo's appeal. The player must balance expansion (buying new animals) with care (keeping existing ones fed and happy) to avoid a death spiral where declining appeal reduces revenue, which reduces the ability to feed animals.
+
+## Data Structures
+
+```js
+// Species registry — static data for each species
+const SPECIES = {
+  lion:        { name: "Lion",        biome: "savanna",  baseCost: 800,  foodCostPerTick: 0.5,  spaceRequired: 2, icon: "L" },
+  elephant:    { name: "Elephant",    biome: "savanna",  baseCost: 1200, foodCostPerTick: 0.8,  spaceRequired: 3, icon: "E" },
+  penguin:     { name: "Penguin",     biome: "arctic",   baseCost: 500,  foodCostPerTick: 0.3,  spaceRequired: 1, icon: "P" },
+  monkey:      { name: "Monkey",      biome: "forest",   baseCost: 400,  foodCostPerTick: 0.3,  spaceRequired: 1, icon: "M" },
+  giraffe:     { name: "Giraffe",     biome: "savanna",  baseCost: 1000, foodCostPerTick: 0.6,  spaceRequired: 3, icon: "G" },
+  zebra:       { name: "Zebra",       biome: "savanna",  baseCost: 600,  foodCostPerTick: 0.4,  spaceRequired: 2, icon: "Z" },
+  polar_bear:  { name: "Polar Bear",  biome: "arctic",   baseCost: 1500, foodCostPerTick: 0.7,  spaceRequired: 3, icon: "B" },
+  dolphin:     { name: "Dolphin",     biome: "aquatic",  baseCost: 1800, foodCostPerTick: 0.6,  spaceRequired: 2, icon: "D" },
+  parrot:      { name: "Parrot",      biome: "aviary",   baseCost: 300,  foodCostPerTick: 0.2,  spaceRequired: 1, icon: "R" },
+  panda:       { name: "Panda",       biome: "forest",   baseCost: 2000, foodCostPerTick: 0.9,  spaceRequired: 2, icon: "A" },
+};
+
+// Individual animal object
+{
+  id: "animal_001",
+  type: "animal",
+  species: "lion",
+  enclosureId: "enc_003",
+  x: 5,               // tile position within enclosure (for rendering)
+  y: 8,
+  happiness: 70,       // 0–100
+  hunger: 20,          // 0–100 (0 = full, 100 = starving)
+  health: 100,         // 0–100 (0 = dead)
+  age: 0,              // ticks since creation
+  canBreed: true,      // false for babies until age > 1000 ticks
+}
+```
+
+## Key Function Signatures
+
+```js
+// Create a new animal of the given species with default stats
+function createAnimal(species) -> animal
+
+// Update a single animal for one tick: hunger, happiness, health, age
+function updateAnimal(animal, enclosure, dt) -> void
+
+// Update all animals in the state, including breeding checks
+function updateAnimals(state, dt) -> void
+
+// Check breeding conditions and spawn a baby if conditions are met
+function tryBreed(animals, enclosure, state) -> void
+
+// Remove dead animals (health <= 0) from the state
+function removeDeadAnimals(state) -> void
+
+// Get species data from the registry
+function getSpeciesData(species) -> speciesInfo
+```
+
+## Behavioral Rules
+
+- Hunger increases by 0.05 per tick. When hunger exceeds 80, happiness decreases by 0.2 per tick. When hunger reaches 100, health decreases by 0.1 per tick.
+- Happiness naturally decays by 0.02 per tick. It recovers by 0.1 per tick when hunger is below 30 and the enclosure is not overcrowded.
+- An enclosure is overcrowded when the sum of `spaceRequired` for all animals inside exceeds the enclosure's `capacity`.
+- Overcrowding reduces happiness by an additional 0.15 per tick for all animals in that enclosure.
+- Breeding check: if an enclosure has 2 or more animals of the same species, all with happiness > 80, canBreed = true, and the enclosure is not overcrowded, there is a 0.1% chance per tick per eligible pair to spawn a baby.
+- Baby animals start with happiness 90, hunger 0, health 100, age 0, and canBreed = false. They become breedable when age exceeds 1000 ticks.
+- When an animal's health reaches 0, it is removed from the animals array and from its enclosure's animal list during the `removeDeadAnimals` pass.
+- Animals cannot be moved between enclosures. To relocate, the player must sell (remove) and re-purchase.
+- Feeding is automatic and costs money each tick per the species' `foodCostPerTick`. If the zoo cannot afford food, hunger still increases but no money is deducted beyond zero.
+- Exotic species (panda, dolphin, polar_bear) are locked at game start and require the "Exotic Species" research node to be completed before they appear in the shop.

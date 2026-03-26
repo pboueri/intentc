@@ -1,0 +1,73 @@
+---
+name: game_loop
+tags: [core]
+---
+
+# Game Loop
+
+The game loop is the heartbeat of the simulation. It drives every frame of the game using `requestAnimationFrame`, accumulating elapsed time and dispatching fixed-timestep update ticks at 16ms intervals (approximately 60 ticks per second). Between update ticks the loop renders the current state to the canvas exactly once per animation frame. This separation ensures the simulation runs at a deterministic speed regardless of the browser's actual frame rate.
+
+The loop owns the top-level state object and orchestrates the call order: input is polled first, then the simulation updates, then the frame is drawn. It also manages pause and speed controls. When the game is paused, update ticks are skipped but rendering still occurs so the player can see the frozen world and interact with menus. Speed multipliers (1x, 2x, 4x) control how many ticks are processed per frame, allowing the player to fast-forward through slow periods.
+
+At startup, `createGameState()` constructs the initial state object with sensible defaults — an empty map, no animals, starting money, and an idle UI. This state object is the single source of truth for the entire game. Every subsystem reads from it and writes back to it during its update phase. There are no side channels or hidden state.
+
+## State Object Shape
+
+```js
+function createGameState() {
+  return {
+    tick: 0,
+    paused: false,
+    speed: 1,               // 1, 2, or 4
+    money: 10000,
+    admissionPrice: 10,
+    animals: [],
+    enclosures: [],
+    visitors: [],
+    map: createMap(40, 30),
+    ui: {
+      mode: "select",       // "select" | "build" | "shop"
+      selectedEntity: null,
+      selectedBiome: null,
+      hoveredTile: null,
+    },
+    research: {
+      nodes: initResearchNodes(),
+      activeResearch: null,
+    },
+    gameOver: false,
+  };
+}
+```
+
+## Key Function Signatures
+
+```js
+// Create the initial game state with all defaults
+function createGameState() -> state
+
+// Advance the simulation by one fixed timestep
+function update(state, dt) -> void
+
+// Draw the current game state to the canvas
+function render(state, ctx) -> void
+
+// Start the requestAnimationFrame loop
+function startLoop(state, ctx) -> void
+
+// Toggle pause state
+function togglePause(state) -> void
+
+// Set simulation speed multiplier (1, 2, or 4)
+function setSpeed(state, speed) -> void
+```
+
+## Behavioral Rules
+
+- The fixed timestep is 16ms. If the browser delivers a frame after 48ms, three update ticks run before one render call.
+- A maximum of 10 ticks per frame is enforced to prevent spiral-of-death when the tab is backgrounded and then refocused.
+- `update()` calls subsystem updates in this order: input processing, animals, enclosures, visitors, economy, research, UI state.
+- `render()` calls subsystem renderers in this order: map, entities (enclosures then animals then visitors), UI overlays (HUD, sidebar, info panel).
+- When `state.paused` is true, `update()` is skipped entirely but `render()` still runs.
+- When `state.gameOver` is true, the loop stops updating and renders a game-over overlay showing final stats.
+- The `tick` counter increments by 1 for each update call, regardless of speed setting. Speed is achieved by running multiple ticks per frame.

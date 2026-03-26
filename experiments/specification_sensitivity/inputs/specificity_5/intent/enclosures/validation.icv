@@ -1,0 +1,55 @@
+target: enclosures
+validations:
+  - name: biome_definitions_complete
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify all 5 biome types are defined with complete data: savanna, aquatic,
+        forest, arctic, aviary. Each must have: name, baseCost, baseCapacity,
+        maintenanceCostPerTick, defaultWidth, defaultHeight, fillColor (hex),
+        borderColor (hex). No field may be missing.
+
+  - name: degradation_formula
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify enclosure condition degrades each tick using the formula:
+        condition -= 0.01 * max(1, animalCount). If maintenance cannot be paid
+        (insufficient funds), degradation doubles. Condition must be clamped to
+        the range [0, 100]. An empty enclosure should still degrade at the minimum
+        rate of 0.01 per tick.
+
+  - name: repair_cost_formula
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify repair cost is calculated as: (100 - condition) * 2. Repairing
+        restores condition to exactly 100. The function must check that the
+        player has sufficient funds before deducting the cost. Repairing an
+        already-full-condition enclosure should be a no-op or return early.
+
+  - name: upgrade_levels
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify enclosures support exactly 3 upgrade levels. Level 1 is the base.
+        Level 2 increases capacity by 1.5x and costs 80% of baseCost to upgrade.
+        Level 3 increases capacity by 2.0x and costs 150% of baseCost to upgrade.
+        Each level also increases maintenance cost (1.0x, 1.3x, 1.6x respectively).
+        Attempting to upgrade beyond level 3 must be rejected. The Advanced Enclosures
+        research should reduce upgrade cost by 30%.
+
+  - name: placement_and_demolition
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify enclosure placement calls isValidPlacement, checks funds, creates
+        the enclosure entity, deducts cost, and auto-connects a path. Verify
+        demolition removes the enclosure from state.enclosures, sets displaced
+        animals' enclosureId to -1 (not deleting them), refunds 50% of base cost,
+        and shows a notification if animals were displaced.

@@ -1,0 +1,60 @@
+---
+name: animals
+depends_on:
+  - enclosures
+tags: [gameplay]
+---
+
+# Animals
+
+Animals are the heart of the zoo and the primary metric the player is trying to maximize. Each animal is a living entity with needs and moods that the player must manage through proper enclosure placement, feeding, and care.
+
+## Species
+
+The game includes at least the following animal species, each associated with a preferred biome:
+
+- **Lion** — Savanna biome. A flagship attraction that draws visitors.
+- **Elephant** — Savanna biome. Requires more space than most animals.
+- **Penguin** — Arctic biome. Thrives in cold enclosures.
+- **Monkey** — Forest biome. Happy in lush, wooded habitats.
+- **Giraffe** — Savanna biome. Tall and visually distinctive.
+- **Polar Bear** — Arctic biome. Needs ample space and cold conditions.
+- **Crocodile** — Aquatic biome. Lives in water-heavy enclosures.
+- **Parrot** — Forest biome. Colorful and a crowd favorite.
+
+Each species has a purchase cost, a per-tick food cost, and a space requirement. More expensive animals tend to be bigger visitor draws.
+
+## Animal Attributes
+
+Every individual animal tracks the following attributes:
+
+- **Species** — Determines biome compatibility, food cost, space needs, and visitor appeal.
+- **Happiness** — A value from 0 to 100. Affected by enclosure match, available space, and whether the animal is being fed. High happiness makes the animal a stronger visitor attraction and enables breeding.
+- **Hunger** — Increases over time. If the zoo has enough funds, animals are fed automatically each tick and hunger resets. If funds run out, hunger climbs and happiness drops sharply.
+- **Health** — Ranges from 0 to 100. Healthy animals are attractive to visitors. Health declines when an animal is persistently unhappy or hungry. If health reaches zero, the animal is removed from the zoo.
+
+## Feeding
+
+Animals consume food every tick, and each feeding costs a species-specific amount of money deducted from the zoo's balance. Feeding is automatic as long as funds are available. When the balance cannot cover food costs, animals go unfed — their hunger rises, happiness drops, and eventually their health deteriorates.
+
+Food cost is one of the major ongoing expenses the player must budget for. More animals means higher food bills, creating a natural tension between growth and sustainability.
+
+## Happiness
+
+An animal's happiness is the central lever for gameplay quality. Happiness is influenced by:
+
+- **Biome match** — An animal placed in its preferred biome type gets a substantial happiness bonus. A mismatched biome causes a significant penalty.
+- **Space** — Each animal needs a certain amount of space within its enclosure. If the enclosure is overcrowded (too many animals relative to its capacity), happiness drops for all animals inside.
+- **Feeding** — A well-fed animal is a happy animal. Hunger directly drags down happiness.
+
+Happiness is recalculated each tick based on these factors. It does not change instantly — it trends toward a target value over several ticks, so the player has time to react to problems.
+
+## Sickness
+
+When an animal's happiness stays low for an extended period, it risks becoming sick. Sick animals have reduced visitor appeal — visitors are less interested in seeing an unhealthy animal. Sickness also accelerates health decline. The player can recover a sick animal by improving its conditions (better enclosure, more space, consistent feeding), which gradually restores happiness and clears the sickness.
+
+## Breeding
+
+Animals can breed when their happiness is above a high threshold (e.g., 80 out of 100). Breeding happens automatically — if two animals of the same species in the same enclosure are both sufficiently happy, there is a chance each tick that they produce an offspring. The new animal appears in the same enclosure, subject to its capacity limit.
+
+Breeding is the primary way to grow the animal count without spending money. It rewards the player for keeping animals in good conditions and creates a positive feedback loop: happy animals breed, increasing the count, which attracts more visitors, which funds better care.

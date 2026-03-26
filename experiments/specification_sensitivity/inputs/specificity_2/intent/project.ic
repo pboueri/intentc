@@ -1,0 +1,25 @@
+---
+name: zoo_builder
+---
+
+# Zoo Builder
+
+A two-dimensional real-time zoo builder game where the player manages a zoo, purchases animals, constructs enclosures, and attracts visitors to grow their zoo empire. Built with JavaScript and HTML.
+
+## Concept
+
+The player starts with a small plot of land and a modest budget. They must strategically purchase animals, build appropriate enclosures, and set admission prices to attract visitors. Visitors generate revenue based on their satisfaction, which depends on animal variety, enclosure quality, and overall zoo appeal.
+
+The game runs in real time — visitors arrive continuously, animals need ongoing care, and the economy ticks forward. The player's goal is to raise as many animals as possible while keeping the zoo financially sustainable.
+
+## Core Loop
+
+1. **Build** — Place enclosures on the zoo map using available funds.
+2. **Stock** — Purchase animals and assign them to compatible enclosures.
+3. **Price** — Set admission fees that balance visitor volume with revenue.
+4. **Grow** — Use profits to expand the zoo, unlock new animal species, and improve facilities.
+
+## Win / Lose
+
+- **Goal:** Accumulate as many animals as possible. The game tracks a running animal count as the primary score.
+- **Failure:** If the zoo runs out of money and cannot afford to feed its animals, the game ends.

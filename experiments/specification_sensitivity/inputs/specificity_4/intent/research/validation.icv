@@ -1,0 +1,34 @@
+target: research
+validations:
+  - name: start_research
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the player can start a research project. Opening the
+        research tab in the sidebar should display available research nodes
+        with their names, costs, and descriptions. Clicking an affordable
+        node should start research, deduct the cost from money, and show a
+        progress indicator. Nodes the player cannot afford should be grayed
+        out and not clickable.
+  - name: research_completes
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that research completes after the required duration and
+        applies its effect. Start a research node and wait for it to finish
+        (or fast-forward with speed controls). When complete, the node
+        should show as completed in the research tab. The effect should be
+        applied — for example, Efficient Feeding should reduce food costs,
+        visible as a decrease in per-tick expenses.
+  - name: one_at_a_time
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that only one research can be active at a time. While a
+        research node is in progress, attempting to start another should
+        fail or not be offered as an option. The currently active research
+        should show its progress bar advancing. After completion, the
+        player should be able to start a different node.

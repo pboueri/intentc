@@ -1,0 +1,388 @@
+---
+name: save_system
+depends_on:
+  - game_loop
+tags: [core]
+---
+
+# Save System
+
+localStorage-based save/load with auto-save every 60 seconds, 3 save slots, and versioned serialization for forward-compatible migration.
+
+## Constants
+
+```js
+export const SAVE_VERSION = 1;
+export const AUTO_SAVE_INTERVAL_S = 60;
+export const MAX_SAVE_SLOTS = 3;
+export const STORAGE_PREFIX = 'zoo_builder_';
+```
+
+## Save Slot Shape
+
+```js
+/**
+ * Each save slot stores:
+ * {
+ *   version: number,        // SAVE_VERSION at time of save
+ *   timestamp: string,      // ISO 8601 date string
+ *   label: string,          // "Slot 1 - 47 animals - 12:34"
+ *   data: string,           // JSON-serialized game state
+ * }
+ */
+```
+
+## Serialization
+
+```js
+/**
+ * Serialize the full game state to a JSON string.
+ * Strips non-serializable fields (functions, DOM references).
+ * Converts Sets to Arrays for JSON compatibility.
+ */
+export function serializeState(state) {
+  const serializable = {
+    version: SAVE_VERSION,
+    tick: state.tick,
+    timeElapsed: state.timeElapsed,
+    speed: state.speed,
+    money: state.money,
+    admissionPrice: state.admissionPrice,
+
+    animals: state.animals.map(a => ({
+      id: a.id,
+      species: a.species,
+      name: a.name,
+      enclosureId: a.enclosureId,
+      tileX: a.tileX,
+      tileY: a.tileY,
+      happiness: a.happiness,
+      hunger: a.hunger,
+      health: a.health,
+      breedCooldown: a.breedCooldown,
+      sick: a.sick,
+      sickTimer: a.sickTimer,
+      age: a.age,
+    })),
+
+    enclosures: state.enclosures.map(e => ({
+      id: e.id,
+      biome: e.biome,
+      col: e.col,
+      row: e.row,
+      width: e.width,
+      height: e.height,
+      level: e.level,
+      condition: e.condition,
+      capacity: e.capacity,
+    })),
+
+    visitors: state.visitors.map(v => ({
+      id: v.id,
+      x: v.x,
+      y: v.y,
+      state: v.state,
+      pathIndex: v.pathIndex,
+      targetEnclosure: v.targetEnclosure,
+      viewTimer: v.viewTimer,
+      satisfaction: v.satisfaction,
+      viewedEnclosures: Array.from(v.viewedEnclosures), // Set -> Array
+      color: v.color,
+      age: v.age,
+      speed: v.speed,
+      // NOTE: path is NOT serialized (re-computed on load)
+    })),
+
+    map: state.map,  // 2D array of integers, JSON-safe
+
+    research: Object.fromEntries(
+      Object.entries(state.research).map(([key, val]) => [key, { ...val }])
+    ),
+    activeResearch: state.activeResearch,
+
+    camera: { ...state.camera },
+    admissionPrice: state.admissionPrice,
+
+    economy: {
+      history: state.economy.history.slice(-50), // only save last 50 ticks to reduce size
+      bankruptcyTimer: state.economy.bankruptcyTimer,
+      peakAnimals: state.economy.peakAnimals,
+      totalVisitors: state.economy.totalVisitors,
+      totalRevenue: state.economy.totalRevenue,
+    },
+
+    audio: {
+      musicVolume: state.audio.musicVolume,
+      sfxVolume: state.audio.sfxVolume,
+    },
+  };
+
+  return JSON.stringify(serializable);
+}
+```
+
+## Deserialization
+
+```js
+/**
+ * Deserialize a JSON string into a game state object.
+ * Applies version migration if needed.
+ * Returns a complete game state ready to run.
+ *
+ * @param {string} json - The serialized state string
+ * @returns {{ success: boolean, state?: object, error?: string }}
+ */
+export function deserializeState(json) {
+  try {
+    const data = JSON.parse(json);
+
+    // Version check and migration
+    if (!data.version || typeof data.version !== 'number') {
+      return { success: false, error: 'Missing or invalid save version' };
+    }
+
+    if (data.version > SAVE_VERSION) {
+      return { success: false, error: `Save version ${data.version} is newer than supported (${SAVE_VERSION})` };
+    }
+
+    // Apply migrations for older versions
+    if (data.version < SAVE_VERSION) {
+      migrateState(data);
+    }
+
+    // Reconstruct full state from saved data
+    const state = createGameState();
+    state.phase = 'playing';
+    state.tick = data.tick || 0;
+    state.timeElapsed = data.timeElapsed || 0;
+    state.speed = data.speed || 1;
+    state.money = data.money ?? STARTING_MONEY;
+    state.admissionPrice = data.admissionPrice ?? 5;
+
+    // Animals
+    state.animals = (data.animals || []).map(a => ({
+      ...a,
+      // Ensure all fields exist with defaults
+      happiness: a.happiness ?? 50,
+      hunger: a.hunger ?? 0,
+      health: a.health ?? 100,
+      breedCooldown: a.breedCooldown ?? 0,
+      sick: a.sick ?? false,
+      sickTimer: a.sickTimer ?? 0,
+      age: a.age ?? 0,
+    }));
+
+    // Enclosures
+    state.enclosures = (data.enclosures || []).map(e => ({
+      ...e,
+      condition: e.condition ?? 100,
+      level: e.level ?? 1,
+      capacity: e.capacity ?? 3,
+    }));
+
+    // Visitors (paths are re-computed, not loaded)
+    state.visitors = (data.visitors || []).map(v => ({
+      ...v,
+      viewedEnclosures: new Set(v.viewedEnclosures || []), // Array -> Set
+      path: null,       // will be re-computed on next update
+      pathIndex: 0,
+    }));
+
+    // Map
+    state.map = data.map || initMap();
+
+    // Research
+    if (data.research) {
+      for (const [key, val] of Object.entries(data.research)) {
+        if (state.research[key]) {
+          state.research[key] = { ...state.research[key], ...val };
+        }
+      }
+    }
+    state.activeResearch = data.activeResearch || null;
+
+    // Camera
+    if (data.camera) {
+      state.camera = { ...state.camera, ...data.camera };
+    }
+
+    // Economy
+    if (data.economy) {
+      state.economy = { ...state.economy, ...data.economy };
+    }
+
+    // Audio
+    if (data.audio) {
+      state.audio = { ...state.audio, ...data.audio };
+    }
+
+    return { success: true, state };
+  } catch (e) {
+    return { success: false, error: `Failed to parse save data: ${e.message}` };
+  }
+}
+```
+
+## Version Migration
+
+```js
+/**
+ * Migrate saved data from older versions to the current version.
+ * Each migration step bumps the version by 1.
+ */
+function migrateState(data) {
+  // Example: version 0 -> 1
+  // if (data.version === 0) {
+  //   data.research.veterinary_care = { unlocked: false, progress: 0 };
+  //   data.research.gift_shop = { unlocked: false, progress: 0 };
+  //   data.research.night_zoo = { unlocked: false, progress: 0 };
+  //   data.version = 1;
+  // }
+
+  // Currently at version 1, no migrations needed.
+  // Future migrations will be added here as sequential if-blocks.
+}
+```
+
+## Save / Load / Delete Operations
+
+```js
+/**
+ * Save the current game state to a slot.
+ * @param {number} slot - 0, 1, or 2
+ * @param {object} state - current game state
+ */
+export function saveToSlot(slot, state) {
+  if (slot < 0 || slot >= MAX_SAVE_SLOTS) return { success: false, reason: 'Invalid slot' };
+
+  const data = serializeState(state);
+  const label = `Slot ${slot + 1} - ${state.animals.length} animals - ${formatTime(state.timeElapsed)}`;
+
+  const entry = {
+    version: SAVE_VERSION,
+    timestamp: new Date().toISOString(),
+    label,
+    data,
+  };
+
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}slot_${slot}`, JSON.stringify(entry));
+    return { success: true };
+  } catch (e) {
+    return { success: false, reason: `Storage error: ${e.message}` };
+  }
+}
+
+/**
+ * Load a game state from a slot.
+ * @param {number} slot - 0, 1, or 2
+ * @returns {{ success: boolean, state?: object, error?: string }}
+ */
+export function loadFromSlot(slot) {
+  if (slot < 0 || slot >= MAX_SAVE_SLOTS) {
+    return { success: false, error: 'Invalid slot' };
+  }
+
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}slot_${slot}`);
+    if (!raw) return { success: false, error: 'Slot is empty' };
+
+    const entry = JSON.parse(raw);
+    return deserializeState(entry.data);
+  } catch (e) {
+    return { success: false, error: `Failed to load: ${e.message}` };
+  }
+}
+
+/**
+ * Delete a save slot.
+ */
+export function deleteSlot(slot) {
+  if (slot < 0 || slot >= MAX_SAVE_SLOTS) return;
+  localStorage.removeItem(`${STORAGE_PREFIX}slot_${slot}`);
+}
+
+/**
+ * Get metadata for all save slots (without loading full state).
+ */
+export function loadSaveSlots() {
+  const slots = [];
+  for (let i = 0; i < MAX_SAVE_SLOTS; i++) {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}slot_${i}`);
+      if (raw) {
+        const entry = JSON.parse(raw);
+        slots.push({
+          slot: i,
+          label: entry.label,
+          timestamp: entry.timestamp,
+          version: entry.version,
+          empty: false,
+        });
+      } else {
+        slots.push({ slot: i, label: `Slot ${i + 1} - Empty`, empty: true });
+      }
+    } catch {
+      slots.push({ slot: i, label: `Slot ${i + 1} - Corrupted`, empty: true, corrupted: true });
+    }
+  }
+  return slots;
+}
+```
+
+## Auto-Save
+
+```js
+/**
+ * Check if it's time to auto-save. Called each tick from the game loop.
+ * Auto-saves to slot 0 (the first slot).
+ */
+export function checkAutoSave(state) {
+  if (state.autoSaveTimer >= AUTO_SAVE_INTERVAL_S) {
+    state.autoSaveTimer = 0;
+    const result = saveToSlot(0, state);
+    if (result.success) {
+      addToast(state, 'Game auto-saved.');
+    }
+  }
+}
+```
+
+## Save Slot UI
+
+The pause menu and main menu show 3 save slots:
+
+```
++--[Save / Load]------------------------+
+|  Slot 1: 47 animals - 12:34           |
+|  Saved: 2026-03-26 14:30              |
+|  [Save] [Load] [Delete]               |
++-----------------------------------------+
+|  Slot 2: 23 animals - 5:12            |
+|  Saved: 2026-03-25 20:15              |
+|  [Save] [Load] [Delete]               |
++-----------------------------------------+
+|  Slot 3: Empty                         |
+|  [Save]                               |
++-----------------------------------------+
+```
+
+## Utility
+
+```js
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+```
+
+## Edge Cases
+
+- **localStorage full:** `localStorage.setItem` can throw a `QuotaExceededError`. The `saveToSlot` function catches this and returns a failure result. The game continues without crashing.
+- **Corrupted save data:** `deserializeState` wraps `JSON.parse` in a try/catch. If the data is malformed, the slot is reported as corrupted in `loadSaveSlots` and the player is warned. The game does not crash.
+- **Version mismatch (newer):** If a save has a version higher than `SAVE_VERSION` (future save loaded in older game build), deserialization is rejected with a clear error message.
+- **Missing fields on load:** Every field in `deserializeState` uses nullish coalescing (`??`) or default values, so a save missing new fields (e.g., from an older version) gracefully defaults.
+- **Visitor paths not saved:** Paths are expensive to store and may be invalidated by map changes. They are set to `null` on load and re-computed by the visitor update on the next tick.
+- **Auto-save during pause:** Auto-save only triggers during `playing` phase (the game loop only increments `autoSaveTimer` during updates, which only run in `playing` phase).
+- **Save during game_over:** The player cannot save during game_over phase. The pause menu save button is only available during pause.

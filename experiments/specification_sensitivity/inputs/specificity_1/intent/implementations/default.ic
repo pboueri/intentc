@@ -1,0 +1,8 @@
+---
+name: default
+tags: [meta, implementation]
+---
+
+# Implementation
+
+Single-page JavaScript application using HTML5 Canvas for rendering. No external frameworks.

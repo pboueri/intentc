@@ -1,0 +1,61 @@
+target: animals
+validations:
+  - name: species_data_completeness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that all 10 species are defined with complete data: lion, elephant,
+        penguin, monkey, giraffe, polar_bear, crocodile, parrot, dolphin, eagle.
+        Each species must have: name, biome, cost, foodCostPerTick, spaceRequired,
+        baseHappiness, breedCooldownTicks, color (hex), icon (single char), and
+        visitorAppeal (numeric multiplier). No field may be missing or undefined.
+        Values must match the species_table.md reference exactly.
+
+  - name: happiness_formula
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the happiness calculation includes all factors: (1) biome match gives
+        +20 for correct biome, -30 for wrong biome, (2) overcrowding penalty of -30
+        per 100% over capacity, (3) hunger penalty of -0.5 * hunger value,
+        (4) enclosure condition bonus of 0-10 based on condition percentage,
+        (5) upgrade level bonus of +5 per level above base. Happiness must lerp
+        toward the target value (not snap instantly) and be clamped to 0-100.
+
+  - name: breeding_mechanics
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify breeding requires: (1) two animals of the same species in the same
+        enclosure, (2) both at happiness >= BREED_THRESHOLD (80), (3) both with
+        breedCooldown <= 0, (4) neither sick, (5) enclosure has remaining capacity.
+        On success: a new animal is created in the same enclosure, both parents get
+        their species breedCooldownTicks applied, and a toast notification fires.
+        The per-tick breed chance is BREED_CHANCE_PER_TICK (0.02 = 2%).
+
+  - name: death_and_removal
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that when an animal's health reaches 0, it is removed from the
+        state.animals array, a notification toast is displayed with the animal's
+        species and name, and a death sound effect is played. The removal must happen
+        after all animals are updated for the tick (not mid-iteration). Verify that
+        health decreases when the animal is sick (2x decay rate) or unhappy (<30
+        happiness, 1x decay rate), and slowly regenerates when happiness >= 50.
+
+  - name: purchase_validation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the buyAnimal function checks: (1) species exists in the SPECIES table,
+        (2) player has sufficient funds, (3) target enclosure exists, (4) enclosure
+        biome matches species biome (unless Exotic Species research is unlocked),
+        (5) enclosure has remaining capacity. The function must return a success/failure
+        result with a reason string on failure. On success, the animal is added to
+        state.animals and the cost is deducted from state.money.

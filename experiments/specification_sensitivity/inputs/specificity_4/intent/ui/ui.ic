@@ -1,0 +1,80 @@
+---
+name: ui
+depends_on:
+  - game_loop
+  - economy
+tags: [interface]
+---
+
+# UI
+
+The UI module renders all heads-up display elements, menus, and panels directly onto the canvas. There are three main UI regions: a HUD bar across the top of the screen showing vital stats, a sidebar panel on the right side containing the build menu, animal shop, and research tree, and an info panel at the bottom that shows details about the currently selected entity. All UI is drawn in screen space — it does not move when the camera pans.
+
+The HUD bar provides at-a-glance awareness of the zoo's status. It displays the current money balance, total animal count, current visitor count, and the elapsed game time (derived from the tick counter). This information is always visible so the player can make informed decisions without opening any menus.
+
+The sidebar is the player's primary interaction surface. It is divided into three tabbed sections: Build (list of enclosure biomes with costs), Animals (list of purchasable species with costs), and Research (tech tree nodes). Items that the player cannot afford are displayed but grayed out. Clicking an affordable item either enters build mode (for enclosures) or immediately purchases and prompts placement (for animals). The sidebar can be collapsed to give more map view space.
+
+The info panel appears when the player selects an entity on the map. For an enclosure, it shows the biome, condition, capacity, and list of animals inside, plus repair and upgrade buttons. For an animal, it shows species, happiness, hunger, health, and age. The panel disappears when the player deselects (clicks empty tile or presses ESC).
+
+## Data Structures
+
+```js
+// UI state (part of the main state object)
+{
+  mode: "select",          // "select" | "build" | "shop"
+  selectedEntity: null,    // id of selected enclosure or animal, or null
+  selectedBiome: null,     // biome string when in build mode, or null
+  selectedSpecies: null,   // species string when placing an animal, or null
+  hoveredTile: null,       // {x, y} of tile under cursor, or null
+  sidebarTab: "build",     // "build" | "animals" | "research"
+  sidebarCollapsed: false,
+}
+
+// Button hit-test region (used internally for click detection)
+{
+  x: 900,
+  y: 50,
+  width: 120,
+  height: 30,
+  action: "select_biome",
+  payload: "savanna",
+}
+```
+
+## Key Function Signatures
+
+```js
+// Draw the top HUD bar with key stats
+function renderHUD(ctx, state) -> void
+
+// Draw the right sidebar panel with build/shop/research tabs
+function renderSidebar(ctx, state) -> void
+
+// Draw the bottom info panel for the selected entity
+function renderInfoPanel(ctx, state) -> void
+
+// Top-level UI render call
+function renderUI(ctx, state) -> void
+
+// Check if a screen-space click hits any UI button
+// Returns the button's action/payload or null
+function hitTestUI(mouseX, mouseY, state) -> { action, payload } | null
+
+// Process a UI action resulting from a button click
+function handleUIAction(action, payload, state) -> void
+```
+
+## Behavioral Rules
+
+- The HUD bar occupies the top 40 pixels of the canvas, full width. Background is semi-transparent black (rgba 0,0,0,0.7). Text is white, 14px sans-serif font. Stats are spaced evenly: Money (left), Animals (center-left), Visitors (center-right), Time (right).
+- Money is displayed with a dollar sign and comma formatting (e.g., "$12,340"). If money is below 500, the text turns red as a warning.
+- The sidebar occupies a 200-pixel-wide column on the right side of the canvas, from y=40 (below HUD) to the bottom. Background is rgba(0,0,0,0.6). Tab headers are 30px tall buttons at the top of the sidebar.
+- Build tab: lists each biome as a row with name, cost, and a colored swatch. Clicking a row enters build mode with that biome selected.
+- Animals tab: lists each species as a row with name, cost, and the species icon character. Species the player cannot afford are drawn at 50% opacity. Species locked behind research are shown with a lock indicator.
+- Research tab: lists research nodes with name, cost, duration, and completed status. Clicking an incomplete, affordable node starts research.
+- The info panel occupies the bottom 100 pixels of the canvas, from x=0 to the left edge of the sidebar. Background is rgba(0,0,0,0.6). It appears only when `selectedEntity` is not null.
+- For an enclosure info panel: shows biome name, condition bar (green > yellow > red as condition drops), capacity (used/total), and two buttons: Repair ($cost) and Upgrade ($cost).
+- For an animal info panel: shows species name, happiness bar, hunger bar, health bar, and age in ticks.
+- Buttons are drawn as rectangles with a 1px white border. On hover (when the mouse is over them), they lighten slightly. On click, they trigger the associated action.
+- `hitTestUI` is called by the input module before processing map clicks. If a UI button is hit, the click is consumed and does not pass through to the map.
+- All UI elements are drawn after the game world in the render order, ensuring they appear on top.

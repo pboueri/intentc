@@ -1,0 +1,67 @@
+---
+name: economy
+depends_on:
+  - animals
+  - enclosures
+tags: [gameplay, core]
+---
+
+# Economy
+
+The economy is the financial engine that drives the zoo. Every action in the game has a monetary cost or benefit, and the player must balance income against expenses to keep the zoo running. Running out of money means the zoo cannot feed its animals or maintain its enclosures, leading to a death spiral and eventual game over.
+
+## Starting Budget
+
+The player begins the game with a starting budget of $10,000. This is enough to build a few initial enclosures and purchase a handful of animals, but not enough to be careless. Early decisions about which enclosures to build and which animals to buy set the trajectory for the rest of the game.
+
+## Revenue
+
+The zoo's sole source of income is visitor admissions. Each visitor who enters the zoo pays the current admission price. Revenue per tick is calculated as:
+
+- **Revenue = visitors arriving this tick x admission price**
+
+The player does not directly control how many visitors arrive — that is determined by the zoo's appeal. The player controls only the admission price, which indirectly affects visitor volume through a demand curve.
+
+## Costs
+
+The zoo incurs several categories of ongoing costs each tick:
+
+- **Animal food** — Each animal consumes food every tick at a species-specific cost. More animals means higher food bills. This is typically the largest expense category.
+- **Enclosure maintenance** — Each enclosure has a per-tick maintenance cost that keeps it from degrading too quickly. Upgraded enclosures cost more to maintain.
+- **Purchases** — One-time costs for buying new animals, building new enclosures, upgrading existing enclosures, or repairing degraded ones. These are not per-tick but can be large lump sums.
+
+## Visitor Arrival Rate
+
+The number of visitors arriving each tick is a function of the zoo's overall appeal. Appeal is determined by three factors:
+
+- **Total animal count** — More animals means a bigger, more interesting zoo. This is the strongest factor.
+- **Species variety** — A zoo with five different species is more appealing than one with five of the same species. Variety provides a bonus to the arrival rate.
+- **Average animal happiness** — Happy, healthy animals are more attractive to visitors. A zoo full of sick, unhappy animals draws fewer visitors even if it has many of them.
+
+The arrival rate scales smoothly with these factors. A small zoo with a few happy, varied animals will get a modest trickle of visitors. A large zoo with many happy species will attract a crowd.
+
+## Admission Pricing
+
+The player can adjust the admission price at any time. Pricing follows a demand curve:
+
+- **Lower price** — More visitors arrive, but each pays less. Good for zoos with high appeal that can handle volume.
+- **Higher price** — Fewer visitors arrive, but each pays more. Can be more profitable for smaller, high-quality zoos, but risks cutting off revenue if set too high.
+
+The demand curve is not linear — there is a sweet spot where total revenue (price x volume) is maximized. Finding and adjusting this sweet spot as the zoo grows is a key strategic decision.
+
+## Financial HUD
+
+The player sees a financial summary displayed on screen at all times, showing:
+
+- **Current balance** — How much money the zoo has right now.
+- **Income rate** — Revenue per tick from visitor admissions.
+- **Expense rate** — Total costs per tick (food + maintenance).
+- **Net rate** — Income minus expenses. Green when positive, red when negative.
+
+This gives the player immediate visibility into the zoo's financial health without needing to open a separate menu.
+
+## Game Over
+
+The game ends when the zoo's balance reaches $0 and the net income rate is negative — meaning there is not enough revenue to cover the next tick's expenses. At this point, the zoo cannot feed its animals or maintain its enclosures, and operations cease.
+
+When the game ends, the player sees a summary screen showing their final animal count (the primary score), peak animal count, total visitors served, and total revenue earned. The player can then restart with a fresh zoo.

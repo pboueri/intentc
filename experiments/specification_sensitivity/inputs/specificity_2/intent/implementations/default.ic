@@ -1,0 +1,22 @@
+---
+name: default
+tags: [meta, implementation]
+---
+
+# Implementation
+
+Single-page JavaScript application rendered entirely with HTML5 Canvas. No external game frameworks or UI libraries.
+
+## Stack
+
+- **Language:** Vanilla JavaScript (ES modules)
+- **Rendering:** HTML5 Canvas 2D context
+- **Bundling:** Vite for dev server and production build
+- **Package manager:** npm
+- **Testing:** Vitest for unit tests
+
+## Architecture Overview
+
+The game uses a main loop driven by `requestAnimationFrame`. Each tick updates game state (economy, animals, visitors) and then renders the current frame. The zoo map is a 2D tile grid where each tile can hold an enclosure, path, or decoration. User interaction is handled through mouse/touch events on the canvas — clicking tiles to place buildings, selecting animals from a sidebar UI.
+
+All game state lives in a central state object that is passed through update and render functions. There is no component framework; the UI (menus, HUD, sidebar) is drawn directly on the canvas or via minimal HTML overlays.

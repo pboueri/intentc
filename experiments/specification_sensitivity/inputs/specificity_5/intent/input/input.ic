@@ -1,0 +1,346 @@
+---
+name: input
+depends_on:
+  - map
+  - game_loop
+tags: [core]
+---
+
+# Input
+
+Handles all mouse and keyboard interaction. Manages an input state machine that governs what clicks and key presses do based on current context. Translates screen coordinates to tile coordinates and dispatches actions to the game state.
+
+## Input State Machine
+
+```
+  idle ──(click build button)──> building
+  idle ──(click on entity)──> selecting
+  idle ──(middle-mouse-down / right-drag)──> dragging
+  building ──(click valid tile)──> idle (enclosure placed)
+  building ──(Escape / right-click)──> idle (cancelled)
+  selecting ──(click elsewhere)──> idle
+  selecting ──(click another entity)──> selecting (new target)
+  selecting ──(Escape)──> idle
+  dragging ──(mouse-up)──> idle
+```
+
+## Event Handler Setup
+
+```js
+import { screenToTile, isValidPlacement } from './map.js';
+import { panCamera } from './renderer.js';
+import { TILE_SIZE, HUD_HEIGHT, SIDEBAR_WIDTH, CANVAS_WIDTH, CANVAS_HEIGHT, MAP_COLS, MAP_ROWS } from './constants.js';
+
+/**
+ * Attach all input event listeners to the canvas.
+ * Call once during initialization.
+ */
+export function setupInput(canvas, state) {
+  // --- Mouse Move ---
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_WIDTH / rect.width;
+    const scaleY = CANVAS_HEIGHT / rect.height;
+    const screenX = (e.clientX - rect.left) * scaleX;
+    const screenY = (e.clientY - rect.top) * scaleY;
+
+    handleMouseMove(state, screenX, screenY);
+  });
+
+  // --- Mouse Down ---
+  canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_WIDTH / rect.width;
+    const scaleY = CANVAS_HEIGHT / rect.height;
+    const screenX = (e.clientX - rect.left) * scaleX;
+    const screenY = (e.clientY - rect.top) * scaleY;
+
+    if (e.button === 0) handleLeftClick(state, screenX, screenY);
+    if (e.button === 2) handleRightClick(state, screenX, screenY);
+    if (e.button === 1) {
+      state.input.mode = 'dragging';
+      state.input._dragStartX = screenX;
+      state.input._dragStartY = screenY;
+      state.input._dragCamX = state.camera.targetX;
+      state.input._dragCamY = state.camera.targetY;
+    }
+  });
+
+  // --- Mouse Up ---
+  canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 1 && state.input.mode === 'dragging') {
+      state.input.mode = 'idle';
+    }
+    state.input.contextMenu = null; // close context menu on any click-up
+  });
+
+  // --- Right-click context menu prevention ---
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // --- Keyboard ---
+  document.addEventListener('keydown', (e) => handleKeyDown(state, e));
+
+  // --- Tab visibility (auto-pause) ---
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && state.phase === 'playing') {
+      transitionPhase(state, 'paused');
+    }
+  });
+}
+```
+
+## Mouse Move Handler
+
+```js
+function handleMouseMove(state, screenX, screenY) {
+  // Check if mouse is in the map viewport area
+  const inViewport = screenX < (CANVAS_WIDTH - SIDEBAR_WIDTH) &&
+                     screenY > HUD_HEIGHT &&
+                     screenY < (CANVAS_HEIGHT - 40); // above info bar
+
+  if (inViewport) {
+    const tile = screenToTile(screenX, screenY - HUD_HEIGHT, state.camera);
+
+    // Clamp to map bounds
+    if (tile.col >= 0 && tile.col < MAP_COLS && tile.row >= 0 && tile.row < MAP_ROWS) {
+      state.input.hover = { tileX: tile.col, tileY: tile.row };
+
+      // In building mode, check placement validity
+      if (state.input.mode === 'building' && state.input.buildType) {
+        const enc = ENCLOSURE_DEFAULTS[state.input.buildType];
+        const result = isValidPlacement(
+          state.map, tile.col, tile.row, enc.width, enc.height, state.enclosures
+        );
+        state.input.placementValid = result.valid;
+      }
+    } else {
+      state.input.hover = null;
+    }
+  } else {
+    state.input.hover = null;
+  }
+
+  // Camera drag
+  if (state.input.mode === 'dragging') {
+    const dx = state.input._dragStartX - screenX;
+    const dy = state.input._dragStartY - screenY;
+    state.camera.targetX = state.input._dragCamX + dx;
+    state.camera.targetY = state.input._dragCamY + dy;
+  }
+}
+```
+
+## Left Click Handler
+
+```js
+function handleLeftClick(state, screenX, screenY) {
+  if (state.phase !== 'playing') return;
+
+  // Check if click is in sidebar (UI buttons handled separately)
+  if (screenX >= CANVAS_WIDTH - SIDEBAR_WIDTH) {
+    handleSidebarClick(state, screenX, screenY);
+    return;
+  }
+
+  // Check if click is in HUD bar
+  if (screenY <= HUD_HEIGHT) {
+    handleHUDClick(state, screenX, screenY);
+    return;
+  }
+
+  // Map area click
+  const tile = screenToTile(screenX, screenY - HUD_HEIGHT, state.camera);
+
+  switch (state.input.mode) {
+    case 'idle':
+      // Check if clicking on an entity
+      const entity = findEntityAtTile(state, tile.col, tile.row);
+      if (entity) {
+        state.input.mode = 'selecting';
+        state.input.selected = entity;
+      }
+      break;
+
+    case 'building':
+      if (state.input.placementValid && state.input.hover) {
+        placeEnclosure(state, state.input.buildType, tile.col, tile.row);
+        // Stay in building mode for rapid placement; Escape to exit
+      }
+      break;
+
+    case 'selecting':
+      const newEntity = findEntityAtTile(state, tile.col, tile.row);
+      if (newEntity) {
+        state.input.selected = newEntity;
+      } else {
+        state.input.mode = 'idle';
+        state.input.selected = null;
+      }
+      break;
+  }
+}
+```
+
+## Right Click Handler
+
+```js
+function handleRightClick(state, screenX, screenY) {
+  if (state.phase !== 'playing') return;
+
+  // Cancel build mode
+  if (state.input.mode === 'building') {
+    state.input.mode = 'idle';
+    state.input.buildType = null;
+    return;
+  }
+
+  // Open context menu on entity
+  const tile = screenToTile(screenX, screenY - HUD_HEIGHT, state.camera);
+  const entity = findEntityAtTile(state, tile.col, tile.row);
+
+  if (entity) {
+    const items = [];
+    if (entity.type === 'enclosure') {
+      items.push({ label: 'Repair', action: () => repairEnclosure(state, entity.id) });
+      items.push({ label: 'Upgrade', action: () => upgradeEnclosure(state, entity.id) });
+      items.push({ label: 'Demolish', action: () => demolishEnclosure(state, entity.id) });
+    } else if (entity.type === 'animal') {
+      items.push({ label: 'View Info', action: () => selectEntity(state, entity) });
+      items.push({ label: 'Move', action: () => startMoveAnimal(state, entity.id) });
+    }
+
+    state.input.contextMenu = { x: screenX, y: screenY, items };
+  } else {
+    state.input.contextMenu = null;
+  }
+}
+```
+
+## Keyboard Handler
+
+```js
+const KEY_BINDINGS = {
+  'Escape':  (state) => {
+    if (state.input.mode === 'building') {
+      state.input.mode = 'idle';
+      state.input.buildType = null;
+    } else if (state.input.mode === 'selecting') {
+      state.input.mode = 'idle';
+      state.input.selected = null;
+    } else {
+      togglePause(state);
+    }
+  },
+  ' ':       (state) => togglePause(state),
+  '1':       (state) => enterBuildMode(state, 'savanna'),
+  '2':       (state) => enterBuildMode(state, 'aquatic'),
+  '3':       (state) => enterBuildMode(state, 'forest'),
+  '4':       (state) => enterBuildMode(state, 'arctic'),
+  '5':       (state) => enterBuildMode(state, 'aviary'),
+  'ArrowUp':    (state) => panCamera(state, 0, -TILE_SIZE * 2),
+  'ArrowDown':  (state) => panCamera(state, 0, TILE_SIZE * 2),
+  'ArrowLeft':  (state) => panCamera(state, -TILE_SIZE * 2, 0),
+  'ArrowRight': (state) => panCamera(state, TILE_SIZE * 2, 0),
+  'Tab':     (state) => cycleTab(state),
+};
+
+function handleKeyDown(state, event) {
+  if (state.phase !== 'playing' && state.phase !== 'paused') return;
+
+  const handler = KEY_BINDINGS[event.key];
+  if (handler) {
+    event.preventDefault();
+    handler(state);
+  }
+}
+
+function cycleTab(state) {
+  const tabs = ['build', 'shop', 'research'];
+  const idx = tabs.indexOf(state.ui.activeTab);
+  state.ui.activeTab = tabs[(idx + 1) % tabs.length];
+}
+
+function enterBuildMode(state, biome) {
+  if (state.phase !== 'playing') return;
+  state.input.mode = 'building';
+  state.input.buildType = biome;
+}
+```
+
+## Entity Hit-Testing
+
+```js
+/**
+ * Find the topmost entity at the given tile coordinate.
+ * Animals take priority over enclosures (smaller, on top).
+ */
+function findEntityAtTile(state, col, row) {
+  // Check animals first
+  for (const animal of state.animals) {
+    if (animal.tileX === col && animal.tileY === row) {
+      return { type: 'animal', id: animal.id, ...animal };
+    }
+  }
+
+  // Check enclosures
+  for (const enc of state.enclosures) {
+    if (col >= enc.col && col < enc.col + enc.width &&
+        row >= enc.row && row < enc.row + enc.height) {
+      return { type: 'enclosure', id: enc.id, ...enc };
+    }
+  }
+
+  return null;
+}
+```
+
+## Tooltip on Hover
+
+When `state.input.hover` is set and the mouse is stationary for 300ms, a tooltip is displayed:
+
+```js
+/**
+ * Build tooltip content for the entity under the cursor.
+ * Returns { title, lines[] } or null if no entity.
+ */
+export function getTooltipContent(state) {
+  if (!state.input.hover) return null;
+
+  const { tileX, tileY } = state.input.hover;
+  const entity = findEntityAtTile(state, tileX, tileY);
+
+  if (!entity) return null;
+
+  if (entity.type === 'animal') {
+    return {
+      title: `${entity.species} "${entity.name}"`,
+      lines: [
+        `Happiness: ${Math.round(entity.happiness)}%`,
+        `Hunger: ${Math.round(entity.hunger)}%`,
+        `Health: ${Math.round(entity.health)}%`,
+        entity.breedCooldown > 0 ? `Breed cooldown: ${entity.breedCooldown}s` : 'Ready to breed',
+      ],
+    };
+  }
+
+  if (entity.type === 'enclosure') {
+    return {
+      title: `${entity.biome} Enclosure (Lv.${entity.level})`,
+      lines: [
+        `Animals: ${entity.animalCount}/${entity.capacity}`,
+        `Condition: ${Math.round(entity.condition)}%`,
+        `Repair cost: $${Math.round((100 - entity.condition) * 2)}`,
+      ],
+    };
+  }
+
+  return null;
+}
+```
+
+## Edge Cases
+
+- **Clicks during pause:** All map clicks are ignored when `state.phase !== 'playing'`. Only the pause menu buttons respond.
+- **Double-click:** Not specially handled; two sequential left clicks at the same position behave as two independent clicks. In build mode, this places two enclosures if funds and space allow.
+- **Canvas resize:** The `getBoundingClientRect` + scale calculation handles CSS-scaled canvases. The logical coordinate system is always 1280x720.
+- **Touch events:** Not implemented in this spec. For mobile support, map `touchstart` to left-click, `touchmove` to hover, and use a long-press (500ms) for right-click context menu.

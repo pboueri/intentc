@@ -1,0 +1,23 @@
+---
+name: zoo
+---
+
+# Zoo
+
+Core zoo management gameplay encompassing the full game loop: placing enclosures, purchasing animals, managing finances, and serving visitors in real time.
+
+## Map & Building
+
+The zoo is represented as a 2D tile grid. The player can place enclosures, walking paths, and decorations on empty tiles. Each enclosure type has a footprint (e.g., 3x3 or 4x4 tiles) and supports specific animal categories. Paths connect the entrance to enclosures so visitors can navigate the zoo.
+
+## Animals
+
+Animals are purchased from a shop with in-game currency. Each animal has a species, a happiness level, and basic needs (food and space). Animals placed in a compatible enclosure with enough space are happy and attract more visitors. Overcrowded or poorly matched enclosures reduce happiness.
+
+## Economy
+
+Visitors arrive at a rate influenced by the zoo's overall appeal — a function of animal count, animal variety, and average happiness. Each visitor pays the admission fee set by the player. Revenue must cover animal food costs and enclosure maintenance. The player can adjust prices at any time.
+
+## Visitors
+
+Visitors enter through the zoo gate, walk along paths, visit enclosures, and eventually leave. Their satisfaction is determined by how many animals they see and the quality of the enclosures. Higher satisfaction increases the chance they tell others (boosting future arrival rate).

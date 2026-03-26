@@ -1,0 +1,120 @@
+---
+name: research
+depends_on:
+  - economy
+tags: [gameplay]
+---
+
+# Research
+
+The research module provides a simple tech tree of unlockable upgrades that give the player mid-to-late-game goals and reward investment. There are five research nodes, each offering a distinct benefit: reducing food costs, reducing maintenance costs, increasing visitor base rate, improving breeding chances, or unlocking exotic animal species. Each node costs money to start and takes time (in ticks) to complete. Only one research can be active at a time.
+
+Research adds strategic depth to the economy. The player must decide when to divert funds from immediate expansion (more enclosures, more animals) into long-term efficiency gains. Completing "Efficient Feeding" early can save significant money over the course of a game, but the upfront cost delays other purchases. The "Exotic Species" node unlocks panda, dolphin, and polar bear — high-appeal animals that are locked at the start, providing a late-game expansion avenue.
+
+The research UI is a tab in the sidebar. Each node shows its name, cost, duration, effect description, and current status (locked, available, in progress with a progress bar, or completed). Nodes become available once the player can afford them and any prerequisite conditions are met (in this initial version, all nodes are independently available — no prerequisite chain).
+
+## Data Structures
+
+```js
+// Research node definition
+const RESEARCH_NODES = [
+  {
+    id: "efficient_feeding",
+    name: "Efficient Feeding",
+    cost: 2000,
+    duration: 3000,      // ticks to complete (~50 seconds)
+    effect: "reduce_food_cost",
+    effectValue: 0.2,    // 20% reduction
+    description: "Reduce all animal food costs by 20%.",
+    completed: false,
+  },
+  {
+    id: "better_fences",
+    name: "Better Fences",
+    cost: 1500,
+    duration: 2500,
+    effect: "reduce_maintenance_cost",
+    effectValue: 0.2,
+    description: "Reduce all enclosure maintenance costs by 20%.",
+    completed: false,
+  },
+  {
+    id: "marketing",
+    name: "Marketing",
+    cost: 2500,
+    duration: 4000,
+    effect: "increase_base_arrival_rate",
+    effectValue: 0.05,   // base rate goes from 0.1 to 0.15
+    description: "Increase the base visitor arrival rate.",
+    completed: false,
+  },
+  {
+    id: "breeding_program",
+    name: "Breeding Program",
+    cost: 3000,
+    duration: 5000,
+    effect: "increase_breed_chance",
+    effectValue: 0.002,  // breed chance goes from 0.001 to 0.003
+    description: "Triple the chance of animal breeding.",
+    completed: false,
+  },
+  {
+    id: "exotic_species",
+    name: "Exotic Species",
+    cost: 5000,
+    duration: 6000,
+    effect: "unlock_exotic",
+    effectValue: null,
+    description: "Unlock Panda, Dolphin, and Polar Bear in the animal shop.",
+    completed: false,
+  },
+];
+
+// Active research state (part of state.research)
+{
+  nodes: [ /* copies of RESEARCH_NODES with mutable completed field */ ],
+  activeResearch: {
+    nodeId: "efficient_feeding",
+    progress: 1200,      // ticks elapsed
+  }  // or null if nothing is being researched
+}
+```
+
+## Key Function Signatures
+
+```js
+// Initialize research nodes (returns deep copies of RESEARCH_NODES)
+function initResearchNodes() -> researchNodes[]
+
+// Start researching a node (deducts cost from money)
+function startResearch(state, nodeId) -> boolean
+
+// Update the active research progress for one tick
+function updateResearch(state, dt) -> void
+
+// Complete the active research and apply its effect to the game state
+function completeResearch(state) -> void
+
+// Check if a specific research node is completed
+function isResearchCompleted(state, nodeId) -> boolean
+
+// Get the current progress as a fraction (0 to 1) for UI display
+function getResearchProgress(state) -> number
+```
+
+## Behavioral Rules
+
+- Only one research node can be active at a time. Starting a new research while one is active is not allowed — the UI should not offer the option.
+- Starting research immediately deducts the node's cost from `state.money`. If the player cannot afford it, the start is rejected.
+- Each tick, if `activeResearch` is not null, `progress` increments by 1 (unaffected by game speed — speed is handled by running more ticks per frame).
+- When `progress >= duration`, the research completes: the node's `completed` field is set to true, `activeResearch` is set to null, and the effect is applied.
+- Effect application is permanent and immediate:
+  - `reduce_food_cost`: multiply all species' `foodCostPerTick` by `(1 - effectValue)`.
+  - `reduce_maintenance_cost`: multiply all biomes' `maintenanceCostPerTick` by `(1 - effectValue)`.
+  - `increase_base_arrival_rate`: add `effectValue` to the economy's base arrival rate constant.
+  - `increase_breed_chance`: add `effectValue` to the per-tick breed probability constant.
+  - `unlock_exotic`: set a flag in state that makes panda, dolphin, and polar_bear appear in the animal shop.
+- Completed research nodes are shown with a checkmark in the sidebar. They cannot be researched again.
+- Research progress survives pause — when unpaused, it resumes from where it left off.
+- If the player cannot afford any research node, all nodes in the research tab appear grayed out with their cost shown.
+- Research progress is shown as a progress bar in the sidebar: a narrow horizontal bar that fills from left to right as `progress / duration` increases.

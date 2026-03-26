@@ -1,0 +1,36 @@
+target: enclosures
+validations:
+  - name: enclosures_can_be_placed
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the player can place enclosures on the tile grid. Select an
+        enclosure type from the build menu and place it on an empty area of the
+        map. The enclosure should appear on the grid, occupy the correct tile
+        footprint, and deduct the purchase cost from the zoo's balance. Attempting
+        to place an enclosure on an occupied area or without sufficient funds
+        should fail gracefully.
+
+  - name: enclosures_degrade_over_time
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that enclosures degrade as the simulation runs. Place an enclosure
+        and let the game run for a period of time. The enclosure's condition
+        value should decrease over time. Maintenance costs should be deducted
+        from the zoo's balance each tick. If the enclosure degrades significantly,
+        animals inside should show reduced happiness compared to a fresh enclosure.
+
+  - name: biome_compatibility_enforced
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that biome compatibility affects gameplay. Place an animal in an
+        enclosure matching its preferred biome and observe its happiness. Then
+        place an animal of a different biome preference into an incompatible
+        enclosure and observe that its happiness is lower or penalized. The game
+        should either prevent incompatible placement or clearly show the negative
+        effect on the animal.

@@ -1,0 +1,44 @@
+target: economy
+validations:
+  - name: money_updates
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the player's money balance updates each tick based on
+        income and expenses. After placing an enclosure and buying animals,
+        the balance should decrease. As visitors arrive and pay admission,
+        the balance should increase. The HUD should display the current
+        balance and it should change over time reflecting net income.
+  - name: demand_curve
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the admission price affects visitor arrival rate. Set a
+        low admission price and observe visitor arrival. Then set a high
+        admission price and observe that fewer visitors arrive. The
+        relationship should be inversely proportional — higher prices lead
+        to fewer visitors. The effect should be visible in the visitor
+        count over a period of time.
+  - name: appeal_drives_visitors
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that zoo appeal affects visitor rate. A zoo with more
+        animals, more unique species, and happier animals should attract
+        more visitors than an empty zoo. Adding a new animal or species
+        should increase the arrival rate over time. The relationship should
+        be noticeable when comparing a minimal zoo to a well-stocked one.
+  - name: game_over_triggers
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the game ends when the zoo runs out of money with
+        negative net income. Spend all money on enclosures and animals
+        without building paths or attracting visitors, so expenses exceed
+        revenue. When the balance reaches zero or below with negative
+        income, a game-over screen should appear showing final stats. The
+        simulation should stop updating.

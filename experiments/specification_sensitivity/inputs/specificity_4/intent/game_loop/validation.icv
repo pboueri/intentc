@@ -1,0 +1,32 @@
+target: game_loop
+validations:
+  - name: loop_starts_and_renders
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the game starts and the main loop is running. The HTML page
+        should load without console errors, a canvas element should be visible,
+        and the game should be rendering frames. The tile grid should be drawn
+        on the canvas and the tick counter should be advancing.
+  - name: pause_and_resume
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the game can be paused and resumed. Pressing the P key
+        should freeze the simulation — the tick counter should stop advancing
+        and entity positions should not change. Pressing P again should resume
+        the simulation. While paused, the canvas should still render (not go
+        blank) and the player should still be able to interact with UI menus.
+  - name: speed_control
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the simulation speed can be changed. Pressing 1, 2, or 4
+        should set the game speed to normal, fast, or ultra respectively. At
+        higher speeds the simulation should visibly advance faster — visitors
+        move more quickly and the tick counter increments at a higher rate.
+        The game should remain stable at all speed settings without visual
+        glitches or freezes.

@@ -31,6 +31,8 @@ Code Variance: The genererated code can vary a lot in terms of language used, li
 
 ## Inputs
 
+These are stored in experiments/specification_sensitivity/inputs/
+
 The project that we are going to consider will be a two-dimensional zoo builder game. The idea is that you are a zoo tycoon whose goal is to raise as many animals as possible.
 
 ### Constraints

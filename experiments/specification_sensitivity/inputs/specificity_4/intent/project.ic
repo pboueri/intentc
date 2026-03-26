@@ -1,0 +1,52 @@
+---
+name: zoo_builder
+---
+
+# Zoo Builder
+
+A two-dimensional real-time zoo builder game where the player manages a zoo, purchases animals, constructs enclosures, sets admission prices, and attracts visitors to grow their zoo empire. The primary objective is to raise as many animals as possible through smart purchasing and successful breeding programs. Built as a single-page application with JavaScript and HTML5 Canvas.
+
+## Concept
+
+The player begins with a modest patch of land, a single entrance gate, and $10,000 in starting funds. From this humble beginning they must transform the empty lot into a thriving zoo by building biome-appropriate enclosures, stocking them with animals, and tuning admission prices to draw a steady stream of paying visitors. Every decision feeds back into the simulation: happier animals attract more visitors, more visitors generate more revenue, and more revenue funds further expansion. The game rewards thoughtful long-term planning over frantic micro-management.
+
+The simulation runs continuously in real time. Animals grow hungry, enclosures degrade, visitors wander in and out, and the financial ledger updates every tick. There is no turn structure — everything flows smoothly, and the player can pause at any time to think and plan without penalty. A research tree provides mid-to-late-game goals, unlocking cost efficiencies and exotic species that keep the growth curve interesting.
+
+## Core Gameplay Loop
+
+1. **Build** — Place enclosures on the zoo's tile-grid map using available funds. Choose from five biome types (savanna, aquatic, forest, arctic, aviary), each supporting different animal species.
+2. **Stock** — Purchase animals from the shop and assign them to compatible enclosures. Each species has food costs, space requirements, and happiness drivers that must be managed.
+3. **Price** — Set the admission fee. A demand curve governs how price affects visitor arrival rate — higher prices mean fewer visitors but more revenue per head. Finding the sweet spot is key.
+4. **Grow** — Reinvest profits into more enclosures, new species, facility upgrades, and research. Happy animals breed, increasing the animal count without purchase costs — the most efficient path to a high score.
+
+The loop is self-reinforcing: more animals raise appeal, which draws more visitors, which funds more animals.
+
+## Win and Lose Conditions
+
+- **Goal:** Accumulate as many animals as possible. The game tracks a running animal count as the primary score. Breeding is the most efficient growth vector, so keeping animals happy and healthy is essential.
+- **Failure:** If the zoo's cash balance drops to zero or below and the net income per tick is negative (expenses exceed revenue with no way to recover), the game ends. The player sees their final animal count, peak animal count, total visitors served, and total revenue earned, then can restart.
+
+## Subsystems
+
+The game is organized into ten interlocking subsystems:
+
+1. **Game Loop** — The requestAnimationFrame-driven simulation tick, state management, and pause/resume control.
+2. **Map** — A 40x30 tile grid representing the zoo grounds, with tile types for grass, paths, water, and the entrance gate.
+3. **Renderer** — Canvas 2D drawing of the tile map, all entities, camera panning, and UI overlays.
+4. **Input** — Mouse and keyboard handling for tile selection, camera control, build mode, and shortcut keys.
+5. **Animals** — Ten purchasable species, each with happiness, hunger, health, and breeding mechanics.
+6. **Enclosures** — Five biome types that house animals, degrade over time, and can be repaired or upgraded.
+7. **Economy** — The financial engine managing revenue from admissions, costs from food and maintenance, and the demand curve.
+8. **Visitors** — AI-driven visitors that spawn at the entrance, walk paths via A* pathfinding, view enclosures, and leave.
+9. **UI** — HUD bar, sidebar build/shop/research menus, and info panels drawn on the canvas.
+10. **Research** — A tech tree of unlockable upgrades that reduce costs, boost visitor rates, improve breeding, and unlock exotic species.
+
+## Look and Feel
+
+The game presents a top-down 2D view of the zoo rendered on an HTML5 Canvas. The visual style is a colorful pixel-art aesthetic — simple but charming. The zoo grounds use a warm earthy palette: soft greens for grass tiles, sandy beige for paths, cool blue for water features. Enclosures are drawn as colored rectangular zones matching their biome (golden for savanna, blue for aquatic, deep green for forest, white-blue for arctic, light yellow for aviary). Animals are represented as small colored shapes — circles or simple iconic forms — with distinct colors per species. Visitors appear as tiny colored dots flowing along paths.
+
+UI overlays are clean and readable. The top HUD bar uses a semi-transparent dark background with white text for key stats. The sidebar panel has a slightly darker background with clearly separated sections for building, shopping, and research. Buttons have visible borders and hover states. The overall tone is casual, friendly, and approachable — nothing dark or intimidating.
+
+## Target Experience
+
+Zoo Builder aims for a "cozy management sim" feel. Sessions should last 15 to 30 minutes. Early game progress is fast — the player can place their first enclosure, buy their first animal, and see visitors arrive within the first minute. Mid-game introduces the tension of balancing costs against expansion. Late-game rewards patience with breeding chains and research unlocks that compound growth. The pacing should always feel relaxed enough that the player never panics, but engaging enough that there is always a next goal to chase.

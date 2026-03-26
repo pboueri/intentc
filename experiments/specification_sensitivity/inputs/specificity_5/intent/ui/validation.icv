@@ -1,0 +1,59 @@
+target: ui
+validations:
+  - name: hud_elements
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the HUD bar displays all required elements: current money balance
+        (with gold color), net income per tick (green if positive, red if negative),
+        animal count, visitor count, elapsed time (MM:SS format), speed buttons
+        (1x, 2x, 3x with the active speed highlighted), and a pause button. When
+        the bankruptcy timer is active, a red warning must appear on the HUD showing
+        the remaining seconds. The HUD must span the full canvas width at 40px height.
+
+  - name: sidebar_tabs
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the sidebar has exactly 3 tabs: Build, Shop, and Research. Clicking a
+        tab switches the content panel. The active tab must be visually distinct from
+        inactive tabs (different background color). The Build tab must list all 5 biome
+        types as buttons with their names and costs. Buttons for biomes the player
+        cannot afford must appear disabled (grayed out).
+
+  - name: toast_notification_system
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify toast notifications appear for game events (animal born, animal died,
+        research complete, etc.). Toasts must slide in from above with an animation,
+        hold for approximately 3 seconds, then fade out. Multiple toasts must stack
+        vertically without overlapping. A maximum of 5 toasts should be visible at
+        once. Expired toasts must be removed from the state.
+
+  - name: info_bar_selection
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the info bar at the bottom of the viewport shows details for the
+        selected entity. For animals: species name with nickname, happiness percentage
+        with visual bar, hunger percentage, health percentage with visual bar, and
+        a "(SICK)" indicator in red if applicable. For enclosures: biome name, level,
+        animal count/capacity, condition percentage with visual bar, and repair cost.
+        When nothing is selected, show a placeholder hint text.
+
+  - name: button_hit_testing
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify all UI buttons (sidebar tabs, build buttons, speed buttons, pause button,
+        menu buttons) respond to clicks within their exact pixel bounds. A click at
+        coordinates (x, y) must be tested against each button's {bx, by, bw, bh}
+        rectangle. Clicks outside all buttons must fall through to map interaction.
+        The hit-test function must account for the canvas CSS scaling (clientX/Y vs
+        canvas logical coordinates).

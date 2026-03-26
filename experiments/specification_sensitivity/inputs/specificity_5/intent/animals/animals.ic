@@ -1,0 +1,450 @@
+---
+name: animals
+depends_on:
+  - enclosures
+  - economy
+tags: [gameplay]
+---
+
+# Animals
+
+Animals are the heart of the zoo and the primary metric the player is trying to maximize. Each animal is a living entity with species-specific needs, moods, and breeding mechanics. The game includes 10 purchasable species across 5 biome types. See `animals/species_table.md` for the complete species data reference.
+
+## Species Data
+
+```js
+export const SPECIES = {
+  lion: {
+    name: 'Lion',
+    biome: 'savanna',
+    cost: 800,
+    foodCostPerTick: 0.8,
+    spaceRequired: 2,
+    baseHappiness: 70,
+    breedCooldownTicks: 60,
+    color: '#d4a017',
+    icon: 'L',
+    visitorAppeal: 1.5,
+  },
+  elephant: {
+    name: 'Elephant',
+    biome: 'savanna',
+    cost: 1200,
+    foodCostPerTick: 1.2,
+    spaceRequired: 3,
+    baseHappiness: 65,
+    breedCooldownTicks: 80,
+    color: '#808080',
+    icon: 'E',
+    visitorAppeal: 1.8,
+  },
+  penguin: {
+    name: 'Penguin',
+    biome: 'arctic',
+    cost: 400,
+    foodCostPerTick: 0.3,
+    spaceRequired: 1,
+    baseHappiness: 75,
+    breedCooldownTicks: 40,
+    color: '#1a1a2e',
+    icon: 'P',
+    visitorAppeal: 1.2,
+  },
+  monkey: {
+    name: 'Monkey',
+    biome: 'forest',
+    cost: 500,
+    foodCostPerTick: 0.4,
+    spaceRequired: 1,
+    baseHappiness: 80,
+    breedCooldownTicks: 45,
+    color: '#8b4513',
+    icon: 'M',
+    visitorAppeal: 1.3,
+  },
+  giraffe: {
+    name: 'Giraffe',
+    biome: 'savanna',
+    cost: 1000,
+    foodCostPerTick: 0.9,
+    spaceRequired: 2,
+    baseHappiness: 60,
+    breedCooldownTicks: 70,
+    color: '#daa520',
+    icon: 'G',
+    visitorAppeal: 1.6,
+  },
+  polar_bear: {
+    name: 'Polar Bear',
+    biome: 'arctic',
+    cost: 1100,
+    foodCostPerTick: 1.0,
+    spaceRequired: 3,
+    baseHappiness: 55,
+    breedCooldownTicks: 90,
+    color: '#f0f0ff',
+    icon: 'B',
+    visitorAppeal: 1.7,
+  },
+  crocodile: {
+    name: 'Crocodile',
+    biome: 'aquatic',
+    cost: 700,
+    foodCostPerTick: 0.6,
+    spaceRequired: 2,
+    baseHappiness: 65,
+    breedCooldownTicks: 55,
+    color: '#2e8b57',
+    icon: 'C',
+    visitorAppeal: 1.4,
+  },
+  parrot: {
+    name: 'Parrot',
+    biome: 'aviary',
+    cost: 300,
+    foodCostPerTick: 0.2,
+    spaceRequired: 1,
+    baseHappiness: 85,
+    breedCooldownTicks: 35,
+    color: '#ff4500',
+    icon: 'R',
+    visitorAppeal: 1.0,
+  },
+  dolphin: {
+    name: 'Dolphin',
+    biome: 'aquatic',
+    cost: 1500,
+    foodCostPerTick: 1.1,
+    spaceRequired: 3,
+    baseHappiness: 70,
+    breedCooldownTicks: 75,
+    color: '#4682b4',
+    icon: 'D',
+    visitorAppeal: 2.0,
+  },
+  eagle: {
+    name: 'Eagle',
+    biome: 'aviary',
+    cost: 600,
+    foodCostPerTick: 0.5,
+    spaceRequired: 2,
+    baseHappiness: 60,
+    breedCooldownTicks: 50,
+    color: '#654321',
+    icon: 'A',
+    visitorAppeal: 1.3,
+  },
+};
+```
+
+## Animal Entity Shape
+
+```js
+let nextAnimalId = 1;
+
+export function createAnimal(species, enclosureId, tileX, tileY) {
+  return {
+    id: nextAnimalId++,
+    species,                        // key into SPECIES table
+    name: generateAnimalName(),     // random name for flavor
+    enclosureId,                    // which enclosure this animal lives in
+    tileX,                          // current tile column
+    tileY,                          // current tile row
+    happiness: SPECIES[species].baseHappiness,
+    hunger: 0,                      // 0 (full) to 100 (starving)
+    health: 100,                    // 0 (dead) to 100 (perfect)
+    breedCooldown: 0,               // ticks until can breed again
+    sick: false,                    // true if happiness stayed < 30 for 10+ ticks
+    sickTimer: 0,                   // ticks of continuous low happiness
+    age: 0,                         // ticks alive
+  };
+}
+
+function generateAnimalName() {
+  const names = [
+    'Atlas', 'Bella', 'Coco', 'Dash', 'Echo', 'Fern', 'Gizmo', 'Halo',
+    'Ivy', 'Jazz', 'Koda', 'Luna', 'Milo', 'Nova', 'Ollie', 'Pepper',
+    'Quinn', 'Rex', 'Sable', 'Tango', 'Uma', 'Vex', 'Willow', 'Xena',
+    'Yuki', 'Ziggy', 'Amber', 'Blaze', 'Chip', 'Dune',
+  ];
+  return names[Math.floor(Math.random() * names.length)];
+}
+```
+
+## Full Update Loop
+
+```js
+import { BREED_THRESHOLD, BREED_CHANCE_PER_TICK, HUNGER_RATE, HAPPINESS_LERP, HEALTH_DECAY_RATE } from './constants.js';
+import { playSound } from './audio.js';
+
+/**
+ * Update all animals for one tick.
+ * Called once per fixed timestep from the game loop.
+ */
+export function updateAnimals(state) {
+  const toRemove = [];
+
+  for (const animal of state.animals) {
+    animal.age += 1;
+
+    // --- Hunger ---
+    updateHunger(animal, state);
+
+    // --- Happiness ---
+    updateHappiness(animal, state);
+
+    // --- Sickness ---
+    updateSickness(animal);
+
+    // --- Health ---
+    updateHealth(animal);
+
+    // --- Death ---
+    if (animal.health <= 0) {
+      toRemove.push(animal.id);
+      addToast(state, `${SPECIES[animal.species].name} "${animal.name}" has died.`);
+      playSound('animal_death');
+      continue;
+    }
+
+    // --- Breeding ---
+    updateBreeding(animal, state);
+  }
+
+  // Remove dead animals
+  if (toRemove.length > 0) {
+    state.animals = state.animals.filter(a => !toRemove.includes(a.id));
+  }
+}
+```
+
+## Hunger Formula
+
+```js
+function updateHunger(animal, state) {
+  const speciesData = SPECIES[animal.species];
+  const foodCost = speciesData.foodCostPerTick;
+
+  // Efficient Feeding research halves food cost
+  const effectiveCost = state.research.efficient_feeding.unlocked
+    ? foodCost * 0.5
+    : foodCost;
+
+  if (state.money >= effectiveCost) {
+    // Feed the animal: deduct cost, reduce hunger
+    state.money -= effectiveCost;
+    animal.hunger = Math.max(0, animal.hunger - 5);
+  } else {
+    // Cannot afford food: hunger increases
+    animal.hunger = Math.min(100, animal.hunger + HUNGER_RATE * 10);
+  }
+
+  // Natural hunger drift upward
+  animal.hunger = Math.min(100, animal.hunger + HUNGER_RATE);
+}
+```
+
+## Happiness Formula
+
+```js
+function updateHappiness(animal, state) {
+  const enclosure = state.enclosures.find(e => e.id === animal.enclosureId);
+  if (!enclosure) return;
+
+  const speciesData = SPECIES[animal.species];
+
+  // Calculate target happiness based on conditions
+  let targetHappiness = speciesData.baseHappiness;
+
+  // Biome match bonus/penalty
+  if (enclosure.biome === speciesData.biome) {
+    targetHappiness += 20;  // correct biome: +20
+  } else {
+    targetHappiness -= 30;  // wrong biome: -30
+  }
+
+  // Overcrowding penalty
+  const animalsInEnclosure = state.animals.filter(a => a.enclosureId === enclosure.id).length;
+  if (animalsInEnclosure > enclosure.capacity) {
+    const overcrowdRatio = animalsInEnclosure / enclosure.capacity;
+    targetHappiness -= (overcrowdRatio - 1) * 30;  // -30 per 100% over capacity
+  }
+
+  // Hunger penalty: direct drag on happiness
+  targetHappiness -= animal.hunger * 0.5;  // hunger 100 -> -50 happiness
+
+  // Enclosure condition bonus
+  targetHappiness += (enclosure.condition / 100) * 10;  // 0-10 bonus based on condition
+
+  // Upgrade level bonus
+  targetHappiness += (enclosure.level - 1) * 5;  // +5 per upgrade level above base
+
+  // Veterinary Care research: sick animals recover faster
+  if (state.research.veterinary_care.unlocked && animal.sick) {
+    targetHappiness += 10;
+  }
+
+  // Clamp target
+  targetHappiness = Math.max(0, Math.min(100, targetHappiness));
+
+  // Lerp toward target (smooth transition)
+  animal.happiness += (targetHappiness - animal.happiness) * HAPPINESS_LERP;
+  animal.happiness = Math.max(0, Math.min(100, animal.happiness));
+}
+```
+
+## Sickness Logic
+
+```js
+function updateSickness(animal) {
+  if (animal.happiness < 30) {
+    animal.sickTimer += 1;
+    if (animal.sickTimer >= 10 && !animal.sick) {
+      animal.sick = true;
+    }
+  } else {
+    animal.sickTimer = Math.max(0, animal.sickTimer - 1);
+    if (animal.sickTimer === 0) {
+      animal.sick = false;
+    }
+  }
+}
+```
+
+## Health Formula
+
+```js
+function updateHealth(animal) {
+  if (animal.sick) {
+    // Sick animals lose health faster
+    animal.health -= HEALTH_DECAY_RATE * 2;
+  } else if (animal.happiness < 30) {
+    // Unhappy but not yet sick: slow health loss
+    animal.health -= HEALTH_DECAY_RATE;
+  } else if (animal.happiness >= 50) {
+    // Happy animals slowly regenerate health
+    animal.health = Math.min(100, animal.health + HEALTH_DECAY_RATE * 0.5);
+  }
+
+  animal.health = Math.max(0, Math.min(100, animal.health));
+}
+```
+
+## Breeding Algorithm
+
+```js
+function updateBreeding(animal, state) {
+  // Decrement cooldown
+  if (animal.breedCooldown > 0) {
+    animal.breedCooldown -= 1;
+    return;
+  }
+
+  // Must meet happiness threshold
+  if (animal.happiness < BREED_THRESHOLD) return;
+  if (animal.sick) return;
+
+  // Find another eligible animal of same species in same enclosure
+  const partner = state.animals.find(a =>
+    a.id !== animal.id &&
+    a.species === animal.species &&
+    a.enclosureId === animal.enclosureId &&
+    a.happiness >= BREED_THRESHOLD &&
+    a.breedCooldown <= 0 &&
+    !a.sick
+  );
+
+  if (!partner) return;
+
+  // Check enclosure capacity
+  const enclosure = state.enclosures.find(e => e.id === animal.enclosureId);
+  if (!enclosure) return;
+
+  const animalsInEnclosure = state.animals.filter(a => a.enclosureId === enclosure.id).length;
+  if (animalsInEnclosure >= enclosure.capacity) return;
+
+  // Breeding Program research doubles breed chance
+  const breedChance = state.research.breeding_program.unlocked
+    ? BREED_CHANCE_PER_TICK * 2
+    : BREED_CHANCE_PER_TICK;
+
+  if (Math.random() < breedChance) {
+    // Success! Create offspring
+    const speciesData = SPECIES[animal.species];
+    const baby = createAnimal(animal.species, animal.enclosureId, animal.tileX, animal.tileY);
+    baby.happiness = speciesData.baseHappiness;
+    state.animals.push(baby);
+
+    // Set cooldown for both parents
+    animal.breedCooldown = speciesData.breedCooldownTicks;
+    partner.breedCooldown = speciesData.breedCooldownTicks;
+
+    addToast(state, `New baby ${speciesData.name} "${baby.name}" born!`);
+    playSound('breed_success');
+  }
+}
+```
+
+## Purchasing Animals
+
+```js
+/**
+ * Buy an animal and place it in the specified enclosure.
+ * Returns true if successful, false with reason if not.
+ */
+export function buyAnimal(state, speciesKey, enclosureId) {
+  const speciesData = SPECIES[speciesKey];
+  if (!speciesData) return { success: false, reason: 'Unknown species' };
+
+  // Check funds
+  if (state.money < speciesData.cost) {
+    return { success: false, reason: 'Insufficient funds' };
+  }
+
+  // Check enclosure exists and is compatible
+  const enclosure = state.enclosures.find(e => e.id === enclosureId);
+  if (!enclosure) return { success: false, reason: 'Enclosure not found' };
+
+  // Biome compatibility
+  if (enclosure.biome !== speciesData.biome) {
+    // Exotic Species research allows cross-biome placement at happiness penalty (handled in happiness calc)
+    if (!state.research.exotic_species.unlocked) {
+      return { success: false, reason: `${speciesData.name} requires ${speciesData.biome} biome` };
+    }
+  }
+
+  // Capacity check
+  const currentCount = state.animals.filter(a => a.enclosureId === enclosureId).length;
+  if (currentCount >= enclosure.capacity) {
+    return { success: false, reason: 'Enclosure is full' };
+  }
+
+  // Place animal at a random tile within the enclosure
+  const tileX = enclosure.col + Math.floor(Math.random() * enclosure.width);
+  const tileY = enclosure.row + Math.floor(Math.random() * enclosure.height);
+
+  const animal = createAnimal(speciesKey, enclosureId, tileX, tileY);
+  state.animals.push(animal);
+  state.money -= speciesData.cost;
+
+  playSound('purchase');
+  return { success: true, animal };
+}
+```
+
+## Animal Info Tooltip Content
+
+When an animal is selected, the info bar at the bottom of the screen shows:
+
+```
+Selected: Lion "Simba" | Happiness: 85% [====#====] | Hunger: 20% | Health: 95% [=========#] | Age: 142 ticks
+```
+
+If the animal is sick, a "(SICK)" indicator is appended in red.
+
+## Edge Cases
+
+- **Death removes from arrays:** Dead animals are filtered out of `state.animals` at the end of `updateAnimals`. Any code holding a reference to the animal array must account for the array being rebuilt.
+- **Orphaned animals:** If an enclosure is demolished while it contains animals, those animals have their `enclosureId` set to -1 and immediately start losing happiness (no biome match, no capacity). The player should be warned before demolishing a non-empty enclosure.
+- **Breeding overflow:** A breed event is only attempted if the enclosure has capacity. If two pairs in the same enclosure both trigger breeding in the same tick, only the first to succeed fills the last slot; the second pair's check fails the capacity test.
+- **Name collisions:** Animal names are for display only and may repeat. IDs are unique and monotonically increasing.

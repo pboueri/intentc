@@ -1,0 +1,53 @@
+target: audio
+validations:
+  - name: web_audio_initialization
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the audio system initializes a Web Audio API AudioContext with a
+        gain node hierarchy: masterGain -> musicGain and sfxGain. Initialization
+        must be wrapped in a try/catch so that if the AudioContext constructor fails,
+        the game continues without audio. All audio functions must check if audioCtx
+        is null before proceeding.
+
+  - name: sound_effects_catalog
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the playSound function supports at minimum these named effects:
+        purchase, build, breed_success, animal_death, research_complete, notification,
+        click, error. Each effect must be defined with parameters (frequency, duration,
+        waveform) and produce audible output when called. Unknown sound names must be
+        silently ignored (no crash).
+
+  - name: volume_control
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify a setVolume function accepts a category ('music', 'sfx', or 'master')
+        and a level (0.0 to 1.0). It must update the corresponding gain node's value.
+        The level must be clamped to [0, 1]. Volume settings must be stored in
+        state.audio.musicVolume and state.audio.sfxVolume and persist across save/load.
+
+  - name: background_music
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify background music can be started and stopped. The music must loop
+        continuously (either via an external looping audio file or procedural
+        generation). Starting music when it is already playing must be a no-op.
+        Stopping music must cleanly disconnect all audio nodes.
+
+  - name: graceful_degradation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the game functions correctly when audio is unavailable. If audioCtx
+        is null (initialization failed), all calls to playSound, startMusic, stopMusic,
+        and setVolume must be no-ops that do not throw errors. The game loop, UI, and
+        all other subsystems must work normally without audio.
