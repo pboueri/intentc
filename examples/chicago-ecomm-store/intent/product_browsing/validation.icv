@@ -1,0 +1,18 @@
+target: product_browsing
+agent_profile: null
+validations:
+  - name: home_page
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The home page at / must display a hero section with a Chicago-themed welcome message and a featured products section showing product cards. There should be a link or button to navigate to the full product listing."
+  - name: product_listing
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The product listing page at /products must fetch products from the API and display them in a responsive grid of cards. Each card must show the product image, name, price, and an Add to Cart button."
+  - name: product_detail
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The product detail page at /products/:id must display the full product information including a large image, name, description, price, inventory status, quantity selector, and Add to Cart button."

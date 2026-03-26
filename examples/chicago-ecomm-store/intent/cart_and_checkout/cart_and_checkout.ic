@@ -1,0 +1,78 @@
+---
+name: cart_and_checkout
+depends_on:
+  - product_browsing
+  - auth
+tags:
+  - frontend
+  - backend
+  - feature
+---
+
+# Cart and Checkout
+
+Shopping cart management, checkout flow with a simulated payment stub, and order history for authenticated customers.
+
+## Shopping Cart Page (`/cart`)
+
+- Displays items currently in the CartContext
+- Each item row shows:
+  - Product image (thumbnail)
+  - Product name (links to product detail page)
+  - Unit price
+  - Quantity with increment/decrement buttons and a remove button
+  - Line total (unit price x quantity)
+- Cart summary at the bottom:
+  - Subtotal
+  - "Proceed to Checkout" button (if user is logged in, navigates to `/checkout`; if not, navigates to `/login` with redirect back)
+- "Continue Shopping" link back to `/products`
+- Empty cart state: message "Your cart is empty" with a link to browse products
+
+## Checkout Page (`/checkout`)
+
+- Protected route: requires authentication (redirect to `/login` if not logged in)
+- **Order Summary**: read-only list of cart items with quantities and line totals, plus order total
+- **Shipping Address Form**:
+  - Full name
+  - Street address
+  - City
+  - State (2-letter abbreviation)
+  - ZIP code
+  - All fields required with basic validation
+- **Payment Section**:
+  - Prominently displays a notice: "Payment processing is not yet implemented. Click 'Place Order' to simulate a completed purchase."
+  - Styled as an info/notice box using the blue theme color
+- **"Place Order" Button**:
+  1. Sends `POST /api/orders` with `{ items: [{ product_id, quantity }], shipping: { name, address, city, state, zip } }`
+  2. On success: clears the cart, shows a confirmation message with the order ID, and provides a link to `/orders`
+  3. On error: shows error message without clearing the cart
+
+## Orders API
+
+### POST /api/orders
+- Requires authentication (authMiddleware)
+- Accepts: `{ items: [{ product_id, quantity }], shipping: { name, address, city, state, zip } }`
+- Validates that all products exist and have sufficient inventory
+- Calculates total from current product prices
+- Creates an order record with status 'completed' and shipping info
+- Creates order_items records for each item
+- Returns the created order with its items
+
+### GET /api/orders
+- Requires authentication
+- Returns all orders for the authenticated user, ordered by date descending
+- Each order includes: id, status, total, created_at, and item count
+
+### GET /api/orders/:id
+- Requires authentication
+- Returns a single order (must belong to the authenticated user; return 403 otherwise)
+- Includes full order_items with product name, quantity, and price_at_purchase
+
+## Order History Page (`/orders`)
+
+- Protected route: requires authentication
+- Page title: "Your Orders"
+- Fetches orders from `GET /api/orders`
+- Lists orders as cards showing: order date, order ID (truncated), total, status, number of items
+- Clicking an order expands or navigates to show full order detail with line items
+- Empty state: "You haven't placed any orders yet" with link to products

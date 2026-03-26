@@ -1,0 +1,20 @@
+---
+name: chicago-ecomm-store
+---
+
+# Chicago E-Commerce Store
+
+A full-stack e-commerce web application themed around iconic Chicago products. The store features a modern, crisp UI with a Chicago-inspired color palette (light blues, reds, and whites) and sells quintessential Chicago items like deep dish pizza, Jeppson's Malort, and Chicago-style hot dogs.
+
+The application consists of a React frontend and a Node.js/Express backend with PostgreSQL for data persistence. It supports email/password authentication with distinct admin and customer roles, a product catalog with image support, a shopping cart with a checkout flow (simulated payment stub), order history for customers, and an admin panel for managing products and inventory.
+
+## Key Capabilities
+
+- Browse and search a catalog of Chicago-themed products
+- User registration and login with email/password
+- Role-based access: customers shop, admins manage inventory
+- Shopping cart with persistent state
+- Checkout flow with "payment not implemented" placeholder
+- Order creation and order history for authenticated customers
+- Admin panel for full product CRUD (add, edit, delete)
+- Seed data with real product images for deep dish pizza, Malort, and Chicago hot dogs

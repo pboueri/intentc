@@ -1,0 +1,56 @@
+---
+name: admin_panel
+depends_on:
+  - storefront
+  - auth
+  - product_catalog
+tags:
+  - frontend
+  - feature
+---
+
+# Admin Panel
+
+Admin dashboard for managing the product catalog, accessible only to users with the 'admin' role.
+
+## Admin Dashboard Page (`/admin`)
+
+- Protected by AdminRoute: only accessible to authenticated users with `role === 'admin'`
+- Non-admin users redirected to home page
+- Page title: "Admin Dashboard"
+
+### Product Management Table
+- Fetches all products from `GET /api/products`
+- Displays a table with columns: Image (thumbnail), Name, Price, Inventory, Actions
+- Actions column has "Edit" and "Delete" buttons for each row
+- "Add New Product" button above the table
+
+### Add Product Form
+- Accessed via the "Add New Product" button (inline form, modal, or separate section)
+- Fields:
+  - Name (text, required)
+  - Description (textarea)
+  - Price (number, required, min 0.01)
+  - Image URL (text)
+  - Inventory Count (number, required, min 0)
+- Submit calls `POST /api/products` with admin auth
+- On success: refreshes the product list, clears the form, shows success feedback
+- On error: shows error message
+
+### Edit Product
+- Clicking "Edit" opens a pre-populated form with the product's current values
+- Submit calls `PUT /api/products/:id` with admin auth
+- On success: refreshes the product list, shows success feedback
+- "Cancel" button to discard changes
+
+### Delete Product
+- Clicking "Delete" shows a confirmation dialog ("Are you sure you want to delete [product name]?")
+- On confirm: calls `DELETE /api/products/:id` with admin auth
+- On success: removes product from the list, shows success feedback
+- On error: shows error message
+
+## Access Control
+
+- Frontend: AdminRoute component checks `user.role === 'admin'` from AuthContext
+- Backend: All mutating product endpoints (POST, PUT, DELETE) use authMiddleware + adminMiddleware
+- Admin nav link only visible in the navbar when user has admin role

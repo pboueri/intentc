@@ -1,0 +1,76 @@
+---
+name: storefront
+tags:
+  - frontend
+  - ui
+---
+
+# Storefront
+
+The React application shell and Chicago-themed design system for the e-commerce store.
+
+## Design System
+
+### Color Palette
+- **Primary Blue**: `#B3DDF2` (light Chicago blue, used for navbar background, accents)
+- **Accent Red**: `#C41E3A` (Chicago flag red, used for primary buttons, highlights)
+- **White**: `#FFFFFF` (backgrounds, text on dark surfaces)
+- **Light Gray**: `#F5F5F5` (page background)
+- **Dark Text**: `#1A1A2E` (body text, headings)
+
+### Typography
+- Clean, modern sans-serif font stack (Inter or system fonts: `-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`)
+- Bold headings, comfortable line-height for readability
+
+### Layout
+- Responsive, mobile-first design
+- Max content width: 1200px, centered
+- Consistent spacing scale (8px base unit)
+
+## App Shell
+
+### React Router Setup
+Configure routes for all pages:
+- `/` — Home page
+- `/products` — Product listing
+- `/products/:id` — Product detail
+- `/cart` — Shopping cart
+- `/checkout` — Checkout (authenticated)
+- `/orders` — Order history (authenticated)
+- `/login` — Login form
+- `/register` — Registration form
+- `/admin` — Admin panel (admin only)
+
+### Navigation Bar
+- Light blue (`#B3DDF2`) background with white text
+- Store name/logo: **"Chicago Goods"**
+- Nav links: Home, Products, Cart (with item count badge)
+- Auth section: Login/Register when logged out; user email and Logout button when logged in
+- "Admin" link visible only when user has admin role
+- Sticky/fixed at top of page
+
+### Footer
+- Simple footer with dark background
+- Store name and tagline: "The finest goods from the Windy City"
+- Copyright notice
+
+## Context Providers
+
+### AuthContext
+- Stores current user and JWT token
+- Provides `login()`, `register()`, `logout()` functions
+- Persists token in localStorage
+- Checks `/api/auth/me` on app load to restore session
+
+### CartContext
+- Stores cart items array: `[{ product, quantity }]`
+- Provides `addToCart()`, `removeFromCart()`, `updateQuantity()`, `clearCart()`, `cartTotal`
+- Persists cart in localStorage
+
+## Shared Components
+
+- **Button** — Primary (red `#C41E3A` bg, white text) and secondary (blue outline) variants
+- **ProductCard** — Card with product image, name, price, and action button
+- **LoadingSpinner** — Centered spinner for async loading states
+- **ProtectedRoute** — Wrapper that redirects to `/login` if not authenticated
+- **AdminRoute** — Wrapper that redirects to `/` if not admin role

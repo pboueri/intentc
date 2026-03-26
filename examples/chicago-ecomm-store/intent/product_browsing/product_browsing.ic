@@ -1,0 +1,49 @@
+---
+name: product_browsing
+depends_on:
+  - storefront
+  - product_catalog
+tags:
+  - frontend
+  - feature
+---
+
+# Product Browsing
+
+Product listing and detail pages that allow customers to browse the Chicago product catalog.
+
+## Home Page (`/`)
+
+- Hero section with a welcoming message and Chicago-themed styling
+- Headline: "Welcome to Chicago Goods" with a subheading like "The finest from the Windy City, delivered to your door"
+- Hero background using the primary blue color with white text
+- Featured products section displaying the three seed products as ProductCards
+- Call-to-action button ("Shop All Products") linking to `/products`
+
+## Product Listing Page (`/products`)
+
+- Page title: "Our Products"
+- Fetches all products from `GET /api/products` on mount
+- Displays products in a responsive CSS grid (3 columns on desktop, 2 on tablet, 1 on mobile)
+- Each product displayed as a ProductCard showing:
+  - Product image (with fallback for missing images)
+  - Product name
+  - Price (formatted as currency, e.g., "$24.99")
+  - "Add to Cart" button
+- Clicking the product image or name navigates to the product detail page
+- Loading spinner while fetching
+- Empty state message if no products exist
+
+## Product Detail Page (`/products/:id`)
+
+- Fetches product from `GET /api/products/:id`
+- Two-column layout on desktop (image left, details right), stacked on mobile
+- Large product image
+- Product name as page heading
+- Product description
+- Price displayed prominently
+- Inventory status ("In Stock" / "Out of Stock")
+- Quantity selector (number input, min 1, max limited by inventory)
+- "Add to Cart" button (disabled if out of stock)
+- Back link to product listing
+- 404 page if product not found
