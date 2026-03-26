@@ -1,0 +1,88 @@
+---
+name: init
+version: 1
+depends_on:
+  - interfaces/cli
+  - build/agents
+---
+
+# Interactive Init Workflow
+
+This feature patches the existing `intentc init` command and the agent system to support an agent-driven dialog that helps the user break down their project into a well-structured set of features, dependencies, and validations — rather than generating a bare skeleton.
+
+## Changes to `intentc init` (interfaces/cli)
+
+The existing `init` command gains a `--no-interactive` flag. The current skeleton behavior becomes the `--no-interactive` path. The default (no flag) launches an interactive agent session.
+
+```
+intentc init [name] [--no-interactive] [-P <prompt>]
+```
+
+**New flags:**
+- `--no-interactive` — skip the agent dialog and generate a minimal skeleton (current `init` behavior: `blank_project()` + `write_project()` + `save_config()`).
+- `-P / --prompt` (string, optional) — provide a project description upfront for single-shot (non-interactive) init. The agent generates the full project structure in one pass without asking questions. Mutually exclusive with `--no-interactive`.
+
+**Updated flow (interactive, the new default):**
+1. If `intent/project.ic` already exists, abort with exit code 2 (unchanged).
+2. Resolve the agent profile from built-in defaults (no config file exists yet during init).
+3. Generate a blank project via `blank_project(name)` and write it via `write_project()` so the agent has a valid `intent/` directory to work in.
+4. Launch the agent in interactive mode with the init prompt template, passing the project name. The agent's working directory is the project root, and it has write access to `intent/`.
+5. **Validate the result** — call `load_project()` on the `intent/` directory. If it raises `ParseErrors`, print the errors to stderr and exit with code 1. This ensures the agent produced a well-formed project with valid frontmatter, resolvable `depends_on` references, and an acyclic dependency graph.
+6. Write `.intentc/config.yaml` via `save_config()`.
+7. Print a summary of all created files via `render_init_summary()`.
+
+**One-shot flow (`-P` flag):**
+1. If `intent/project.ic` already exists, abort with exit code 2.
+2. Resolve the agent profile from built-in defaults.
+3. Generate a blank project via `blank_project(name)` and write it via `write_project()`.
+4. Launch the agent in **non-interactive** (single-shot) mode with the init prompt template, passing the project name. The user's prompt from `-P` is appended to the rendered template as a `{user_prompt}` section so the agent has the full project description upfront and generates the structure without asking questions.
+5. **Validate the result** — call `load_project()` on the `intent/` directory. If it raises `ParseErrors`, print the errors to stderr and exit with code 1.
+6. Write `.intentc/config.yaml` via `save_config()`.
+7. Print a summary of all created files via `render_init_summary()`.
+
+The skeleton is written _before_ the agent runs so there is always a valid project on disk, even if the agent session is interrupted. The agent modifies and adds to the skeleton rather than creating from nothing.
+
+## Changes to Agent System (build/agents)
+
+### New Prompt Template
+
+A new `init` field is added to `PromptTemplates`:
+
+```
+Type PromptTemplates:
+    ...existing fields...
+    init: string    # default empty
+```
+
+The default template is stored at `intentc/build/agents/prompts/init.prompt` and loaded via `importlib.resources` alongside the other templates.
+
+### Template Variables
+
+The init prompt template uses:
+- `{project_name}` — the name for the new project
+- `{specifications}` — a summary of the `.ic` and `.icv` file format conventions (frontmatter structure, fields, validation types) so the agent writes well-formed files
+- `{user_prompt}` — the user's project description from `-P` (empty string in interactive mode). When non-empty, the prompt instructs the agent to skip the dialog and generate the structure directly from this description.
+
+### New Agent Method
+
+The `Agent` interface gains an `init` method:
+
+```
+Interface Agent:
+    ...existing methods...
+    init(project_name: string, intent_dir: string, prompt: string or null = null) -> void
+```
+
+When `prompt` is null, `init` is interactive — the ClaudeAgent launches Claude Code without `-p` in REPL mode, passing the rendered init prompt as a positional argument. The agent has write access to the `intent/` directory.
+
+When `prompt` is provided, `init` runs in single-shot mode — the ClaudeAgent launches Claude Code with `-p`, passing the rendered init prompt (with `{user_prompt}` filled in) as the prompt argument. The agent generates the full project structure in one pass without user interaction.
+
+### Init Prompt Content
+
+The default init prompt template is stored at [prompts/init.prompt](prompts/init.prompt). It instructs the agent to conduct a focused dialog: ask for a project description, elicit features, propose a structure as a file tree, iterate on feedback, then write all files to disk.
+
+## Constraints
+
+- The agent must only create or modify files under `intent/` during init.
+- The dialog should respect the existing `.ic` and `.icv` file format conventions defined in core/specifications.
+- Features proposed by the agent should have realistic `depends_on` relationships that form a valid DAG.

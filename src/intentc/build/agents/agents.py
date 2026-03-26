@@ -48,6 +48,7 @@ class PromptTemplates(BaseModel):
     validate_template: str = ""
     plan: str = ""
     difference: str = ""
+    init: str = ""
 
 
 def load_default_prompts() -> PromptTemplates:
@@ -64,6 +65,7 @@ def load_default_prompts() -> PromptTemplates:
         ("build", "build.prompt"),
         ("validate_template", "validate.prompt"),
         ("plan", "plan.prompt"),
+        ("init", "init.prompt"),
     ]:
         try:
             templates[field] = (agent_prompts / filename).read_text(encoding="utf-8")
@@ -106,7 +108,96 @@ def render_prompt(
         validation=validations_text,
         response_file=ctx.response_file_path,
         previous_errors=previous_errors_text,
+        seed_prompt=ctx.seed_prompt,
     )
+
+
+def render_init_prompt(
+    template: str,
+    project_name: str,
+    user_prompt: str | None = None,
+) -> str:
+    """Render the init prompt template."""
+    specifications = _get_specifications_summary()
+    user_prompt_section = ""
+    if user_prompt:
+        user_prompt_section = (
+            f"The user has provided the following project description. "
+            f"Generate the full project structure directly without asking questions.\n\n"
+            f"## Project Description\n\n{user_prompt}"
+        )
+
+    return template.format(
+        project_name=project_name,
+        specifications=specifications,
+        user_prompt=user_prompt_section,
+    )
+
+
+def _get_specifications_summary() -> str:
+    """Return a summary of .ic and .icv file format conventions."""
+    return """### .ic files (Intent files)
+
+.ic files use YAML frontmatter followed by a Markdown body:
+
+```
+---
+name: feature_name
+depends_on:
+  - path/to/dependency
+tags:
+  - optional_tag
+---
+
+# Feature Title
+
+Description of what this feature does, written in Markdown.
+```
+
+Required fields:
+- `name` — unique identifier
+
+Optional fields:
+- `depends_on` — list of feature directory paths this feature depends on
+- `tags` — list of string tags
+- `authors` — list of author identifiers
+
+For `project.ic`, there is no `depends_on` field. For `implementations/*.ic`, `depends_on` is optional.
+
+### .icv files (Validation files)
+
+.icv files are pure YAML:
+
+```yaml
+target: feature/path
+agent_profile: null
+validations:
+  - name: validation_name
+    type: agent_validation
+    severity: error  # or: warning
+    args:
+      rubric: "Description of what to validate..."
+```
+
+Validation types:
+- `agent_validation` — evaluated by an AI agent using a rubric
+
+### Directory structure
+
+```
+intent/
+  project.ic                    # Project-level description (required)
+  implementations/
+    default.ic                  # Implementation approach
+  feature_name/
+    feature_name.ic             # Feature intent
+    validation.icv              # Feature validations (optional)
+  another_feature/
+    another_feature.ic
+```
+
+Features are directories under `intent/`. Each feature directory contains at least one .ic file. The directory path relative to `intent/` is the feature's identifier used in `depends_on`.
+"""
 
 
 def render_differencing_prompt(
@@ -160,6 +251,7 @@ class BuildContext(BaseModel):
     implementation: Implementation | None = None
     response_file_path: str
     previous_errors: list[str] = Field(default_factory=list)
+    seed_prompt: str = ""
 
 
 class DifferencingContext(BaseModel):
@@ -231,6 +323,9 @@ class Agent(abc.ABC):
     def plan(self, ctx: BuildContext) -> None: ...
 
     @abc.abstractmethod
+    def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None: ...
+
+    @abc.abstractmethod
     def get_name(self) -> str: ...
 
     @abc.abstractmethod
@@ -278,6 +373,10 @@ class CLIAgent(Agent):
     def plan(self, ctx: BuildContext) -> None:
         prompt = render_prompt(self._templates.plan, ctx)
         self._run_command(prompt, ctx.response_file_path, timeout=self._profile.timeout)
+
+    def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
+        rendered = render_init_prompt(self._templates.init, project_name, prompt)
+        self._run_command(rendered, "", timeout=self._profile.timeout)
 
     def _run_command(
         self,
@@ -374,6 +473,17 @@ class ClaudeAgent(Agent):
     def plan(self, ctx: BuildContext) -> None:
         prompt = render_prompt(self._templates.plan, ctx)
         self._run_interactive(prompt, ctx.output_dir)
+
+    def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
+        rendered = render_init_prompt(self._templates.init, project_name, prompt)
+        # intent_dir's parent is the project root
+        project_root = str(Path(intent_dir).parent)
+        if prompt is not None:
+            # Single-shot mode: run non-interactively with -p
+            self._run_non_interactive(rendered, project_root, "")
+        else:
+            # Interactive mode: launch REPL
+            self._run_interactive(rendered, project_root)
 
     # ---- internal helpers ----
 
@@ -556,6 +666,7 @@ class MockAgent(Agent):
         self.validate_calls: list[tuple[BuildContext, ValidationFile]] = []
         self.difference_calls: list[DifferencingContext] = []
         self.plan_calls: list[BuildContext] = []
+        self.init_calls: list[tuple[str, str, str | None]] = []
 
     def get_name(self) -> str:
         return self._name
@@ -577,6 +688,9 @@ class MockAgent(Agent):
 
     def plan(self, ctx: BuildContext) -> None:
         self.plan_calls.append(ctx)
+
+    def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
+        self.init_calls.append((project_name, intent_dir, prompt))
 
 
 # ---------------------------------------------------------------------------

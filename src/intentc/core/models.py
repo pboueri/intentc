@@ -10,10 +10,6 @@ from pydantic import BaseModel, Field
 
 class ValidationType(str, enum.Enum):
     AGENT_VALIDATION = "agent_validation"
-    LLM_JUDGE = "llm_judge"
-    FILE_CHECK = "file_check"
-    FOLDER_CHECK = "folder_check"
-    COMMAND_CHECK = "command_check"
 
 
 class Severity(str, enum.Enum):

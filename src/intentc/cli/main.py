@@ -21,6 +21,7 @@ from intentc.cli.output import (
     render_validation_results,
 )
 from intentc.core.models import IntentFile, ParseErrors
+from intentc.core.parser import write_intent_file
 from intentc.core.project import Project, blank_project, load_project, write_project
 
 app = typer.Typer(
@@ -87,8 +88,12 @@ def _resolve_profile(profile_name: str | None, config: Config):
 @app.command()
 def init(
     name: Optional[str] = typer.Argument(None, help="Project name (default: current directory name)"),
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip agent dialog and generate minimal skeleton"),
+    prompt: Optional[str] = typer.Option(None, "-P", "--prompt", help="Project description for single-shot init"),
 ) -> None:
     """Create a new intentc project in the current directory."""
+    from intentc.build.agents import AgentProfile, create_from_profile
+
     cwd = Path.cwd()
     intent_dir = cwd / "intent"
 
@@ -99,6 +104,23 @@ def init(
     project_name = name or cwd.name
     project = blank_project(project_name)
     write_project(project, intent_dir)
+
+    if not no_interactive:
+        # Resolve agent profile from built-in defaults (no config file yet)
+        profile = AgentProfile(name="default", provider="claude")
+        log = _make_log_callback()
+        agent = create_from_profile(profile, log=log)
+
+        # Launch agent: interactive if no -P, single-shot if -P provided
+        agent.init(project_name, str(intent_dir), prompt=prompt)
+
+        # Validate the result
+        try:
+            load_project(intent_dir)
+        except ParseErrors as exc:
+            for err in exc.errors:
+                print_error(str(err))
+            raise typer.Exit(code=1)
 
     config = Config()
     config_path = save_config(config, cwd)
@@ -251,6 +273,7 @@ def clean(
 @app.command()
 def plan(
     target: str = typer.Argument(..., help="Feature path to plan"),
+    prompt: str = typer.Argument(..., help="Seed prompt describing what to plan"),
     output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Override output directory"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override"),
     implementation: Optional[str] = typer.Option(None, "--implementation", "-i", help="Implementation name"),
@@ -262,20 +285,28 @@ def plan(
     project = _load_project_or_exit(cwd / "intent")
     config = load_config(cwd)
 
-    # Validate feature exists
-    if target not in project.features:
-        available = ", ".join(sorted(project.features.keys())) or "(none)"
-        print_error(f"Feature '{target}' not found. Available features: {available}")
-        raise typer.Exit(code=2)
-
     resolved_output = _resolve_output_dir(output_dir, config)
     resolved_profile = _resolve_profile(profile, config)
 
     # Resolve implementation if specified
     impl = project.resolve_implementation(implementation) if implementation else None
 
-    # Construct BuildContext
-    node = project.features[target]
+    # Create the feature if it doesn't exist
+    if target not in project.features:
+        from intentc.core.project import FeatureNode
+
+        intent_dir = cwd / "intent"
+        feature_name = target.rsplit("/", 1)[-1]
+        intent = IntentFile(name=feature_name)
+        ic_path = intent_dir / target / f"{feature_name}.ic"
+        write_intent_file(intent, ic_path)
+        console.print(f"[green]Created new feature:[/green] {ic_path.relative_to(cwd)}")
+
+        node = FeatureNode(path=target, intents=[intent], validations=[])
+        project.features[target] = node
+    else:
+        node = project.features[target]
+
     if node.intents:
         intent = node.intents[0]
     else:
@@ -290,6 +321,7 @@ def plan(
         project_intent=project.project_intent,
         implementation=impl,
         response_file_path="",
+        seed_prompt=prompt,
     )
 
     agent = create_from_profile(resolved_profile)
@@ -306,11 +338,22 @@ def status(
     from intentc.build.state import GitVersionControl, StateManager
 
     cwd = Path.cwd()
+    project = _load_project_or_exit(cwd / "intent")
     config = load_config(cwd)
     resolved_output = _resolve_output_dir(output_dir, config)
 
     state_manager = StateManager(base_dir=cwd, output_dir=resolved_output)
-    targets = state_manager.list_targets()
+    db_targets = dict(state_manager.list_targets())
+
+    # Merge project features with build state — features from the project
+    # graph that have no build state yet are shown as PENDING.
+    from intentc.build.storage.backend import TargetStatus as TS
+
+    all_target_names = set(db_targets.keys()) | set(project.features.keys())
+    targets: list[tuple[str, TS]] = [
+        (name, db_targets.get(name, TS.PENDING))
+        for name in sorted(all_target_names)
+    ]
 
     # Collect build results for display
     build_results = {}
@@ -321,7 +364,6 @@ def status(
 
     outdated_list: list[str] = []
     if outdated:
-        project = _load_project_or_exit(cwd / "intent")
         vc = GitVersionControl(repo_dir=cwd)
         builder = Builder(
             project=project,

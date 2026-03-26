@@ -335,6 +335,12 @@ class ValidationSuite:
 
         generation_id = f"val-{secrets.token_hex(4)}"
 
+        # Create a generation record so the FK on validation_results is satisfied.
+        self._storage_backend.create_generation(
+            generation_id=generation_id,
+            output_dir=self._output_dir,
+        )
+
         val_result_id = self._storage_backend.save_validation_result(
             build_result_id=None,
             generation_id=generation_id,

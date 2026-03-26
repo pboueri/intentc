@@ -40,10 +40,6 @@ Type IntentFile:
 ```
 Enum ValidationType (string-valued):
     AGENT_VALIDATION = "agent_validation"
-    LLM_JUDGE = "llm_judge"
-    FILE_CHECK = "file_check"
-    FOLDER_CHECK = "folder_check"
-    COMMAND_CHECK = "command_check"
 ```
 
 ## Validation Files

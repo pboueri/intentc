@@ -38,10 +38,6 @@ def test_implementation_has_depends_on():
 
 def test_validation_type_values():
     assert ValidationType.AGENT_VALIDATION.value == "agent_validation"
-    assert ValidationType.LLM_JUDGE.value == "llm_judge"
-    assert ValidationType.FILE_CHECK.value == "file_check"
-    assert ValidationType.FOLDER_CHECK.value == "folder_check"
-    assert ValidationType.COMMAND_CHECK.value == "command_check"
 
 
 def test_severity_values():

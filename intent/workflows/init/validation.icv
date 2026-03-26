@@ -1,0 +1,56 @@
+target: workflows/init
+version: 1
+validations:
+  - name: e2e-oneshot-init-calculator
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        This is an end-to-end validation that tests the one-shot init workflow
+        by generating an intentc project for a web-based calculator using the
+        -P flag. All work MUST happen in an isolated temporary directory.
+
+        ## Setup
+
+        1. Create a temporary directory.
+        2. `cd` into it.
+
+        ## Run Init
+
+        Run `intentc init calculator -P "A web-based calculator application.
+        It should have a clean UI with buttons for digits 0-9, basic arithmetic
+        operations (add, subtract, multiply, divide), a display showing the
+        current expression and result, and keyboard input support. The frontend
+        should be built with HTML/CSS/JavaScript."` from the temporary directory.
+
+        The command should exit with code 0.
+
+        ## Verification
+
+        Verify the generated project structure:
+
+        1. `intent/project.ic` exists, has valid YAML frontmatter with
+           `name: calculator`, and its body describes a web-based calculator.
+        2. `intent/implementations/default.ic` exists and specifies a web
+           frontend stack (HTML/CSS/JavaScript or similar).
+        3. At least 3 feature directories exist under `intent/`, each with
+           a `.ic` file containing valid YAML frontmatter (`name` and
+           `depends_on` fields).
+        4. At least one `.icv` validation file exists with valid YAML
+           containing a `target` and `validations` list.
+        5. The project loads successfully — run `intentc status` from the
+           temporary directory and verify it exits with code 0 and lists the
+           generated features.
+        6. The dependency graph is sensible — foundational features (e.g.,
+           core UI, display logic) should not depend on higher-level features
+           (e.g., keyboard input).
+
+        ## Cleanup
+
+        Remove the temporary directory when done, regardless of pass/fail.
+
+        ## Pass criteria
+
+        This validation passes if and only if ALL of the above verification
+        steps succeed. If any step fails, report which step failed and include
+        the relevant command output or error message.

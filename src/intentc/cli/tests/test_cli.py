@@ -77,16 +77,23 @@ class TestConfig:
 
 
 class TestInitCommand:
+    def _mock_agent(self):
+        """Return a patch that replaces create_from_profile with a no-op agent."""
+        mock_agent = MagicMock()
+        return patch("intentc.build.agents.create_from_profile", return_value=mock_agent)
+
     def test_init_creates_project(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app, ["init", "test-project"])
+        with self._mock_agent():
+            result = runner.invoke(app, ["init", "test-project"])
         assert result.exit_code == 0
         assert (tmp_path / "intent" / "project.ic").exists()
         assert (tmp_path / ".intentc" / "config.yaml").exists()
 
     def test_init_default_name_is_dir_name(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app, ["init"])
+        with self._mock_agent():
+            result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
         content = (tmp_path / "intent" / "project.ic").read_text()
         assert tmp_path.name in content
@@ -100,7 +107,8 @@ class TestInitCommand:
 
     def test_init_shows_summary(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app, ["init", "myproject"])
+        with self._mock_agent():
+            result = runner.invoke(app, ["init", "myproject"])
         assert result.exit_code == 0
         assert "initialized" in result.output.lower() or "Created" in result.output
 
@@ -206,6 +214,10 @@ class TestPlanCommand:
 class TestStatusCommand:
     def test_status_with_no_targets(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
+
+        # Create a minimal project so _load_project_or_exit succeeds
+        with patch("intentc.build.agents.create_from_profile", return_value=MagicMock()):
+            runner.invoke(app, ["init", "test-project"])
 
         mock_state = MagicMock()
         mock_state.list_targets.return_value = []
