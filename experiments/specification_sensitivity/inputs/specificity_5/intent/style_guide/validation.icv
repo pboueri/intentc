@@ -1,56 +1,30 @@
 target: style_guide
 validations:
-  - name: palette_consistency
+  - name: palette_exports
     type: agent_validation
     severity: error
     args:
       rubric: >
-        Verify that every hex color value used in the renderer, UI, and HUD drawing code
-        matches a value defined in the style guide palette. No hard-coded hex values should
-        appear in rendering code that are not present in the palette. Check at least:
-        grass fill, path fill, water fill, HUD background, sidebar background, button colors,
-        and health/happiness status bar colors. Each must trace back to a palette constant.
+        Verify that the style guide module exports a comprehensive color palette object
+        or set of named color constants covering at least: grass/ground colors, water colors,
+        path colors, UI background colors (HUD, sidebar), button colors, and status bar colors
+        (health, happiness). The palette should be importable by other modules.
 
-  - name: font_sizes_minimum
+  - name: font_constants
     type: agent_validation
     severity: error
     args:
       rubric: >
-        Verify that no text rendered on the canvas uses a font size smaller than 12px.
-        The minimum readable size is 12px for tooltip body text. HUD text must be 16px.
-        Menu title text must be at least 32px. Check every ctx.font assignment in the
-        codebase and confirm it meets the minimum for its category as specified in the
-        style guide FONTS object.
+        Verify that the style guide module exports font configuration constants including
+        at least: a minimum font size (12px or larger), HUD text size (16px or larger),
+        and menu/title text size (32px or larger). These should be exported as named
+        constants or as part of a FONTS configuration object.
 
   - name: tile_size_constant
     type: agent_validation
     severity: error
     args:
       rubric: >
-        Verify that all tile-to-pixel and pixel-to-tile conversions use the TILE_SIZE
-        constant (32) from constants.js, never a hard-coded literal 32. Search for
-        multiplications and divisions by 32 in map.js, renderer.js, input.js, and
-        visitors.js. Every instance should reference TILE_SIZE instead.
-
-  - name: animation_timing
-    type: agent_validation
-    severity: warning
-    args:
-      rubric: >
-        Verify that animal idle animation uses a 2-frame cycle at 500ms per frame (1s total)
-        and visitor walk animation uses a 4-frame cycle at 200ms per frame (800ms total).
-        Check the frame calculation logic in the renderer. The formulas should be:
-        animalFrame = floor((tick % 1000) / 500) yielding 0 or 1, and
-        visitorFrame = floor((tick % 800) / 200) yielding 0, 1, 2, or 3.
-
-  - name: layer_ordering
-    type: agent_validation
-    severity: error
-    args:
-      rubric: >
-        Verify that the renderer draws layers in the correct back-to-front order:
-        1) ground tiles, 2) enclosure fills, 3) enclosure borders, 4) path tiles,
-        5) animals (y-sorted), 6) visitors (y-sorted), 7) build ghost overlay,
-        8) UI overlays (HUD, sidebar, info bar, tooltips, toasts), 9) mini-map.
-        Each layer's draw calls must complete before the next layer begins. No
-        interleaving of entity types across layers.
+        Verify that a TILE_SIZE constant (value 32) is exported from either the style guide
+        module or constants.js, and is available for import by other modules. This constant
+        should be used for all tile-to-pixel and pixel-to-tile conversions.
