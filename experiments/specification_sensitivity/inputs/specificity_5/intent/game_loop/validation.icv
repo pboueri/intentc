@@ -1,0 +1,63 @@
+target: game_loop
+validations:
+  - name: fixed_timestep_accumulator
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the game loop uses a fixed-timestep accumulator pattern. The loop must:
+        (1) compute delta time from performance.now() or the RAF timestamp,
+        (2) add delta * speed to an accumulator,
+        (3) consume the accumulator in fixed-size chunks (TICK_RATE),
+        (4) call updateTick() once per chunk,
+        (5) clamp the accumulator to a maximum (e.g., 0.25s) to prevent spiral of death.
+        The update function must NOT receive a variable delta; each tick represents
+        a constant time step.
+
+  - name: state_machine_transitions
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the game implements a state machine with exactly these phases:
+        loading, menu, playing, paused, game_over. Valid transitions must be:
+        loading->menu, menu->playing, playing->paused, playing->game_over,
+        paused->playing, paused->menu, game_over->playing, game_over->menu.
+        Any attempt to perform an invalid transition must be rejected (no-op or warning).
+        The phase field must be checked before running simulation updates; updates only
+        run when phase is 'playing'.
+
+  - name: update_dispatch_order
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the per-tick update function dispatches to subsystems in the correct
+        order: (1) economy, (2) enclosures, (3) animals, (4) visitors, (5) research,
+        (6) auto-save check. Economy must run first so that food costs are deducted
+        before animal hunger is evaluated. Animals must run before visitors so that
+        visitor satisfaction reads current animal happiness.
+
+  - name: speed_control
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify the game supports three speed settings (1x, 2x, 3x) that are applied
+        as a multiplier on the accumulator fill rate. Changing speed must not cause
+        a burst of catch-up ticks. The tick size (TICK_RATE) must remain constant
+        regardless of speed setting. Only the rate at which the accumulator grows
+        should change.
+
+  - name: create_game_state_completeness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that createGameState() initializes every field used by any subsystem.
+        At minimum it must include: phase, tick, timeElapsed, speed, money (10000),
+        admissionPrice (5), animals (empty array), enclosures (empty array),
+        visitors (empty array), map (null or initialized grid), research (object with
+        all 8 node keys), camera, input state, ui state (toasts, activeTab), economy
+        tracking (history, bankruptcyTimer, peakAnimals, totalVisitors, totalRevenue),
+        audio settings (musicVolume, sfxVolume), and autoSaveTimer.

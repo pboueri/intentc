@@ -61,3 +61,5 @@ htmlcov/
 .coverage
 .coverage.*
 *.cover
+
+.playwright-mcp/

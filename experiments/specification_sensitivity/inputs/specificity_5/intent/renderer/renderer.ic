@@ -1,0 +1,391 @@
+---
+name: renderer
+depends_on:
+  - map
+  - game_loop
+tags: [core]
+---
+
+# Renderer
+
+Canvas 2D rendering engine. Draws every visual element of the game in strict layer order. Manages a camera with smooth scrolling and renders a mini-map overview.
+
+## Camera
+
+```js
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HUD_HEIGHT, SIDEBAR_WIDTH, TILE_SIZE, MAP_COLS, MAP_ROWS } from './constants.js';
+
+const CAMERA_LERP = 0.1;        // smooth scrolling interpolation factor
+const MAP_PIXEL_WIDTH = MAP_COLS * TILE_SIZE;   // 1280
+const MAP_PIXEL_HEIGHT = MAP_ROWS * TILE_SIZE;  // 960
+
+// Viewport is the canvas area minus HUD and sidebar
+const VIEWPORT_WIDTH = CANVAS_WIDTH - SIDEBAR_WIDTH;   // 1040
+const VIEWPORT_HEIGHT = CANVAS_HEIGHT - HUD_HEIGHT;     // 680
+
+/**
+ * Update camera position with smooth scrolling toward target.
+ * Clamp so the camera never shows area outside the map.
+ */
+export function updateCamera(state) {
+  // Lerp toward target
+  state.camera.x += (state.camera.targetX - state.camera.x) * CAMERA_LERP;
+  state.camera.y += (state.camera.targetY - state.camera.y) * CAMERA_LERP;
+
+  // Clamp to map bounds
+  const maxX = Math.max(0, MAP_PIXEL_WIDTH - VIEWPORT_WIDTH);
+  const maxY = Math.max(0, MAP_PIXEL_HEIGHT - VIEWPORT_HEIGHT);
+  state.camera.x = Math.max(0, Math.min(state.camera.x, maxX));
+  state.camera.y = Math.max(0, Math.min(state.camera.y, maxY));
+}
+
+/**
+ * Scroll the camera target by a pixel delta (called from input on arrow keys or edge-pan).
+ */
+export function panCamera(state, dx, dy) {
+  state.camera.targetX += dx;
+  state.camera.targetY += dy;
+}
+```
+
+## Main Render Function
+
+```js
+/**
+ * Draw one complete frame. Called every requestAnimationFrame.
+ */
+export function render(ctx, state) {
+  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  if (state.phase === 'loading') {
+    drawLoadingScreen(ctx);
+    return;
+  }
+
+  if (state.phase === 'menu') {
+    drawMenuScreen(ctx, state);
+    return;
+  }
+
+  updateCamera(state);
+
+  const cam = state.camera;
+  const tick = performance.now(); // for animations
+
+  // --- Layer 1: Ground tiles ---
+  drawGroundLayer(ctx, state.map, cam);
+
+  // --- Layer 2: Enclosure fills ---
+  for (const enc of state.enclosures) {
+    drawEnclosureFill(ctx, enc, cam);
+  }
+
+  // --- Layer 3: Enclosure borders ---
+  for (const enc of state.enclosures) {
+    drawEnclosureBorder(ctx, enc, cam, tick);
+  }
+
+  // --- Layer 4: Path tiles (drawn over enclosure fills) ---
+  drawPathOverlay(ctx, state.map, cam);
+
+  // --- Layer 5: Animals (y-sorted for overlap) ---
+  const sortedAnimals = [...state.animals].sort((a, b) => a.tileY - b.tileY);
+  for (const animal of sortedAnimals) {
+    drawAnimal(ctx, animal, cam, tick);
+  }
+
+  // --- Layer 6: Visitors (y-sorted) ---
+  const sortedVisitors = [...state.visitors].sort((a, b) => a.y - b.y);
+  for (const visitor of sortedVisitors) {
+    drawVisitor(ctx, visitor, cam, tick);
+  }
+
+  // --- Layer 7: Build ghost ---
+  if (state.input.mode === 'building' && state.input.hover) {
+    drawBuildGhost(ctx, state.input, cam);
+  }
+
+  // --- Layer 8: UI overlays ---
+  drawHUD(ctx, state);
+  drawSidebar(ctx, state);
+  drawInfoBar(ctx, state);
+  drawTooltip(ctx, state);
+  drawToasts(ctx, state, tick);
+
+  // --- Layer 9: Mini-map ---
+  drawMiniMap(ctx, state);
+
+  // --- Pause / Game Over overlays ---
+  if (state.phase === 'paused') {
+    drawPauseOverlay(ctx);
+  }
+  if (state.phase === 'game_over') {
+    drawGameOverOverlay(ctx, state);
+  }
+}
+```
+
+## Ground Layer
+
+```js
+function drawGroundLayer(ctx, map, cam) {
+  // Only draw tiles visible in the viewport (culling)
+  const startCol = Math.max(0, Math.floor(cam.x / TILE_SIZE));
+  const startRow = Math.max(0, Math.floor(cam.y / TILE_SIZE));
+  const endCol = Math.min(MAP_COLS, Math.ceil((cam.x + VIEWPORT_WIDTH) / TILE_SIZE));
+  const endRow = Math.min(MAP_ROWS, Math.ceil((cam.y + VIEWPORT_HEIGHT) / TILE_SIZE));
+
+  for (let r = startRow; r < endRow; r++) {
+    for (let c = startCol; c < endCol; c++) {
+      const tileType = map[r][c];
+      const px = c * TILE_SIZE - cam.x;
+      const py = r * TILE_SIZE - cam.y + HUD_HEIGHT;
+
+      // Checkerboard grass pattern
+      if (tileType === TILE.GRASS) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#4a8c3f' : '#5a9e4f';
+      } else {
+        ctx.fillStyle = TILE_PROPS[tileType].color;
+      }
+
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+
+      // Entrance gate decoration
+      if (tileType === TILE.ENTRANCE) {
+        ctx.fillStyle = '#654321';
+        ctx.fillRect(px + 12, py + 2, 8, 28); // gate post
+        ctx.fillStyle = '#ffd700';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('ZOO', px + 16, py + 18);
+      }
+    }
+  }
+}
+```
+
+## Enclosure Drawing
+
+```js
+const BIOME_COLORS = {
+  savanna: { fill: '#c8b060', border: '#a08830' },
+  aquatic: { fill: '#5ba0d0', border: '#3080b0' },
+  forest:  { fill: '#3a7a3a', border: '#2a5a2a' },
+  arctic:  { fill: '#e0e8f0', border: '#b0c0d0' },
+  aviary:  { fill: '#f0e8a0', border: '#d0c870' },
+};
+
+function drawEnclosureFill(ctx, enc, cam) {
+  const px = enc.col * TILE_SIZE - cam.x;
+  const py = enc.row * TILE_SIZE - cam.y + HUD_HEIGHT;
+  const w = enc.width * TILE_SIZE;
+  const h = enc.height * TILE_SIZE;
+
+  ctx.fillStyle = BIOME_COLORS[enc.biome].fill;
+  ctx.fillRect(px, py, w, h);
+
+  // Biome-specific pattern overlay
+  ctx.globalAlpha = 0.3;
+  drawBiomePattern(ctx, enc.biome, px, py, w, h);
+  ctx.globalAlpha = 1.0;
+}
+
+function drawEnclosureBorder(ctx, enc, cam, tick) {
+  const px = enc.col * TILE_SIZE - cam.x;
+  const py = enc.row * TILE_SIZE - cam.y + HUD_HEIGHT;
+  const w = enc.width * TILE_SIZE;
+  const h = enc.height * TILE_SIZE;
+
+  // Pulse red if condition < 30%
+  if (enc.condition < 30) {
+    const pulse = Math.sin(tick / 500) * 0.5 + 0.5; // 0..1 at ~1Hz
+    ctx.strokeStyle = pulse > 0.5 ? '#d9534f' : BIOME_COLORS[enc.biome].border;
+  } else {
+    ctx.strokeStyle = BIOME_COLORS[enc.biome].border;
+  }
+
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, w, h);
+
+  // Upgrade level pips (small squares in top-left corner)
+  for (let i = 0; i < enc.level; i++) {
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(px + 4 + i * 8, py + 4, 6, 6);
+  }
+}
+
+function drawBiomePattern(ctx, biome, px, py, w, h) {
+  ctx.fillStyle = '#000000';
+  switch (biome) {
+    case 'savanna':
+      // Horizontal grass tufts
+      for (let y = py + 8; y < py + h; y += 16) {
+        ctx.fillRect(px + 4, y, 8, 2);
+        ctx.fillRect(px + w - 12, y + 6, 8, 2);
+      }
+      break;
+    case 'aquatic':
+      // Wavy lines
+      ctx.beginPath();
+      for (let y = py + 10; y < py + h; y += 16) {
+        ctx.moveTo(px + 2, y);
+        for (let x = px + 2; x < px + w; x += 4) {
+          ctx.lineTo(x, y + Math.sin((x - px) * 0.3) * 2);
+        }
+      }
+      ctx.stroke();
+      break;
+    case 'forest':
+      // Dot pattern (leaves)
+      for (let y = py + 6; y < py + h; y += 12) {
+        for (let x = px + 6; x < px + w; x += 12) {
+          ctx.beginPath();
+          ctx.arc(x, y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      break;
+    case 'arctic':
+      // Diagonal hash
+      ctx.beginPath();
+      for (let i = 0; i < (w + h); i += 10) {
+        ctx.moveTo(px + i, py);
+        ctx.lineTo(px, py + i);
+      }
+      ctx.stroke();
+      break;
+    case 'aviary':
+      // Vertical bars
+      for (let x = px + 4; x < px + w; x += 8) {
+        ctx.fillRect(x, py, 1, h);
+      }
+      break;
+  }
+}
+```
+
+## Animal and Visitor Drawing
+
+See full implementations in `style_guide.ic` (Animation Specifications section). The renderer calls those exact functions:
+
+```js
+function drawAnimal(ctx, animal, cam, tick) {
+  const frame = Math.floor((tick % 1000) / 500); // 0 or 1
+  const px = animal.tileX * TILE_SIZE - cam.x;
+  const py = animal.tileY * TILE_SIZE - cam.y + HUD_HEIGHT - frame;
+
+  ctx.fillStyle = SPECIES_COLORS[animal.species];
+  ctx.beginPath();
+  ctx.arc(px + 16, py + 16, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Species letter
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(animal.species[0].toUpperCase(), px + 16, py + 16);
+
+  // Health bar above animal (only if < 100)
+  if (animal.health < 100) {
+    const barW = 24;
+    const barH = 3;
+    const barX = px + 4;
+    const barY = py + 1;
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = healthBarColor(animal.health);
+    ctx.fillRect(barX, barY, barW * (animal.health / 100), barH);
+  }
+}
+```
+
+## Build Ghost Preview
+
+```js
+function drawBuildGhost(ctx, input, cam) {
+  const enc = ENCLOSURE_DEFAULTS[input.buildType];
+  const px = input.hover.tileX * TILE_SIZE - cam.x;
+  const py = input.hover.tileY * TILE_SIZE - cam.y + HUD_HEIGHT;
+  const w = enc.width * TILE_SIZE;
+  const h = enc.height * TILE_SIZE;
+
+  ctx.globalAlpha = 0.4;
+  ctx.fillStyle = BIOME_COLORS[input.buildType].fill;
+  ctx.fillRect(px, py, w, h);
+  ctx.strokeStyle = BIOME_COLORS[input.buildType].border;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, w, h);
+  ctx.globalAlpha = 1.0;
+
+  // Red overlay if placement is invalid
+  // (isValidPlacement is checked by input module; result stored in input.placementValid)
+  if (input.placementValid === false) {
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(px, py, w, h);
+    ctx.globalAlpha = 1.0;
+  }
+}
+```
+
+## Mini-Map
+
+```js
+const MINIMAP_WIDTH = 80;
+const MINIMAP_HEIGHT = 60;
+const MINIMAP_TILE = 2;  // each tile is 2x2 pixels on mini-map
+const MINIMAP_X = VIEWPORT_WIDTH - MINIMAP_WIDTH - 10;
+const MINIMAP_Y = CANVAS_HEIGHT - MINIMAP_HEIGHT - 10;
+
+function drawMiniMap(ctx, state) {
+  // Background
+  ctx.fillStyle = '#00000080';
+  ctx.fillRect(MINIMAP_X - 2, MINIMAP_Y - 2, MINIMAP_WIDTH + 4, MINIMAP_HEIGHT + 4);
+
+  // Tiles
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let c = 0; c < MAP_COLS; c++) {
+      ctx.fillStyle = TILE_PROPS[state.map[r][c]].color;
+      ctx.fillRect(MINIMAP_X + c * MINIMAP_TILE, MINIMAP_Y + r * MINIMAP_TILE, MINIMAP_TILE, MINIMAP_TILE);
+    }
+  }
+
+  // Enclosures
+  for (const enc of state.enclosures) {
+    ctx.fillStyle = BIOME_COLORS[enc.biome].fill;
+    ctx.fillRect(
+      MINIMAP_X + enc.col * MINIMAP_TILE,
+      MINIMAP_Y + enc.row * MINIMAP_TILE,
+      enc.width * MINIMAP_TILE,
+      enc.height * MINIMAP_TILE
+    );
+  }
+
+  // Camera viewport indicator
+  const vpX = MINIMAP_X + (state.camera.x / TILE_SIZE) * MINIMAP_TILE;
+  const vpY = MINIMAP_Y + (state.camera.y / TILE_SIZE) * MINIMAP_TILE;
+  const vpW = (VIEWPORT_WIDTH / TILE_SIZE) * MINIMAP_TILE;
+  const vpH = (VIEWPORT_HEIGHT / TILE_SIZE) * MINIMAP_TILE;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(vpX, vpY, vpW, vpH);
+}
+```
+
+## Asset References for Enhanced Rendering
+
+The default rendering is fully procedural (colored shapes). For teams wanting richer visuals, replace the procedural draw calls with sprite sheet lookups:
+
+- **Terrain tiles:** Use Kenney "Top-down Shooter" tileset (https://kenney.nl/assets/top-down-shooter, CC0). Extract grass, dirt, stone, and water tiles. Scale to 32x32.
+- **Terrain tiles (alt):** Kenney "Tower Defense (Top-Down)" (https://kenney.nl/assets/tower-defense-top-down, CC0). Path and structure tiles.
+- **Animal sprites:** "Animals, Creatures, Critters, Mobs, and More!" (https://opengameart.org/content/animals-creatures-critters-mobs-and-more, CC-BY 3.0). 32x32 sprite sheets with animation frames.
+- **UI panels/buttons:** "Pixel UI Pack (750 Assets)" (https://opengameart.org/content/pixel-ui-pack-750-assets, CC0). Button sprites with normal/hover/pressed states.
+
+To integrate sprites, add an `assets.js` module that loads sprite sheet images and provides a `drawSprite(ctx, sheet, frameX, frameY, destX, destY, size)` function. Replace `ctx.fillRect` / `ctx.arc` calls in each draw function with the corresponding `drawSprite` call.
+
+## Edge Cases
+
+- **Viewport culling:** Only tiles within the visible viewport are drawn. The `startCol`/`startRow`/`endCol`/`endRow` calculation skips off-screen tiles, keeping render time proportional to the viewport, not the full map.
+- **Y-sorting:** Animals and visitors are sorted by their y-coordinate before drawing so that entities lower on screen appear in front of entities higher up. This costs O(n log n) per frame, which is acceptable for n < 500.
+- **Mini-map performance:** The mini-map redraws every frame. At 2px per tile for a 40x30 grid, that is only 2400 fillRect calls — negligible overhead.

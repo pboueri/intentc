@@ -1,0 +1,54 @@
+---
+name: auth
+depends_on:
+  - database
+tags:
+  - backend
+  - security
+---
+
+# Authentication
+
+Email/password authentication system with JWT tokens and role-based access control supporting admin and customer roles.
+
+## API Endpoints
+
+### POST /api/auth/register
+- Accepts: `{ email, password }`
+- Validates email format and password length (minimum 6 characters)
+- Checks that email is not already registered
+- Hashes password with bcrypt (salt rounds: 10)
+- Creates user with 'customer' role
+- Returns `{ token, user: { id, email, role } }`
+
+### POST /api/auth/login
+- Accepts: `{ email, password }`
+- Looks up user by email
+- Compares password against stored hash
+- Returns `{ token, user: { id, email, role } }`
+- Returns 401 with error message on invalid credentials
+
+### GET /api/auth/me
+- Requires: valid JWT in `Authorization: Bearer <token>` header
+- Returns `{ id, email, role }` for the authenticated user
+- Returns 401 if token is missing or invalid
+
+## Middleware
+
+### authMiddleware
+- Extracts JWT from Authorization header
+- Verifies token and decodes payload
+- Attaches `req.user = { id, email, role }` to the request
+- Returns 401 if token is missing, expired, or invalid
+
+### adminMiddleware
+- Must be used after authMiddleware
+- Checks that `req.user.role === 'admin'`
+- Returns 403 if user is not an admin
+
+## Requirements
+
+- JWT secret should be read from `JWT_SECRET` environment variable
+- Tokens expire after 24 hours
+- Default admin user seeded via the database seed script: email `admin@chicago-store.com`, password `admin123`
+- Return consistent error response format: `{ error: "message" }`

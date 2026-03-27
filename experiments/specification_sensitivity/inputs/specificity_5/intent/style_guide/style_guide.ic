@@ -1,0 +1,231 @@
+---
+name: style_guide
+depends_on: []
+tags: [meta, visual]
+---
+
+# Style Guide
+
+Complete visual specification for Zoo Builder. This document defines every visual parameter of the game: colors, typography, sprite dimensions, animation timings, and references to free asset resources.
+
+## Color Palette
+
+See `style_guide/palette.md` for the full palette with CSS custom property names. Summary of key colors:
+
+| Purpose | Hex | CSS Variable |
+|---------|-----|--------------|
+| Grass (primary) | `#4a8c3f` | `--color-grass` |
+| Grass (secondary) | `#5a9e4f` | `--color-grass-alt` |
+| Dirt path | `#c4a265` | `--color-dirt` |
+| Water | `#3d85c6` | `--color-water` |
+| Stone path | `#9e9e9e` | `--color-path` |
+| HUD background | `#1a1a2ecc` | `--color-hud-bg` |
+| Sidebar background | `#1a1a2eee` | `--color-sidebar-bg` |
+| UI text | `#ffffff` | `--color-text` |
+| UI text secondary | `#b0b0cc` | `--color-text-secondary` |
+| Button normal | `#3a3a5c` | `--color-btn` |
+| Button hover | `#5a5a8c` | `--color-btn-hover` |
+| Button disabled | `#2a2a3c` | `--color-btn-disabled` |
+| Accent (positive) | `#5cb85c` | `--color-positive` |
+| Accent (warning) | `#f0ad4e` | `--color-warning` |
+| Accent (danger) | `#d9534f` | `--color-danger` |
+| Money gold | `#ffd700` | `--color-money` |
+
+## Typography
+
+All text is rendered via the Canvas 2D `fillText` API. No web fonts are loaded; the game uses the system font stack.
+
+```js
+const FONT_FAMILY = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+// Font sizes and weights by context:
+const FONTS = {
+  hud:          { size: 16, weight: 'bold',   color: '#ffffff' },
+  sidebar_title:{ size: 18, weight: 'bold',   color: '#ffffff' },
+  sidebar_item: { size: 14, weight: 'normal', color: '#b0b0cc' },
+  tooltip_title:{ size: 14, weight: 'bold',   color: '#ffffff' },
+  tooltip_body: { size: 12, weight: 'normal', color: '#d0d0e0' },
+  menu_title:   { size: 32, weight: 'bold',   color: '#ffffff' },
+  menu_button:  { size: 20, weight: 'bold',   color: '#ffffff' },
+  info_bar:     { size: 14, weight: 'normal', color: '#ffffff' },
+  toast:        { size: 14, weight: 'bold',   color: '#ffffff' },
+  score_value:  { size: 28, weight: 'bold',   color: '#ffd700' },
+  score_label:  { size: 16, weight: 'normal', color: '#b0b0cc' },
+};
+```
+
+## Tile and Sprite Dimensions
+
+| Element | Width | Height | Notes |
+|---------|-------|--------|-------|
+| Map tile | 32px | 32px | Ground, path, water, entrance |
+| Animal sprite | 32px | 32px | Centered within tile; 2-frame idle animation |
+| Visitor sprite | 16px | 16px | Centered on path tile; 4-frame walk animation |
+| Enclosure border | 2px | -- | Drawn as a stroked rectangle around enclosure tiles |
+| Mini-map | 80px | 60px | Bottom-right corner, 2px per tile |
+| Tooltip | max 200px | auto | Word-wrapped, 8px padding, rounded 4px corners |
+| Toast | 280px | 36px | Top-center, slides down with 200ms ease-out |
+
+## Animation Specifications
+
+### Animal Idle Animation
+- **Frames:** 2 (resting pose, slight shift)
+- **Cycle time:** 500ms per frame (1 second full cycle)
+- **Implementation:** Toggle between frame 0 and frame 1. Frame 0 is the base sprite. Frame 1 shifts the sprite 1px up (breathing effect).
+
+```js
+function getAnimalFrame(tick) {
+  return Math.floor((tick % 1000) / 500); // 0 or 1
+}
+
+function drawAnimal(ctx, animal, cameraX, cameraY, tick) {
+  const frame = getAnimalFrame(tick);
+  const px = animal.tileX * TILE_SIZE - cameraX;
+  const py = animal.tileY * TILE_SIZE - cameraY - frame; // 1px bounce
+  const color = SPECIES_COLORS[animal.species];
+
+  // Body circle
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(px + 16, py + 16, 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Species initial letter
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(animal.species[0].toUpperCase(), px + 16, py + 16);
+}
+```
+
+### Visitor Walk Animation
+- **Frames:** 4 (stand, step-left, stand, step-right)
+- **Cycle time:** 200ms per frame (800ms full cycle)
+- **Implementation:** Cycle through 4 offsets for a bobbing walk effect.
+
+```js
+const VISITOR_WALK_OFFSETS = [0, -1, 0, 1]; // vertical pixel offset per frame
+
+function drawVisitor(ctx, visitor, cameraX, cameraY, tick) {
+  const frame = Math.floor((tick % 800) / 200);
+  const px = visitor.x * TILE_SIZE - cameraX + 8; // center in tile
+  const py = visitor.y * TILE_SIZE - cameraY + 8 + VISITOR_WALK_OFFSETS[frame];
+
+  ctx.fillStyle = visitor.color;
+  ctx.fillRect(px - 4, py - 4, 8, 8);
+
+  // Small "head" circle
+  ctx.beginPath();
+  ctx.arc(px, py - 6, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+```
+
+### Enclosure Pulse (low condition warning)
+- When enclosure condition < 30%, the border pulses between normal color and `#d9534f` (danger red) at 1 Hz.
+
+### Toast Slide-in
+- Duration: 200ms ease-out from y=-36 to y=50 (below HUD bar).
+- Hold for 3000ms, then fade out over 300ms (opacity 1.0 to 0.0).
+
+## Procedural Rendering (No External Sprites)
+
+The game uses **procedural drawing only** — colored shapes, circles, rectangles, and text rendered directly on the canvas. No external sprite sheet images are required. This eliminates asset loading failures and keeps the bundle size minimal.
+
+However, for teams wishing to enhance the visuals with actual sprite art, the following free asset resources are compatible and recommended:
+
+## Free Asset References
+
+### Animal Sprites
+
+1. **"Animals, Creatures, Critters, Mobs, and More!"** by Calciumtrice
+   - URL: https://opengameart.org/content/animals-creatures-critters-mobs-and-more
+   - License: CC-BY 3.0
+   - Contents: 32x32 pixel art sprites for dozens of animals including birds, mammals, reptiles. Includes idle and walk animation frames.
+   - Usage: Use as direct replacements for the procedural animal circles. Each species maps to one sprite sheet row. Slice into 32x32 frames.
+
+2. **"LPC Style Farm Animals"** by Daniel Eddeland
+   - URL: https://opengameart.org/content/lpc-style-farm-animals
+   - License: CC-BY-SA 3.0 / GPL 3.0
+   - Contents: Farm animals (cow, pig, sheep, chicken, llama) with walking and eating animations at 32x32.
+   - Usage: Suitable for a domesticated-animal extension. The walk animations can serve as visitor-following behavior for petting-zoo features.
+
+3. **"Street Animal Pixel Art"**
+   - URL: https://opengameart.org/content/street-animal-pixel-art
+   - License: CC0 (public domain)
+   - Contents: Cat, dog, and various street animal sprites in pixel art style.
+   - Usage: Good for decorative ambient animals that wander the zoo grounds outside enclosures.
+
+### Terrain and Tilesets
+
+4. **Kenney "Top-down Shooter" Tileset**
+   - URL: https://kenney.nl/assets/top-down-shooter
+   - License: CC0 (public domain)
+   - Contents: 580 top-down assets at various sizes. Includes grass, dirt, stone, and water tiles.
+   - Usage: Extract the terrain tiles and scale to 32x32. The grass and dirt tiles work as direct replacements for the procedural ground fill. Water tiles have edge variations for natural-looking ponds.
+
+5. **Kenney "Tower Defense (Top-Down)"**
+   - URL: https://kenney.nl/assets/tower-defense-top-down
+   - License: CC0 (public domain)
+   - Contents: 300 top-down tiles including paths, terrain, and structures.
+   - Usage: Path tiles are ideal for zoo walkways. Structure tiles can represent upgraded enclosure fencing.
+
+### UI Elements
+
+6. **"Pixel UI Pack (750 Assets)"**
+   - URL: https://opengameart.org/content/pixel-ui-pack-750-assets
+   - License: CC0 (public domain)
+   - Contents: 750 pixel-art UI elements: buttons, panels, sliders, checkboxes, progress bars, icons.
+   - Usage: Replace the procedurally drawn buttons and panels. The progress bars work for research progress and health/happiness indicators. Button sprites include normal, hover, and pressed states.
+
+### Audio Assets (see also audio.ic)
+
+7. **"Royalty Free Game Music Loops"**
+   - URL: https://opengameart.org/content/royalty-free-game-music-loops
+   - License: Royalty-free
+   - Contents: Multiple looping background tracks in various moods.
+   - Usage: Select a light, cheerful loop for gameplay background music.
+
+## Species Color Map (Procedural Fallback)
+
+When not using sprite sheets, each species is rendered as a colored circle with a letter initial:
+
+```js
+const SPECIES_COLORS = {
+  lion:        '#d4a017', // golden
+  elephant:    '#808080', // gray
+  penguin:     '#1a1a2e', // dark navy
+  monkey:      '#8b4513', // brown
+  giraffe:     '#daa520', // goldenrod
+  polar_bear:  '#f0f0ff', // near-white
+  crocodile:   '#2e8b57', // sea green
+  parrot:      '#ff4500', // orange-red
+  dolphin:     '#4682b4', // steel blue
+  eagle:       '#654321', // dark brown
+};
+```
+
+## Enclosure Biome Visuals
+
+| Biome | Fill Color | Border Color | Pattern |
+|-------|-----------|-------------|---------|
+| Savanna | `#c8b060` | `#a08830` | Horizontal grass tufts (2px lines at random y within tile) |
+| Aquatic | `#5ba0d0` | `#3080b0` | Wave pattern (sine-wave 1px line) |
+| Forest | `#3a7a3a` | `#2a5a2a` | Dot pattern (small 2px circles for leaves) |
+| Arctic | `#e0e8f0` | `#b0c0d0` | Diagonal hash lines (ice crystal hint) |
+| Aviary | `#f0e8a0` | `#d0c870` | Vertical bars (cage wire, 4px spacing) |
+
+## Rendering Layer Order
+
+Drawn back-to-front, each layer fully before the next:
+
+1. **Ground tiles** — Grass fill for every tile, then dirt/water/path overrides.
+2. **Enclosure fills** — Biome-colored rectangles for enclosure interiors.
+3. **Enclosure borders** — 2px stroked rectangles in biome border color.
+4. **Path tiles** — Stone-colored tiles where visitors walk.
+5. **Animals** — Colored circles with species initials, drawn in y-order for overlap.
+6. **Visitors** — Small colored rectangles/circles, drawn in y-order.
+7. **Build ghost** — Semi-transparent (alpha 0.4) enclosure preview during build mode.
+8. **UI overlays** — HUD bar, sidebar, info bar, tooltips, toasts (drawn last, always on top).
+9. **Mini-map** — 80x60px in bottom-right corner of the main canvas area, above UI.

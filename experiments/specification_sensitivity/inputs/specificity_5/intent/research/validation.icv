@@ -1,0 +1,57 @@
+target: research
+validations:
+  - name: tech_tree_completeness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify all 8 research nodes are defined: efficient_feeding, breeding_program,
+        advanced_enclosures, marketing, exotic_species, veterinary_care, gift_shop,
+        night_zoo. Each must have: name, description, cost, researchTicks, prerequisites
+        (array of node keys), effect description. The prerequisite chains must be:
+        efficient_feeding -> breeding_program -> advanced_enclosures -> veterinary_care,
+        breeding_program -> exotic_species, marketing -> gift_shop, marketing -> night_zoo.
+
+  - name: prerequisite_enforcement
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that starting research on a node checks all prerequisites are unlocked.
+        If any prerequisite is not yet unlocked, the function must return a failure
+        with a reason naming the missing prerequisite. Test: attempting to start
+        breeding_program before efficient_feeding is unlocked must fail. Attempting
+        to start efficient_feeding with no prerequisites must succeed (if funds available).
+
+  - name: single_active_research
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that only one research node can be active at a time. Attempting to start
+        a second research while one is already in progress must return a failure with
+        reason "Already researching another node". When the active research completes,
+        activeResearch must be set to null, allowing a new research to begin.
+
+  - name: progress_and_completion
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that each tick increments the active research node's progress by 1.
+        When progress reaches the node's researchTicks value, the node must be marked
+        as unlocked (unlocked: true), a toast notification must fire with the node name,
+        and activeResearch must be set to null. Progress must not exceed researchTicks.
+
+  - name: research_effects
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify each research node's effect is implemented in the relevant subsystem:
+        (1) efficient_feeding halves food cost in animals.js, (2) breeding_program
+        doubles BREED_CHANCE_PER_TICK, (3) advanced_enclosures reduces upgrade cost
+        by 30%, (4) marketing multiplies arrival rate by 1.5, (5) exotic_species
+        allows cross-biome placement, (6) veterinary_care adds +10 to sick animals'
+        target happiness, (7) gift_shop multiplies admission price by 1.1,
+        (8) night_zoo multiplies arrival rate by 1.3.

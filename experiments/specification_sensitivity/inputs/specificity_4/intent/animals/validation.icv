@@ -1,0 +1,44 @@
+target: animals
+validations:
+  - name: purchase_and_place_animal
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the player can purchase an animal from the shop and
+        assign it to a compatible enclosure. The animal should appear
+        visually inside the enclosure. The player's money should decrease
+        by the animal's base cost. Attempting to place an animal in an
+        incompatible biome should fail. The animal count in the HUD should
+        update.
+  - name: hunger_and_happiness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that animal hunger increases over time and affects happiness.
+        An animal that is not fed (or in a zoo with no income) should
+        gradually become hungrier. As hunger increases past 80, happiness
+        should decline noticeably. Selecting an animal should show its
+        current hunger and happiness values in the info panel, and these
+        values should change over time.
+  - name: breeding_works
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that breeding produces new animals. Place two animals of the
+        same species in an enclosure and ensure they are happy (happiness
+        above 80). Over time, a new baby animal should appear in the same
+        enclosure. The total animal count should increase. The baby should
+        be visible as a new entity in the enclosure.
+  - name: animal_death
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that animals die when their health reaches zero. If an
+        animal is left to starve long enough (hunger at 100 for a sustained
+        period), its health should decline to zero and the animal should be
+        removed from the game. The animal count should decrease and the
+        enclosure should show one fewer occupant.

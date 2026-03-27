@@ -1,0 +1,283 @@
+---
+name: research
+depends_on:
+  - game_loop
+  - economy
+tags: [gameplay]
+---
+
+# Research
+
+A tech tree of 8 unlockable nodes that provide passive bonuses to the zoo. Research requires spending money and waiting for progress to complete. Nodes have prerequisites forming a directed graph. The research system provides mid-to-late-game goals that reward sustained play.
+
+## Tech Tree Graph
+
+```
+                    Efficient Feeding ($2,000)
+                           |
+                    Breeding Program ($3,000)
+                      /           \
+      Advanced Enclosures       Exotic Species
+           ($4,500)                ($6,750)
+               |
+        Veterinary Care
+           ($6,750)
+
+                    Marketing ($2,000)
+                      /           \
+              Gift Shop           Night Zoo
+              ($4,500)            ($4,500)
+```
+
+## Research Node Definitions
+
+```js
+export const RESEARCH_NODES = {
+  efficient_feeding: {
+    name: 'Efficient Feeding',
+    description: 'Advanced food processing reduces feeding costs by 50%.',
+    cost: 2000,
+    researchTicks: 30,          // ticks to complete
+    prerequisites: [],
+    effect: 'Food cost per animal is halved.',
+    icon: 'F',
+  },
+  breeding_program: {
+    name: 'Breeding Program',
+    description: 'Improved breeding techniques double the chance of offspring each tick.',
+    cost: 3000,
+    researchTicks: 45,
+    prerequisites: ['efficient_feeding'],
+    effect: 'BREED_CHANCE_PER_TICK doubled from 0.02 to 0.04.',
+    icon: 'B',
+  },
+  advanced_enclosures: {
+    name: 'Advanced Enclosures',
+    description: 'Stronger materials reduce enclosure upgrade costs by 30%.',
+    cost: 4500,
+    researchTicks: 60,
+    prerequisites: ['breeding_program'],
+    effect: 'Enclosure upgrade cost multiplied by 0.7.',
+    icon: 'E',
+  },
+  marketing: {
+    name: 'Marketing',
+    description: 'Aggressive advertising increases visitor arrival rate by 50%.',
+    cost: 2000,
+    researchTicks: 30,
+    prerequisites: [],
+    effect: 'calculateArrivalRate result multiplied by 1.5.',
+    icon: 'M',
+  },
+  exotic_species: {
+    name: 'Exotic Species',
+    description: 'Cross-biome knowledge allows placing animals in non-native enclosures (with a happiness penalty).',
+    cost: 6750,
+    researchTicks: 75,
+    prerequisites: ['breeding_program'],
+    effect: 'Animals can be placed in any biome enclosure. Biome mismatch penalty still applies.',
+    icon: 'X',
+  },
+  veterinary_care: {
+    name: 'Veterinary Care',
+    description: 'On-site veterinarians automatically treat sick animals, boosting their recovery.',
+    cost: 6750,
+    researchTicks: 75,
+    prerequisites: ['advanced_enclosures'],
+    effect: 'Sick animals gain +10 to target happiness, accelerating recovery.',
+    icon: 'V',
+  },
+  gift_shop: {
+    name: 'Gift Shop',
+    description: 'A gift shop near the exit generates 10% more revenue per visitor.',
+    cost: 4500,
+    researchTicks: 50,
+    prerequisites: ['marketing'],
+    effect: 'Each visitor admission price multiplied by 1.1.',
+    icon: 'G',
+  },
+  night_zoo: {
+    name: 'Night Zoo',
+    description: 'Extended operating hours attract 30% more visitors.',
+    cost: 4500,
+    researchTicks: 50,
+    prerequisites: ['marketing'],
+    effect: 'calculateArrivalRate result multiplied by 1.3 (stacks with Marketing).',
+    icon: 'N',
+  },
+};
+```
+
+## Research State Shape
+
+The research state is stored in `state.research`, keyed by node ID:
+
+```js
+// Initialized in createGameState():
+research: {
+  efficient_feeding:   { unlocked: false, progress: 0 },
+  breeding_program:    { unlocked: false, progress: 0 },
+  advanced_enclosures: { unlocked: false, progress: 0 },
+  marketing:           { unlocked: false, progress: 0 },
+  exotic_species:      { unlocked: false, progress: 0 },
+  veterinary_care:     { unlocked: false, progress: 0 },
+  gift_shop:           { unlocked: false, progress: 0 },
+  night_zoo:           { unlocked: false, progress: 0 },
+},
+activeResearch: null,  // node key currently being researched, or null
+```
+
+## Starting Research
+
+```js
+import { playSound } from './audio.js';
+
+/**
+ * Begin researching a node. Only one node can be researched at a time.
+ * Prerequisites must already be unlocked. Cost is paid upfront.
+ */
+export function startResearch(state, nodeKey) {
+  const node = RESEARCH_NODES[nodeKey];
+  if (!node) return { success: false, reason: 'Unknown research node' };
+
+  const nodeState = state.research[nodeKey];
+  if (nodeState.unlocked) return { success: false, reason: 'Already unlocked' };
+  if (state.activeResearch) return { success: false, reason: 'Already researching another node' };
+
+  // Check prerequisites
+  for (const prereq of node.prerequisites) {
+    if (!state.research[prereq].unlocked) {
+      return { success: false, reason: `Prerequisite "${RESEARCH_NODES[prereq].name}" not unlocked` };
+    }
+  }
+
+  // Check funds
+  if (state.money < node.cost) {
+    return { success: false, reason: 'Insufficient funds' };
+  }
+
+  // Pay cost and begin research
+  state.money -= node.cost;
+  state.activeResearch = nodeKey;
+  state.research[nodeKey].progress = 0;
+
+  return { success: true };
+}
+```
+
+## Update (Progress Tick)
+
+```js
+/**
+ * Advance active research by one tick. Called from the game loop's updateTick.
+ */
+export function updateResearch(state) {
+  if (!state.activeResearch) return;
+
+  const nodeKey = state.activeResearch;
+  const node = RESEARCH_NODES[nodeKey];
+  const nodeState = state.research[nodeKey];
+
+  nodeState.progress += 1;
+
+  if (nodeState.progress >= node.researchTicks) {
+    // Research complete
+    nodeState.unlocked = true;
+    nodeState.progress = node.researchTicks;
+    state.activeResearch = null;
+
+    addToast(state, `Research complete: ${node.name}!`);
+    playSound('research_complete');
+  }
+}
+```
+
+## Getting Research Info for UI
+
+```js
+/**
+ * Get display data for all research nodes.
+ */
+export function getResearchDisplay(state) {
+  return Object.entries(RESEARCH_NODES).map(([key, node]) => {
+    const nodeState = state.research[key];
+    const prereqsMet = node.prerequisites.every(p => state.research[p].unlocked);
+    const canAfford = state.money >= node.cost;
+    const isActive = state.activeResearch === key;
+
+    return {
+      key,
+      name: node.name,
+      description: node.description,
+      cost: node.cost,
+      icon: node.icon,
+      unlocked: nodeState.unlocked,
+      progress: nodeState.progress,
+      totalTicks: node.researchTicks,
+      progressPercent: nodeState.unlocked ? 100 : Math.round((nodeState.progress / node.researchTicks) * 100),
+      prereqsMet,
+      canAfford,
+      isActive,
+      available: prereqsMet && canAfford && !nodeState.unlocked && !state.activeResearch,
+    };
+  });
+}
+```
+
+## Research Tab Rendering
+
+The Research tab in the sidebar shows all 8 nodes as a vertical list. Each node is rendered as a card:
+
+```
++--[220px]--------------------------------+
+| [Icon] Node Name                   $cost |
+| [======progress bar==========]    XX%   |
+| Status: Available / Locked / Active      |
++-----------------------------------------+
+```
+
+- **Unlocked nodes:** Green checkmark icon, grayed-out card, full progress bar.
+- **Active node:** Animated progress bar filling, "Researching..." label.
+- **Available nodes:** White text, clickable. Shows cost.
+- **Locked nodes (prereqs not met):** Dimmed card, "Requires: [prereq name]" in red.
+- **Too expensive:** Dimmed cost label, "Insufficient funds" hint.
+
+### Progress Bar Rendering
+
+```js
+function drawResearchProgressBar(ctx, x, y, w, h, fraction) {
+  // Background
+  ctx.fillStyle = '#333333';
+  ctx.fillRect(x, y, w, h);
+
+  // Fill
+  ctx.fillStyle = fraction >= 1.0 ? '#5cb85c' : '#4682b4';
+  ctx.fillRect(x, y, w * Math.min(1, fraction), h);
+
+  // Border
+  ctx.strokeStyle = '#505078';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+}
+```
+
+## Research Tree Layout (Visual Graph)
+
+For a future "tree view" mode, the research nodes are laid out in a directed graph:
+
+```
+Column 0 (x=0):    Efficient Feeding     Marketing
+Column 1 (x=1):    Breeding Program       |
+Column 2 (x=2):    Advanced Enclosures   Gift Shop    Night Zoo
+                    Exotic Species
+Column 3 (x=3):    Veterinary Care
+```
+
+Prerequisite arrows connect nodes. This layout can be rendered as a separate canvas overlay or a dedicated research screen.
+
+## Edge Cases
+
+- **Only one active research:** Starting a new research while another is in progress is rejected. The player must wait for the current research to complete.
+- **Prerequisites chain:** Veterinary Care requires Advanced Enclosures, which requires Breeding Program, which requires Efficient Feeding. The full chain costs $2000 + $3000 + $4500 + $6750 = $16,250 and takes 30 + 45 + 60 + 75 = 210 ticks.
+- **Cost paid upfront:** The research cost is deducted when research begins, not when it completes. If the player goes bankrupt during research, the research still progresses (it has already been paid for).
+- **Save/load with active research:** The `activeResearch` field and each node's `progress` are serialized. On load, research resumes from where it left off.

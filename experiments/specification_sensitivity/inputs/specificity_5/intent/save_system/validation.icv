@@ -1,0 +1,59 @@
+target: save_system
+validations:
+  - name: serialize_deserialize_roundtrip
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that serializeState followed by deserializeState produces a game state
+        equivalent to the original. Key checks: (1) money, tick, timeElapsed, speed,
+        admissionPrice match exactly, (2) animals array has the same length with
+        matching species, happiness, hunger, health, (3) enclosures array preserves
+        biome, position, level, condition, capacity, (4) research node states
+        (unlocked, progress) match, (5) visitor viewedEnclosures Sets are correctly
+        converted to Arrays and back. Paths may be null after deserialization (re-computed).
+
+  - name: auto_save_interval
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify auto-save triggers every 60 seconds of game time. The autoSaveTimer
+        must increment each tick and reset to 0 after saving. Auto-save must write
+        to slot 0. A toast notification must appear confirming the save. Auto-save
+        must only run during the 'playing' phase, not during pause or game_over.
+
+  - name: three_save_slots
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the save system supports exactly 3 slots (indexed 0, 1, 2). Each slot
+        can be independently saved to, loaded from, and deleted. Attempting to use
+        slot index < 0 or >= 3 must be rejected. The loadSaveSlots function must
+        return metadata for all 3 slots including label, timestamp, and empty/corrupted
+        status without loading the full state data.
+
+  - name: corrupt_data_handling
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the save system handles corrupt data gracefully. If localStorage
+        contains invalid JSON for a slot, the slot should be reported as corrupted
+        (not crash the game). If deserializeState receives malformed data, it must
+        return { success: false, error: "..." } with a descriptive error message.
+        Missing fields in saved data must be filled with sensible defaults using
+        nullish coalescing or similar patterns.
+
+  - name: version_migration
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify the save system includes a version field (SAVE_VERSION) in serialized
+        data and checks it during deserialization. Saves from newer versions (higher
+        than SAVE_VERSION) must be rejected with a clear error. Saves from older
+        versions must be migrated via a migrateState function that incrementally
+        updates the data structure. The migration function must exist even if no
+        migrations are currently needed.

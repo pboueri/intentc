@@ -1,0 +1,71 @@
+---
+name: visitors
+depends_on:
+  - map
+  - enclosures
+tags: [gameplay]
+---
+
+# Visitors
+
+Visitors are the connective tissue between the zoo's animals and its economy. They arrive at the entrance gate, walk along paths to view enclosures, accumulate satisfaction based on what they see, and eventually leave. Their arrival rate is governed by the economy module's demand curve, and each visitor pays the admission price upon entry. Visitors are not directly controllable by the player — they are an autonomous feedback signal that rewards good zoo design.
+
+Each visitor follows a simple state machine: entering, walking, viewing, and leaving. When a visitor spawns at the entrance, they compute a path to the nearest reachable enclosure using the map's A* pathfinding. They walk along this path tile by tile. When they arrive at an enclosure's frontage, they stop and "view" it for a fixed duration, gaining satisfaction based on the animals inside and their happiness. After viewing, they pick another unvisited enclosure or, if they have seen them all (or none are reachable), they walk back to the entrance and despawn.
+
+Visitors provide visual life to the zoo. They appear as small colored dots flowing along paths, clustering at popular enclosures, and streaming in and out of the entrance. Their density is a direct visual indicator of the zoo's success — a packed zoo with visitors everywhere looks and feels thriving.
+
+## Data Structures
+
+```js
+// Individual visitor object
+{
+  id: "vis_001",
+  type: "visitor",
+  x: 20,                 // current tile x (fractional for smooth movement)
+  y: 29,                 // current tile y
+  path: [{x: 20, y: 28}, {x: 20, y: 27}, ...],  // remaining path tiles
+  pathIndex: 0,
+  state: "entering",     // "entering" | "walking" | "viewing" | "leaving"
+  satisfaction: 50,       // 0–100
+  viewTimer: 0,           // ticks spent viewing current enclosure
+  visitedEnclosures: [],  // ids of enclosures already viewed
+  color: "#E091C9",       // random pastel color for rendering
+}
+```
+
+## Key Function Signatures
+
+```js
+// Attempt to spawn a new visitor at the entrance based on arrival rate
+// May or may not spawn depending on probability check
+function spawnVisitor(state, arrivalRate) -> void
+
+// Update a single visitor for one tick: movement, state transitions
+function updateVisitor(visitor, state, dt) -> void
+
+// Update all visitors in the state
+function updateVisitors(state, dt) -> void
+
+// Remove visitors that have left the zoo (reached entrance in leaving state)
+function removeExitedVisitors(state) -> void
+
+// Pick the next enclosure for a visitor to visit
+// Returns the enclosure or null if all have been visited
+function pickNextEnclosure(visitor, state) -> enclosure | null
+
+// Calculate satisfaction gained from viewing an enclosure
+function calculateViewSatisfaction(enclosure, animals) -> number
+```
+
+## Behavioral Rules
+
+- Visitor spawning: each tick, a random check against `arrivalRate` determines if a new visitor spawns. If `Math.random() < arrivalRate`, one visitor is created at the entrance tile (20, 29).
+- Movement speed: visitors move at 0.05 tiles per tick (roughly 3 tiles per second at normal speed). They interpolate smoothly between tile centers.
+- State transitions: entering -> walking (immediately after spawn and path is computed), walking -> viewing (when arriving at enclosure frontage), viewing -> walking (after viewTimer reaches 120 ticks), walking -> leaving (when no more enclosures to visit), leaving -> removed (when reaching entrance tile).
+- Viewing satisfaction: `satisfaction += (animalCount * 2 + avgHappiness * 0.3)` for the enclosure being viewed. Satisfaction is clamped to 0-100.
+- Path computation happens when a visitor transitions to walking state. The path goes from current position to the frontage tile of the target enclosure. If no path exists (blocked), the visitor skips that enclosure and tries another.
+- Visitors walk on tiles of type "path", "grass", or "entrance". They cannot walk through tiles occupied by enclosures.
+- When a visitor leaves, their satisfaction is not used for any further calculation (it existed mainly for potential future features like ratings). The visitor is simply removed.
+- Maximum simultaneous visitors: 200. If 200 visitors are present, no new visitors spawn until some leave. This prevents performance degradation.
+- Visitors are rendered as small circles (radius 3) at their interpolated pixel position, using the random pastel color assigned at creation.
+- If no enclosures exist when a visitor spawns, they remain at the entrance for 60 ticks, then transition to leaving state.

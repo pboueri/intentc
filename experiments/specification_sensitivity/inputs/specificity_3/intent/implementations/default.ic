@@ -1,0 +1,47 @@
+---
+name: default
+tags: [meta, implementation]
+---
+
+# Implementation
+
+Single-page JavaScript application rendered entirely with HTML5 Canvas. No external game frameworks or UI libraries.
+
+## Stack
+
+- **Language:** Vanilla JavaScript (ES modules)
+- **Rendering:** HTML5 Canvas 2D context
+- **Bundling:** Vite for dev server and production build
+- **Package manager:** npm
+- **Testing:** Vitest for unit tests
+
+## Game Loop
+
+The game uses a main loop driven by `requestAnimationFrame`. Each tick performs two phases in order:
+
+1. **Update** — Advance the simulation by one time step. This includes updating the economy (collecting revenue, deducting costs), processing animal state (hunger, happiness, health, breeding), degrading enclosures, and spawning or moving visitors.
+2. **Render** — Draw the current frame. This means rendering the tile grid, all enclosures and their contents, visitor sprites walking along paths, and the HUD overlay showing financial information.
+
+A delta-time value is passed through the update phase so that simulation speed is consistent regardless of frame rate.
+
+## Map & Input
+
+The zoo map is a 2D tile grid. Each tile has a fixed pixel size and the camera can pan across the map. The player interacts with the game through mouse and touch events on the canvas — clicking or tapping tiles to place enclosures, selecting animals from a purchase panel, and clicking UI buttons for price adjustments and upgrades.
+
+Input handling translates screen coordinates to tile coordinates and dispatches actions to the game state.
+
+## State Management
+
+All game state lives in a central state object that is passed through update and render functions. This object contains the current budget, the list of placed enclosures, the list of animals and their attributes, visitor data, and the current admission price. There is no component framework or reactive binding — the state is a plain data structure mutated by update logic and read by the renderer.
+
+## Module Organization
+
+The codebase is organized into focused modules:
+
+- **Game loop** — The requestAnimationFrame loop, delta-time calculation, and pause/unpause control.
+- **State** — The central state object and initialization logic.
+- **Renderer** — All Canvas drawing code: the tile grid, enclosures, animals, visitors, and HUD.
+- **Input** — Mouse and touch event listeners, coordinate translation, and action dispatch.
+- **Entities** — Data definitions and update logic for animals, enclosures, visitors, and the economy.
+
+Each module exports functions that operate on the shared state. There is no class hierarchy — the design is functional and data-oriented.

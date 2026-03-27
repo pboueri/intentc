@@ -1,0 +1,57 @@
+target: input
+validations:
+  - name: input_state_machine
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the input module implements a state machine with modes: idle, selecting,
+        building, dragging. Transitions must follow: idle->building (via build button or
+        number key), idle->selecting (via clicking an entity), idle->dragging (via
+        middle-mouse-down), building->idle (via Escape, right-click, or successful
+        placement), selecting->idle (via Escape or clicking empty space),
+        dragging->idle (via mouse-up). Invalid mode transitions must not occur.
+
+  - name: coordinate_translation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that mouse event coordinates are correctly translated from screen space
+        to tile space. The translation must account for: (1) the canvas CSS scaling
+        (getBoundingClientRect ratio), (2) the camera offset, (3) the HUD bar height
+        offset. A click at screen pixel (x, y) must map to tile
+        floor((x + camera.x) / TILE_SIZE), floor((y - HUD_HEIGHT + camera.y) / TILE_SIZE).
+        Clicks in the HUD or sidebar area must not be converted to tile coordinates.
+
+  - name: keyboard_shortcuts
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify the following keyboard shortcuts are bound and functional: Escape (cancel
+        build/selection or toggle pause), Space (toggle pause), 1-5 (select biome types
+        for build mode), Arrow keys (pan camera), Tab (cycle sidebar tabs). Each shortcut
+        must call preventDefault() on the event to avoid browser default behavior. Shortcuts
+        must only function when the game phase is 'playing' or 'paused'.
+
+  - name: tooltip_hover
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify that hovering over an entity for a brief period displays a tooltip with
+        relevant information. For animals: species name, happiness, hunger, health. For
+        enclosures: biome type, level, animal count/capacity, condition percentage. The
+        tooltip must disappear when the mouse moves away from the entity.
+
+  - name: right_click_context_menu
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify that right-clicking on an entity opens a context menu with relevant actions.
+        For enclosures: repair, upgrade, demolish. For animals: view info, move. The
+        browser's default context menu must be suppressed (preventDefault on contextmenu
+        event). Right-clicking in build mode must cancel build mode instead of opening a
+        context menu.

@@ -1,0 +1,63 @@
+---
+name: renderer
+depends_on:
+  - map
+tags: [core]
+---
+
+# Renderer
+
+The renderer is responsible for all visual output. It draws the tile grid, all game entities (enclosures, animals, visitors), and UI overlays (HUD, sidebar, info panel) onto the HTML5 Canvas 2D context every frame. The renderer does not modify game state — it is a pure read-only consumer of the state object.
+
+A camera system supports panning so the player can scroll around the zoo. The camera tracks an offset in pixel coordinates and all world-space drawing is shifted by this offset. The player pans by holding arrow keys or by moving the mouse to the edge of the canvas. The camera is clamped so it cannot scroll beyond the map boundaries. There is no zoom — the tile size is fixed at 32x32 pixels.
+
+Drawing uses simple geometric shapes rather than loaded image assets. Enclosures are drawn as colored rectangles with a border, tinted to match their biome. Animals are drawn as small filled circles with a species-specific color. Visitors are drawn as tiny dots. This keeps the rendering code lightweight and avoids asset loading complexity while still producing a clear, readable game view.
+
+## Data Structures
+
+```js
+// Camera object (stored in state or passed separately)
+{
+  x: 0,    // pixel offset from world origin
+  y: 0,
+  speed: 8, // pixels per frame when panning
+}
+```
+
+## Key Function Signatures
+
+```js
+// Top-level render call — draws everything for one frame
+function render(state, ctx) -> void
+
+// Draw the tile grid with camera offset applied
+function renderMap(ctx, map, camera) -> void
+
+// Draw all entities (enclosures, animals, visitors) with camera offset
+function renderEntities(ctx, state, camera) -> void
+
+// Draw an individual enclosure as a colored rectangle
+function renderEnclosure(ctx, enclosure, camera) -> void
+
+// Draw an individual animal as a colored circle
+function renderAnimal(ctx, animal, camera) -> void
+
+// Draw an individual visitor as a small dot
+function renderVisitor(ctx, visitor, camera) -> void
+
+// Draw all UI overlays (HUD, sidebar, info panel) — no camera offset
+function renderUI(ctx, state) -> void
+```
+
+## Behavioral Rules
+
+- The render function is called once per animation frame, after all update ticks for that frame have completed.
+- All world-space drawing (map tiles, entities) is offset by `(camera.x, camera.y)`. UI elements are drawn in screen space with no camera offset.
+- Tile rendering iterates only over tiles visible within the canvas viewport, not the entire grid, to avoid unnecessary draw calls.
+- Enclosure colors by biome: savanna is golden/amber (#D4A017), aquatic is blue (#4A90D9), forest is deep green (#2E7D32), arctic is light blue-white (#B3E5FC), aviary is warm yellow (#FDD835).
+- Animals are drawn as circles with radius 6 pixels centered within their enclosure area. Each species has a distinct fill color (e.g., lion is orange, elephant is gray, penguin is black-and-white, monkey is brown).
+- Visitors are drawn as circles with radius 3 pixels in a randomized pastel color assigned at spawn.
+- The grass base color is #7CB342 (soft green). Paths are #D7CCC8 (sandy beige). Water is #42A5F5 (bright blue). The entrance is #FF7043 (warm orange-red).
+- Grid lines are drawn as thin (0.5px) semi-transparent borders between tiles to give spatial reference without visual clutter.
+- UI overlays are drawn last so they always appear on top of the game world.
+- The canvas is cleared to a dark green (#33691E) each frame before any drawing begins.

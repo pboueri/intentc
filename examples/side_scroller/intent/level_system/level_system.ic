@@ -1,0 +1,45 @@
+---
+name: level_system
+depends_on:
+  - game_engine
+tags:
+  - core
+---
+
+# Level System
+
+Manages level loading, the 60-second timer, level transitions, and the overall progression through the three levels.
+
+## Level Loading
+
+- Each level is defined as a JavaScript module exporting arrays of platform, enemy, and hazard configurations with positions, sizes, and behaviors.
+- The level system instantiates all entities from a level definition and registers them with the game engine.
+- Clears all entities from the previous level before loading the next.
+
+## 60-Second Timer
+
+- Each level has a 60-second countdown timer that begins when the level starts.
+- The timer is displayed in the HUD.
+- If the timer reaches zero, the player loses a life and the level restarts.
+- The timer pauses during death/respawn animations.
+
+## Background Morphing
+
+- Each level's background is filled with faint, slowly drifting shapes matching the level's theme (triangles, squares, circles).
+- As the 60-second timer counts down, the background geometry:
+  - Increases in density (more shapes).
+  - Speeds up movement.
+  - Shifts color toward warmer/more urgent tones (e.g., cool blue → warm orange/red).
+- This creates a building sense of visual urgency without affecting gameplay.
+
+## Level Transitions
+
+- Reaching the right edge of a level triggers a transition.
+- Transition animation: shapes of the current level collapse inward, then shapes of the next level expand outward.
+- Between levels, a brief interstitial screen shows the upcoming level's shape theme and name.
+
+## Progression
+
+- Levels are played in order: Triangles → Squares → Circles.
+- Completing all three levels triggers the win state.
+- Lives and score carry across levels.

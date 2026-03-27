@@ -1,0 +1,15 @@
+target: ui
+agent_profile: null
+validations:
+  - name: ui_completeness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the UI implementation includes:
+        1. A title screen with the game name, a star character, drifting shape background, and a "press any key" prompt.
+        2. An in-game HUD displaying: 60-second countdown timer (with color change as time runs low), lives as star icons, health pips, current level indicator, and dash cooldown.
+        3. A pause menu (Escape key) that freezes the game and offers Resume, Restart Level, and Quit to Title options.
+        4. A game over screen showing level reached and time survived, with Retry and Quit to Title options.
+        5. A victory screen with a celebratory particle animation of all three shape types and total time display.
+        6. All UI rendered on Canvas (no HTML overlays or DOM elements for game UI).

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Different Models Experiment - Report</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h2 { font-size: 20px; margin: 32px 0 16px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; }
+  p, li { color: var(--text-muted); font-size: 14px; }
+  p { margin-bottom: 12px; }
+  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th {
+    background: var(--surface);
+    text-align: left;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--text);
+  }
+  td {
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  tr:hover td { background: rgba(88, 166, 255, 0.04); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge-pass { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .badge-fail { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+  .badge-good { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+
+  .eval-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .eval-card h4 {
+    font-size: 15px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eval-card .summary { color: var(--text-muted); font-size: 13px; margin-bottom: 10px; }
+  .eval-card ul { padding-left: 20px; margin: 0; }
+  .eval-card li { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+
+  .loc-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .loc-bar {
+    height: 18px;
+    border-radius: 3px;
+    background: var(--accent);
+    opacity: 0.6;
+    min-width: 2px;
+  }
+  .loc-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+  .key-finding {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    margin: 8px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .key-finding p { margin: 0; font-size: 13px; }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>Different Models Experiment</h1>
+<p class="subtitle">Comparing Claude Haiku, Sonnet, and Opus at varying effort levels on a zoo builder game task</p>
+
+<h2>Key Findings</h2>
+
+<div class="key-finding">
+  <p><strong>Haiku cannot complete this task.</strong> It failed on both attempts, unable to pass animal breeding validations after exhausting retries. This establishes a clear capability floor for the zoo builder spec.</p>
+</div>
+
+<div class="key-finding">
+  <p><strong>All Sonnet and Opus variants scored GOOD.</strong> Every successful build produced a playable zoo builder game with enclosures, animals, economy, and game-over mechanics. The quality evaluator (Opus 4.6, high effort) did not differentiate between them at the score level.</p>
+</div>
+
+<div class="key-finding">
+  <p><strong>Higher effort trends toward more code for Sonnet</strong> (1191 &rarr; 1283 &rarr; 1605 LOC), but Opus shows no clear trend (1584 &rarr; 1164 &rarr; 1590). Opus medium produced the most concise output with the fewest files.</p>
+</div>
+
+<div class="key-finding">
+  <p><strong>Bug profiles differ across configurations.</strong> Common issues include missing camera panning, no sell/remove mechanic, and purely numerical visitors. But crash bugs (sonnet-high restart crash) and logic bugs (sonnet-high breeding) appear at specific configurations only.</p>
+</div>
+
+<h2>Build Results</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Model</th>
+      <th>Effort</th>
+      <th>Build</th>
+      <th>LOC</th>
+      <th>Files</th>
+      <th>Quality</th>
+      <th>Bugs Found</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Haiku</strong></td>
+      <td>medium</td>
+      <td><span class="badge badge-fail">FAIL</span></td>
+      <td>&mdash;</td>
+      <td>&mdash;</td>
+      <td>&mdash;</td>
+      <td>&mdash;</td>
+    </tr>
+    <tr>
+      <td><strong>Sonnet</strong></td>
+      <td>low</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,191</td>
+      <td>10</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>6</td>
+    </tr>
+    <tr>
+      <td><strong>Sonnet</strong></td>
+      <td>medium</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,283</td>
+      <td>12</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>6</td>
+    </tr>
+    <tr>
+      <td><strong>Sonnet</strong></td>
+      <td>high</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,605</td>
+      <td>13</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <td><strong>Opus</strong></td>
+      <td>low</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,584</td>
+      <td>12</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>6</td>
+    </tr>
+    <tr>
+      <td><strong>Opus</strong></td>
+      <td>medium</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,164</td>
+      <td>8</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>7</td>
+    </tr>
+    <tr>
+      <td><strong>Opus</strong></td>
+      <td>high</td>
+      <td><span class="badge badge-pass">PASS</span></td>
+      <td>1,590</td>
+      <td>9</td>
+      <td><span class="badge badge-good">GOOD</span></td>
+      <td>7</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Lines of Code</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Configuration</th>
+      <th style="width:50%">LOC Distribution</th>
+      <th>Total</th>
+      <th>Files</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Sonnet / Low</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(1164/1605*100%);background:#f0db4f;" title=".js: 1164"></div>
+          <div class="loc-bar" style="width:calc(17/1605*100%);background:#e34c26;" title=".html: 17"></div>
+          <div class="loc-bar" style="width:calc(10/1605*100%);background:#8bc34a;" title=".json: 10"></div>
+          <span class="loc-label">JS 1164 | HTML 17 | JSON 10</span>
+        </div>
+      </td>
+      <td>1,191</td>
+      <td>10</td>
+    </tr>
+    <tr>
+      <td>Sonnet / Medium</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(1242/1605*100%);background:#f0db4f;"></div>
+          <div class="loc-bar" style="width:calc(26/1605*100%);background:#e34c26;"></div>
+          <div class="loc-bar" style="width:calc(15/1605*100%);background:#8bc34a;"></div>
+          <span class="loc-label">JS 1242 | HTML 26 | JSON 15</span>
+        </div>
+      </td>
+      <td>1,283</td>
+      <td>12</td>
+    </tr>
+    <tr>
+      <td>Sonnet / High</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(1573/1605*100%);background:#f0db4f;"></div>
+          <div class="loc-bar" style="width:calc(17/1605*100%);background:#e34c26;"></div>
+          <div class="loc-bar" style="width:calc(15/1605*100%);background:#8bc34a;"></div>
+          <span class="loc-label">JS 1573 | HTML 17 | JSON 15</span>
+        </div>
+      </td>
+      <td>1,605</td>
+      <td>13</td>
+    </tr>
+    <tr>
+      <td>Opus / Low</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(1548/1605*100%);background:#f0db4f;"></div>
+          <div class="loc-bar" style="width:calc(17/1605*100%);background:#e34c26;"></div>
+          <div class="loc-bar" style="width:calc(19/1605*100%);background:#8bc34a;"></div>
+          <span class="loc-label">JS 1548 | HTML 17 | JSON 19</span>
+        </div>
+      </td>
+      <td>1,584</td>
+      <td>12</td>
+    </tr>
+    <tr>
+      <td>Opus / Medium</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(969/1605*100%);background:#f0db4f;"></div>
+          <div class="loc-bar" style="width:calc(181/1605*100%);background:#e34c26;"></div>
+          <div class="loc-bar" style="width:calc(14/1605*100%);background:#8bc34a;"></div>
+          <span class="loc-label">JS 969 | HTML 181 | JSON 14</span>
+        </div>
+      </td>
+      <td>1,164</td>
+      <td>8</td>
+    </tr>
+    <tr>
+      <td>Opus / High</td>
+      <td>
+        <div class="loc-bar-container">
+          <div class="loc-bar" style="width:calc(1399/1605*100%);background:#f0db4f;"></div>
+          <div class="loc-bar" style="width:calc(177/1605*100%);background:#e34c26;"></div>
+          <div class="loc-bar" style="width:calc(14/1605*100%);background:#8bc34a;"></div>
+          <span class="loc-label">JS 1399 | HTML 177 | JSON 14</span>
+        </div>
+      </td>
+      <td>1,590</td>
+      <td>9</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Quality Evaluations</h2>
+<p>Each build was evaluated by Claude Opus 4.6 (high effort) against the original zoo builder specification.</p>
+
+<div class="eval-card">
+  <h4>Haiku &mdash; Default <span class="badge badge-fail">FAILED</span></h4>
+  <p class="summary">Build failed on both attempts. Could not pass animal breeding validations after exhausting retries. Enclosures built successfully but animals target failed consistently.</p>
+</div>
+
+<div class="eval-card">
+  <h4>Sonnet &mdash; Low <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">A well-structured, modular implementation that covers the full core loop: building enclosures, purchasing animals, setting admission prices, breeding, enclosure degradation/repair/upgrade, and a game-over condition. The code is cleanly organized across six files with good separation of concerns and readable logic. The main shortcomings are a missing pause UI, dead code from unused factory functions, truncated species display, and the absence of visual visitor entities &mdash; but none prevent the game from being playable and engaging.</p>
+  <ul>
+    <li>Dual ID generators risk collisions; factory functions in state.js are dead code</li>
+    <li>No pause button despite full pause/unpause logic implemented</li>
+    <li>Only 5 of 8 species shown due to <code>.slice(0, 5)</code> truncation</li>
+    <li>No biome-compatibility gate on animal placement</li>
+    <li>Visitors are purely numerical &mdash; no entities rendered</li>
+  </ul>
+</div>
+
+<div class="eval-card">
+  <h4>Sonnet &mdash; Medium <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">A well-structured and complete implementation that faithfully covers all core spec features: biome-based enclosures on a tile grid, animal purchasing and breeding, happiness/sickness/death mechanics, enclosure degradation and upgrades, a demand-curve-driven economy, and a clean pause/game-over flow. Minor UI limitations and inability to remove misplaced enclosures, but no critical logic bugs.</p>
+  <ul>
+    <li>Sidebar has no scrolling &mdash; buy-animal buttons can become unreachable</li>
+    <li>No devicePixelRatio handling (blurry on Retina displays)</li>
+    <li>No way to sell/remove animals or enclosures</li>
+    <li>Game-over restart may leave cursor stuck on crosshair</li>
+    <li>Only 2 incompatible species shown in sidebar (hardcoded slice)</li>
+  </ul>
+</div>
+
+<div class="eval-card">
+  <h4>Sonnet &mdash; High <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">Clean module separation with a working core gameplay loop. However, a crash-on-restart bug, a largely non-functional breeding system due to flawed pairing logic, and hardcoded HUD hit regions that break at different resolutions are notable issues that would degrade the player experience.</p>
+  <ul>
+    <li><strong>Crash bug:</strong> Restart resets economy without required fields, causing <code>undefined.toLocaleString()</code> crash</li>
+    <li><strong>Logic bug:</strong> Breeding pairs by sequential array index, silently skipping most valid pairs</li>
+    <li>HUD click detection uses hardcoded pixel coordinates &mdash; breaks at different window sizes</li>
+    <li>Camera can pan infinitely past map edge</li>
+    <li>Health reaching 0 has no consequence &mdash; death/sickness system is cosmetic</li>
+  </ul>
+</div>
+
+<div class="eval-card">
+  <h4>Opus &mdash; Low <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">Delivers the core gameplay loop with clean modularization and meaningful unit tests. Main gaps are complete absence of camera panning, no capacity enforcement on animal purchases, and visitors being purely mathematical rather than visual entities.</p>
+  <ul>
+    <li>No camera panning &mdash; parts of 1200x800 map inaccessible on smaller screens</li>
+    <li>No capacity check on animal purchases (overcrowding penalty but no block)</li>
+    <li>Hardcoded constants in helper function create fragile coupling</li>
+    <li>Auto-assigns animals to mismatched biomes without player notification</li>
+    <li>No sell/remove mechanic for enclosures or animals</li>
+  </ul>
+</div>
+
+<div class="eval-card">
+  <h4>Opus &mdash; Medium <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">Clean and readable with good separation of concerns and a basic test suite. Covers all core spec features. Main weaknesses are dead <code>canPlaceAnimal</code> function (no capacity enforcement), disconnected visual vs. economic visitor systems, and no camera panning.</p>
+  <ul>
+    <li><code>canPlaceAnimal</code> is dead code &mdash; never called, unconditionally returns true</li>
+    <li>Dead <code>tickAccumulator</code> field in state</li>
+    <li>Admission price updates on blur instead of input</li>
+    <li>Visual visitors completely decoupled from economic visitors</li>
+    <li>No camera panning or scrolling</li>
+    <li>No sell/remove mechanic</li>
+  </ul>
+</div>
+
+<div class="eval-card">
+  <h4>Opus &mdash; High <span class="badge badge-good">GOOD</span></h4>
+  <p class="summary">Solid implementation with clean module separation and reasonable test coverage. Covers enclosure placement, animal management, economy, degradation, and upgrades. Main gaps are non-functional camera system, static visitors, and constant-duplication issues.</p>
+  <ul>
+    <li>No camera pan/scroll controls despite cameraX/cameraY state fields</li>
+    <li>Space/P pause doesn't preventDefault &mdash; scrolls the page</li>
+    <li>Visitors are static dots, not moving entities</li>
+    <li>Upgrade tiers hardcoded inline instead of using imported constant</li>
+    <li>REPAIR_COST_RATIO exported but unused; 0.5 hardcoded instead</li>
+    <li>Hardcoded MAP_WIDTH/HEIGHT in entities.js helper risks divergence</li>
+  </ul>
+</div>
+
+<h2>Visual Comparison</h2>
+<p>See <a href="screenshot_grid.html">screenshot_grid.html</a> for the full visual grid of all builds.</p>
+
+</body>
+</html>

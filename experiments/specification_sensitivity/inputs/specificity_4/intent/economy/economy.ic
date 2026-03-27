@@ -1,0 +1,71 @@
+---
+name: economy
+depends_on:
+  - animals
+  - enclosures
+  - visitors
+tags: [gameplay, core]
+---
+
+# Economy
+
+The economy module is the financial engine of the zoo. It runs every tick, calculating revenue from visitor admissions, deducting costs for animal food and enclosure maintenance, and updating the zoo's cash balance. It also computes the demand curve that determines how many visitors arrive — linking the zoo's appeal (based on animal count, species diversity, and happiness) to the admission price the player sets.
+
+The economic model creates a satisfying tension. The player wants high admission prices for maximum per-visitor revenue, but high prices reduce the arrival rate. They want many animals for high appeal, but each animal costs money to feed. They want many enclosures, but each costs money to maintain. The player must find the equilibrium where revenue outpaces costs and reinvest the surplus into growth.
+
+The economy module also enforces the game-over condition. If the zoo's balance reaches zero and the net income per tick is negative (meaning expenses exceed revenue with no prospect of recovery in the current tick), the game ends. This creates a hard constraint that prevents the player from simply over-expanding without regard for finances. The player must grow sustainably.
+
+## Data Structures
+
+```js
+// Economy snapshot computed each tick (for UI display)
+{
+  balance: 10000,          // current money
+  revenue: 3.5,            // income this tick from admissions
+  foodCost: 1.2,           // total food cost this tick
+  maintenanceCost: 0.8,    // total maintenance cost this tick
+  netIncome: 1.5,          // revenue - foodCost - maintenanceCost
+  admissionPrice: 10,      // player-set price
+  arrivalRate: 0.15,       // visitors per tick
+  appealScore: 45,         // 0–100 composite appeal metric
+}
+```
+
+## Key Function Signatures
+
+```js
+// Run the full economy update for one tick
+function updateEconomy(state, dt) -> void
+
+// Calculate the zoo's appeal score based on animals and enclosures
+function calculateAppeal(state) -> number
+
+// Calculate visitor arrival rate from appeal and admission price
+function calculateArrivalRate(appealScore, admissionPrice) -> number
+
+// Calculate total food cost per tick across all animals
+function calculateFoodCost(animals) -> number
+
+// Calculate total maintenance cost per tick across all enclosures
+function calculateMaintenanceCost(enclosures) -> number
+
+// Check if the game-over condition is met
+function checkGameOver(state) -> boolean
+
+// Set the admission price (clamped to 1–100)
+function setAdmissionPrice(state, price) -> void
+```
+
+## Behavioral Rules
+
+- Revenue per tick = `visitorCount * admissionPrice / 60`. The division by 60 spreads admission revenue across the ticks a visitor is present rather than charging all at once on entry.
+- Total food cost per tick = sum of `foodCostPerTick` for every living animal in the zoo.
+- Total maintenance cost per tick = sum of `maintenanceCostPerTick` for every enclosure in the zoo.
+- Net income per tick = revenue - food cost - maintenance cost. This can be negative.
+- `state.money` is updated by adding net income each tick. Money can go negative briefly within a tick.
+- Appeal score formula: `min(100, (totalAnimals * 2) + (uniqueSpecies * 5) + (avgHappiness * 0.5))`. This means variety and happiness matter more than raw count, but count contributes significantly.
+- Arrival rate formula: `baseRate * (appealScore / 50) * priceFactor`, where `baseRate` is 0.1 visitors per tick, and `priceFactor = max(0.05, 1 - (admissionPrice - 5) * 0.02)`. At price 5, priceFactor is 1.0. At price 55, priceFactor is 0.05 (floor).
+- Admission price is an integer between 1 and 100, set by the player via a UI slider or input field.
+- Game over triggers when `state.money <= 0` AND `netIncome < 0`. Both conditions must be true simultaneously. If money is zero but net income is positive (e.g., visitors are paying enough), the game continues.
+- When game over triggers, `state.gameOver` is set to true, the loop stops updating, and the renderer shows a game-over screen.
+- The economy update runs after animals, enclosures, and visitors have updated for the current tick, so it always uses the latest counts.

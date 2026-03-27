@@ -1,0 +1,334 @@
+---
+name: audio
+depends_on:
+  - game_loop
+  - ui
+tags: [atmosphere]
+---
+
+# Audio
+
+Background music and sound effects using the Web Audio API. All audio is optional and degrades gracefully — if the AudioContext cannot be initialized (e.g., browser autoplay policy), all audio functions become silent no-ops.
+
+## Architecture
+
+```js
+let audioCtx = null;
+let masterGain = null;
+let musicGain = null;
+let sfxGain = null;
+
+/**
+ * Initialize the Web Audio API context.
+ * Must be called from a user gesture (e.g., clicking "New Game").
+ */
+export function initAudio() {
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 1.0;
+    masterGain.connect(audioCtx.destination);
+
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.5;
+    musicGain.connect(masterGain);
+
+    sfxGain = audioCtx.createGain();
+    sfxGain.gain.value = 0.7;
+    sfxGain.connect(masterGain);
+  } catch (e) {
+    console.warn('Web Audio API not available. Audio disabled.', e);
+    audioCtx = null;
+  }
+}
+```
+
+## Volume Control
+
+```js
+/**
+ * Set volume for a category.
+ * @param {'music'|'sfx'|'master'} category
+ * @param {number} level - 0.0 to 1.0
+ */
+export function setVolume(category, level) {
+  const clamped = Math.max(0, Math.min(1, level));
+  if (!audioCtx) return;
+
+  switch (category) {
+    case 'music':
+      musicGain.gain.setValueAtTime(clamped, audioCtx.currentTime);
+      break;
+    case 'sfx':
+      sfxGain.gain.setValueAtTime(clamped, audioCtx.currentTime);
+      break;
+    case 'master':
+      masterGain.gain.setValueAtTime(clamped, audioCtx.currentTime);
+      break;
+  }
+}
+
+/**
+ * Sync volume from game state (called when loading a save).
+ */
+export function syncVolumeFromState(state) {
+  setVolume('music', state.audio.musicVolume);
+  setVolume('sfx', state.audio.sfxVolume);
+}
+```
+
+## Sound Effect System
+
+Sound effects are generated procedurally using oscillators and noise. This avoids external audio file dependencies.
+
+```js
+const SFX_DEFINITIONS = {
+  purchase: {
+    type: 'tone',
+    frequency: 440,       // A4
+    duration: 0.15,
+    waveform: 'sine',
+    envelope: { attack: 0.01, decay: 0.14 },
+  },
+  build: {
+    type: 'tone',
+    frequency: 330,       // E4
+    duration: 0.2,
+    waveform: 'square',
+    envelope: { attack: 0.01, decay: 0.19 },
+  },
+  breed_success: {
+    type: 'melody',
+    notes: [523, 659, 784], // C5, E5, G5 (major chord arpeggio)
+    noteDuration: 0.1,
+    waveform: 'sine',
+  },
+  animal_death: {
+    type: 'tone',
+    frequency: 220,       // A3
+    duration: 0.4,
+    waveform: 'sawtooth',
+    envelope: { attack: 0.01, decay: 0.39 },
+    pitchBend: -50,       // bend down 50 Hz over duration
+  },
+  research_complete: {
+    type: 'melody',
+    notes: [440, 554, 659, 880], // A4, C#5, E5, A5 (ascending)
+    noteDuration: 0.12,
+    waveform: 'sine',
+  },
+  notification: {
+    type: 'tone',
+    frequency: 880,       // A5
+    duration: 0.1,
+    waveform: 'sine',
+    envelope: { attack: 0.005, decay: 0.095 },
+  },
+  click: {
+    type: 'noise',
+    duration: 0.05,
+    filter: { type: 'highpass', frequency: 2000 },
+  },
+  error: {
+    type: 'tone',
+    frequency: 200,
+    duration: 0.2,
+    waveform: 'square',
+    envelope: { attack: 0.01, decay: 0.19 },
+  },
+};
+
+/**
+ * Play a named sound effect.
+ * @param {string} name - key into SFX_DEFINITIONS
+ */
+export function playSound(name) {
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+  const def = SFX_DEFINITIONS[name];
+  if (!def) return;
+
+  switch (def.type) {
+    case 'tone':
+      playTone(def);
+      break;
+    case 'melody':
+      playMelody(def);
+      break;
+    case 'noise':
+      playNoise(def);
+      break;
+  }
+}
+
+function playTone(def) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = def.waveform;
+  osc.frequency.setValueAtTime(def.frequency, audioCtx.currentTime);
+
+  if (def.pitchBend) {
+    osc.frequency.linearRampToValueAtTime(
+      def.frequency + def.pitchBend,
+      audioCtx.currentTime + def.duration
+    );
+  }
+
+  // Envelope
+  gain.gain.setValueAtTime(0, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + def.envelope.attack);
+  gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + def.envelope.attack + def.envelope.decay);
+
+  osc.connect(gain);
+  gain.connect(sfxGain);
+  osc.start(audioCtx.currentTime);
+  osc.stop(audioCtx.currentTime + def.duration + 0.05);
+}
+
+function playMelody(def) {
+  for (let i = 0; i < def.notes.length; i++) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const startTime = audioCtx.currentTime + i * def.noteDuration;
+
+    osc.type = def.waveform;
+    osc.frequency.setValueAtTime(def.notes[i], startTime);
+
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(0.2, startTime + 0.01);
+    gain.gain.linearRampToValueAtTime(0, startTime + def.noteDuration);
+
+    osc.connect(gain);
+    gain.connect(sfxGain);
+    osc.start(startTime);
+    osc.stop(startTime + def.noteDuration + 0.05);
+  }
+}
+
+function playNoise(def) {
+  const bufferSize = audioCtx.sampleRate * def.duration;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + def.duration);
+
+  if (def.filter) {
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = def.filter.type;
+    filter.frequency.value = def.filter.frequency;
+    source.connect(filter);
+    filter.connect(gain);
+  } else {
+    source.connect(gain);
+  }
+
+  gain.connect(sfxGain);
+  source.start(audioCtx.currentTime);
+}
+```
+
+## Background Music
+
+Background music uses a procedural ambient loop generated from oscillators, or can optionally load an external audio file.
+
+```js
+let musicSource = null;
+
+/**
+ * Start looping background music.
+ * Uses a simple procedural ambient drone if no external file is loaded.
+ */
+export function startMusic() {
+  if (!audioCtx || musicSource) return;
+
+  // Procedural ambient music: layered sine waves with slow modulation
+  const fundamental = 220; // A3
+  const oscs = [];
+
+  const frequencies = [fundamental, fundamental * 1.5, fundamental * 2, fundamental * 2.5];
+  const volumes = [0.15, 0.08, 0.05, 0.03];
+
+  for (let i = 0; i < frequencies.length; i++) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(frequencies[i], audioCtx.currentTime);
+
+    // Slow frequency modulation for movement
+    const lfo = audioCtx.createOscillator();
+    const lfoGain = audioCtx.createGain();
+    lfo.frequency.value = 0.1 + i * 0.05; // very slow wobble
+    lfoGain.gain.value = 2; // +/- 2 Hz
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    lfo.start();
+
+    gain.gain.value = volumes[i];
+    osc.connect(gain);
+    gain.connect(musicGain);
+    osc.start();
+
+    oscs.push({ osc, gain, lfo, lfoGain });
+  }
+
+  musicSource = oscs;
+}
+
+/**
+ * Stop background music.
+ */
+export function stopMusic() {
+  if (!musicSource) return;
+
+  for (const { osc, lfo } of musicSource) {
+    osc.stop();
+    lfo.stop();
+  }
+  musicSource = null;
+}
+```
+
+## External Audio Asset References
+
+For teams wanting richer audio, replace the procedural sounds with actual audio files:
+
+- **Background music:** "Royalty Free Game Music Loops" (https://opengameart.org/content/royalty-free-game-music-loops) — select a light, cheerful loop suitable for a casual management game.
+- **Animal sounds:** Freesound.org animal tag collection (https://freesound.org/browse/tags/animal/) — CC0 and CC-BY licensed animal sound effects including lions, birds, water splashes.
+- **UI sounds:** "CC0 Sound Effects" (https://opengameart.org/content/cc0-sound-effects) — click, chime, and notification sounds.
+- **Ambient nature:** Freesound.org game-sound collection (https://freesound.org/browse/tags/game-sound/) — background nature ambience loops.
+
+To integrate external audio, add a `loadAudioFile(url) -> AudioBuffer` utility and play loaded buffers through `AudioBufferSourceNode` instead of oscillators.
+
+## Volume Control UI
+
+The pause menu Settings panel includes volume sliders:
+
+```
+Settings:
+  Music Volume: [=======|---] 70%
+  SFX Volume:   [=========|-] 90%
+  [Mute All]
+```
+
+Sliders are horizontal bars (160px wide, 12px tall) with a draggable handle. The current value is displayed as a percentage beside the bar.
+
+## Edge Cases
+
+- **AudioContext suspended:** Modern browsers require a user gesture to start AudioContext. The `initAudio` call from main.js may leave the context in "suspended" state. Each `playSound` call checks `audioCtx.state` and calls `resume()` if needed.
+- **Rapid fire:** Playing the same SFX multiple times in quick succession creates multiple overlapping oscillators. This is acceptable for short sounds. For the background music, `startMusic` is idempotent (checks if `musicSource` already exists).
+- **Tab hidden:** When the tab is hidden and the game pauses, music continues playing (browser may throttle but Web Audio runs independently of RAF). This is intentional — players often expect music to continue.
+- **Save/load:** Volume settings (`musicVolume`, `sfxVolume`) are persisted in the save state. On load, `syncVolumeFromState` updates the gain nodes.

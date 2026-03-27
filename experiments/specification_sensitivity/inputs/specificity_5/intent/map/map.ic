@@ -1,0 +1,370 @@
+---
+name: map
+depends_on:
+  - game_loop
+tags: [core]
+---
+
+# Map
+
+The zoo map is a 40-column by 30-row tile grid. Each tile is 32x32 pixels, yielding a total map size of 1280x960 pixels. The map module manages tile data, pathfinding, and placement validation.
+
+## Tile Types
+
+```js
+export const TILE = {
+  GRASS:    0,
+  DIRT:     1,
+  WATER:    2,
+  PATH:     3,
+  ENTRANCE: 4,
+};
+
+/**
+ * Properties per tile type. Used by pathfinding and rendering.
+ */
+export const TILE_PROPS = {
+  [TILE.GRASS]:    { walkable: true,  buildable: true,  pathCost: 1.5, color: '#4a8c3f' },
+  [TILE.DIRT]:     { walkable: true,  buildable: true,  pathCost: 1.2, color: '#c4a265' },
+  [TILE.WATER]:    { walkable: false, buildable: false, pathCost: Infinity, color: '#3d85c6' },
+  [TILE.PATH]:     { walkable: true,  buildable: false, pathCost: 1.0, color: '#9e9e9e' },
+  [TILE.ENTRANCE]: { walkable: true,  buildable: false, pathCost: 1.0, color: '#8b6914' },
+};
+```
+
+## Map Initialization
+
+```js
+import { MAP_COLS, MAP_ROWS, TILE_SIZE } from './constants.js';
+
+/**
+ * Create and return a fresh map grid. Places the entrance gate
+ * and scatters decorative water features and dirt patches.
+ */
+export function initMap() {
+  // Fill with grass
+  const grid = Array.from({ length: MAP_ROWS }, () =>
+    Array.from({ length: MAP_COLS }, () => TILE.GRASS)
+  );
+
+  // Place entrance gate at left edge, vertically centered
+  const entranceRow = Math.floor(MAP_ROWS / 2); // row 15
+  grid[entranceRow][0] = TILE.ENTRANCE;
+  grid[entranceRow - 1][0] = TILE.ENTRANCE;
+  grid[entranceRow + 1][0] = TILE.ENTRANCE;
+
+  // Lay initial path from entrance to center
+  for (let col = 1; col <= 20; col++) {
+    grid[entranceRow][col] = TILE.PATH;
+  }
+
+  // Scatter small water features (decorative ponds)
+  // Deterministic positions for consistent maps
+  const waterFeatures = [
+    { row: 5, col: 30, size: 2 },
+    { row: 22, col: 25, size: 2 },
+    { row: 12, col: 35, size: 1 },
+  ];
+  for (const wf of waterFeatures) {
+    for (let r = wf.row; r < wf.row + wf.size && r < MAP_ROWS; r++) {
+      for (let c = wf.col; c < wf.col + wf.size && c < MAP_COLS; c++) {
+        grid[r][c] = TILE.WATER;
+      }
+    }
+  }
+
+  // Scatter dirt patches near entrance area
+  const dirtPatches = [
+    [14, 2], [14, 3], [16, 2], [16, 3],
+    [15, 4], [15, 5],
+  ];
+  for (const [r, c] of dirtPatches) {
+    grid[r][c] = TILE.DIRT;
+  }
+
+  return grid;
+}
+```
+
+## A* Pathfinding with Diagonal Support
+
+```js
+/**
+ * A* pathfinding from (startCol, startRow) to (endCol, endRow).
+ * Supports 8-directional movement. Diagonal moves cost sqrt(2) * tileCost.
+ * Returns an array of {col, row} waypoints, or null if no path exists.
+ */
+export function findPath(grid, startCol, startRow, endCol, endRow) {
+  if (!isInBounds(startCol, startRow) || !isInBounds(endCol, endRow)) return null;
+  if (!TILE_PROPS[grid[endRow][endCol]].walkable) return null;
+
+  const openSet = new MinHeap();  // priority queue by fScore
+  const cameFrom = new Map();     // key: "col,row" -> "col,row"
+  const gScore = new Map();       // key: "col,row" -> cost
+  const fScore = new Map();
+
+  const startKey = `${startCol},${startRow}`;
+  const endKey = `${endCol},${endRow}`;
+
+  gScore.set(startKey, 0);
+  fScore.set(startKey, heuristic(startCol, startRow, endCol, endRow));
+  openSet.push({ col: startCol, row: startRow, f: fScore.get(startKey) });
+
+  // 8 directions: 4 cardinal + 4 diagonal
+  const DIRS = [
+    { dc:  0, dr: -1, diag: false }, // up
+    { dc:  1, dr:  0, diag: false }, // right
+    { dc:  0, dr:  1, diag: false }, // down
+    { dc: -1, dr:  0, diag: false }, // left
+    { dc:  1, dr: -1, diag: true  }, // up-right
+    { dc:  1, dr:  1, diag: true  }, // down-right
+    { dc: -1, dr:  1, diag: true  }, // down-left
+    { dc: -1, dr: -1, diag: true  }, // up-left
+  ];
+
+  while (openSet.size() > 0) {
+    const current = openSet.pop();
+    const currentKey = `${current.col},${current.row}`;
+
+    if (currentKey === endKey) {
+      return reconstructPath(cameFrom, endKey);
+    }
+
+    for (const dir of DIRS) {
+      const nc = current.col + dir.dc;
+      const nr = current.row + dir.dr;
+
+      if (!isInBounds(nc, nr)) continue;
+
+      const tileType = grid[nr][nc];
+      if (!TILE_PROPS[tileType].walkable) continue;
+
+      // For diagonal moves, both adjacent cardinal tiles must be walkable
+      // (prevents cutting through wall corners)
+      if (dir.diag) {
+        const adj1 = grid[current.row][nc];
+        const adj2 = grid[nr][current.col];
+        if (!TILE_PROPS[adj1].walkable || !TILE_PROPS[adj2].walkable) continue;
+      }
+
+      const moveCost = dir.diag
+        ? Math.SQRT2 * TILE_PROPS[tileType].pathCost
+        : TILE_PROPS[tileType].pathCost;
+
+      const neighborKey = `${nc},${nr}`;
+      const tentativeG = gScore.get(currentKey) + moveCost;
+
+      if (tentativeG < (gScore.get(neighborKey) ?? Infinity)) {
+        cameFrom.set(neighborKey, currentKey);
+        gScore.set(neighborKey, tentativeG);
+        const f = tentativeG + heuristic(nc, nr, endCol, endRow);
+        fScore.set(neighborKey, f);
+        openSet.push({ col: nc, row: nr, f });
+      }
+    }
+  }
+
+  return null; // no path found
+}
+
+/**
+ * Octile distance heuristic (admissible for 8-directional grids).
+ */
+function heuristic(c1, r1, c2, r2) {
+  const dx = Math.abs(c1 - c2);
+  const dy = Math.abs(r1 - r2);
+  return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+}
+
+function isInBounds(col, row) {
+  return col >= 0 && col < MAP_COLS && row >= 0 && row < MAP_ROWS;
+}
+
+function reconstructPath(cameFrom, endKey) {
+  const path = [];
+  let current = endKey;
+  while (current !== undefined) {
+    const [c, r] = current.split(',').map(Number);
+    path.unshift({ col: c, row: r });
+    current = cameFrom.get(current);
+  }
+  return path;
+}
+```
+
+## MinHeap for A*
+
+```js
+class MinHeap {
+  constructor() { this.data = []; }
+  size() { return this.data.length; }
+
+  push(node) {
+    this.data.push(node);
+    this._bubbleUp(this.data.length - 1);
+  }
+
+  pop() {
+    const top = this.data[0];
+    const last = this.data.pop();
+    if (this.data.length > 0) {
+      this.data[0] = last;
+      this._sinkDown(0);
+    }
+    return top;
+  }
+
+  _bubbleUp(i) {
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.data[i].f < this.data[parent].f) {
+        [this.data[i], this.data[parent]] = [this.data[parent], this.data[i]];
+        i = parent;
+      } else break;
+    }
+  }
+
+  _sinkDown(i) {
+    const n = this.data.length;
+    while (true) {
+      let smallest = i;
+      const l = 2 * i + 1;
+      const r = 2 * i + 2;
+      if (l < n && this.data[l].f < this.data[smallest].f) smallest = l;
+      if (r < n && this.data[r].f < this.data[smallest].f) smallest = r;
+      if (smallest !== i) {
+        [this.data[i], this.data[smallest]] = [this.data[smallest], this.data[i]];
+        i = smallest;
+      } else break;
+    }
+  }
+}
+```
+
+## Placement Validation
+
+```js
+/**
+ * Check whether a rectangular area is valid for placing an enclosure.
+ * @param {number[][]} grid - The map grid
+ * @param {number} col - Top-left column
+ * @param {number} row - Top-left row
+ * @param {number} width - Width in tiles
+ * @param {number} height - Height in tiles
+ * @param {Array} enclosures - Existing enclosures to check overlap
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+export function isValidPlacement(grid, col, row, width, height, enclosures) {
+  // Bounds check
+  if (col < 0 || row < 0 || col + width > MAP_COLS || row + height > MAP_ROWS) {
+    return { valid: false, reason: 'Out of bounds' };
+  }
+
+  // Every tile in the footprint must be buildable
+  for (let r = row; r < row + height; r++) {
+    for (let c = col; c < col + width; c++) {
+      const tileType = grid[r][c];
+      if (!TILE_PROPS[tileType].buildable) {
+        return { valid: false, reason: `Tile (${c},${r}) is not buildable (type: ${tileType})` };
+      }
+    }
+  }
+
+  // No overlap with existing enclosures
+  for (const enc of enclosures) {
+    const overlaps = !(
+      col + width <= enc.col ||
+      enc.col + enc.width <= col ||
+      row + height <= enc.row ||
+      enc.row + enc.height <= row
+    );
+    if (overlaps) {
+      return { valid: false, reason: `Overlaps with enclosure "${enc.id}"` };
+    }
+  }
+
+  return { valid: true };
+}
+```
+
+## Path Laying
+
+When the player places an enclosure, automatic path segments connect from the nearest existing path tile to the enclosure perimeter:
+
+```js
+/**
+ * Lay PATH tiles from the nearest existing path to the enclosure border.
+ * Uses a simple BFS from enclosure border tiles outward until hitting a PATH tile,
+ * then traces back and converts those tiles to PATH.
+ */
+export function autoConnectPath(grid, enclosure) {
+  // Find all border tiles adjacent to the enclosure
+  const borderTiles = [];
+  for (let r = enclosure.row - 1; r <= enclosure.row + enclosure.height; r++) {
+    for (let c = enclosure.col - 1; c <= enclosure.col + enclosure.width; c++) {
+      if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) continue;
+      if (r >= enclosure.row && r < enclosure.row + enclosure.height &&
+          c >= enclosure.col && c < enclosure.col + enclosure.width) continue;
+      if (grid[r][c] === TILE.GRASS || grid[r][c] === TILE.DIRT) {
+        borderTiles.push({ col: c, row: r });
+      }
+    }
+  }
+
+  // BFS outward from border tiles to find nearest PATH
+  const visited = new Set();
+  const parent = new Map();
+  const queue = [...borderTiles];
+  for (const t of queue) visited.add(`${t.col},${t.row}`);
+
+  let target = null;
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (grid[cur.row][cur.col] === TILE.PATH) {
+      target = cur;
+      break;
+    }
+    for (const [dc, dr] of [[0,-1],[1,0],[0,1],[-1,0]]) {
+      const nc = cur.col + dc;
+      const nr = cur.row + dr;
+      const key = `${nc},${nr}`;
+      if (isInBounds(nc, nr) && !visited.has(key) && TILE_PROPS[grid[nr][nc]].walkable) {
+        visited.add(key);
+        parent.set(key, `${cur.col},${cur.row}`);
+        queue.push({ col: nc, row: nr });
+      }
+    }
+  }
+
+  // Trace back from target to border and lay path
+  if (target) {
+    let key = `${target.col},${target.row}`;
+    while (parent.has(key)) {
+      key = parent.get(key);
+      const [c, r] = key.split(',').map(Number);
+      if (grid[r][c] === TILE.GRASS || grid[r][c] === TILE.DIRT) {
+        grid[r][c] = TILE.PATH;
+      }
+    }
+  }
+}
+```
+
+## Coordinate Conversion Utilities
+
+```js
+export function tileToPixel(col, row) {
+  return { x: col * TILE_SIZE, y: row * TILE_SIZE };
+}
+
+export function pixelToTile(px, py) {
+  return { col: Math.floor(px / TILE_SIZE), row: Math.floor(py / TILE_SIZE) };
+}
+
+/**
+ * Convert screen coordinates to world tile coordinates, accounting for camera offset.
+ */
+export function screenToTile(screenX, screenY, camera) {
+  return pixelToTile(screenX + camera.x, screenY + camera.y);
+}
+```

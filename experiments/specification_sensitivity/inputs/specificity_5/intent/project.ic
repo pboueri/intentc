@@ -1,0 +1,88 @@
+---
+name: zoo_builder
+---
+
+# Zoo Builder
+
+A two-dimensional real-time zoo builder game where the player manages a zoo, purchases animals, constructs enclosures, sets admission prices, and attracts visitors to grow their zoo empire. The primary objective is to raise as many animals as possible through smart purchasing and successful breeding programs. Built as a single-page application with JavaScript and HTML5 Canvas, bundled with Vite, tested with Vitest.
+
+## Game Concept
+
+The player begins with a modest 40x30 tile plot of land, a single entrance gate at tile (0, 15), and $10,000 in starting funds. From this humble beginning they must transform the empty lot into a thriving zoo by building biome-appropriate enclosures, stocking them with animals, and tuning admission prices to draw a steady stream of paying visitors. Every decision feeds back into the simulation: happier animals attract more visitors, more visitors generate more revenue, and more revenue funds further expansion.
+
+The simulation runs continuously in real time at a base rate of 1 tick per second (adjustable to 2x and 3x speed). Animals grow hungry, enclosures degrade, visitors wander in and out, and the financial ledger updates every tick. There is no turn structure. The player can pause at any time to think and plan without penalty. A research tree provides mid-to-late-game goals, unlocking cost efficiencies and exotic species that keep the growth curve interesting.
+
+## Complete Feature Inventory
+
+The game consists of fourteen interlocking subsystems:
+
+| # | Feature | Module | Description |
+|---|---------|--------|-------------|
+| 1 | **Game Loop** | `game_loop.js` | The `requestAnimationFrame`-driven simulation with fixed-timestep updates, state machine (loading, menu, playing, paused, game_over), and speed control. |
+| 2 | **Map** | `map.js` | A 40x30 tile grid with tile types (grass, dirt, water, path, entrance), A* pathfinding with diagonal support, and placement validation. |
+| 3 | **Renderer** | `renderer.js` | Canvas 2D layer-based rendering: ground, enclosures, paths, animals, visitors, UI overlays. Camera with smooth scrolling and bounds clamping. Mini-map (80x60px). |
+| 4 | **Input** | `input.js` | Mouse/keyboard handling with state machine (idle, selecting, building, dragging). Hover tooltips, right-click context menu, keyboard shortcuts. |
+| 5 | **Animals** | `animals.js` | 10 purchasable species with happiness, hunger, health, and breeding mechanics. Full species table with exact stat values. |
+| 6 | **Enclosures** | `enclosures.js` | 5 biome types (savanna, aquatic, forest, arctic, aviary) with degradation, repair, and 3-tier upgrade system. |
+| 7 | **Economy** | `economy.js` | Financial engine: admission revenue, food/maintenance costs, demand curve formula, bankruptcy detection with 30s grace period, price suggestions. |
+| 8 | **Visitors** | `visitors.js` | AI-driven visitors: A* pathfinding with path caching, state machine (spawn, walk, view, exit), satisfaction scoring, crowd rendering. |
+| 9 | **UI** | `ui.js` | HUD bar, sidebar with build/shop/research tabs, info panel, tooltip system, notification toasts, build-mode ghost preview. Layout at exact pixel coordinates (see `ui/layout.md`). |
+| 10 | **Research** | `research.js` | Tech tree with 8 unlockable nodes, prerequisite chains, progress bars. Nodes: Efficient Feeding, Breeding Program, Advanced Enclosures, Marketing, Exotic Species, Veterinary Care, Gift Shop, Night Zoo. |
+| 11 | **Style Guide** | (reference) | Complete visual specification: color palette (see `style_guide/palette.md`), typography, tile/sprite sizing, animation specs, and references to free asset URLs. |
+| 12 | **Audio** | `audio.js` | Background music loop, sound effects (animal sounds, cash register, build, notification chime), volume control via Web Audio API. |
+| 13 | **Save System** | `save_system.js` | localStorage-based save/load with auto-save every 60s, 3 save slots, versioned serialization for migration. |
+| 14 | **Implementations** | (reference) | Build configuration, directory structure, module dependency graph, entry point flow. |
+
+## Target Platform and Performance Requirements
+
+- **Browsers:** Chrome 90+, Firefox 88+, Safari 15+, Edge 90+
+- **Resolution:** 1280x720 canvas, responsive scaling on smaller screens
+- **Frame rate:** Locked 60 FPS target; update budget < 16ms per frame
+- **Memory:** < 100MB heap usage at peak (300+ animals, 50+ visitors)
+- **Load time:** < 2 seconds initial load on broadband
+- **Input:** Mouse + keyboard primary; touch secondary (no multi-touch required)
+- **Network:** Fully offline after initial load; no server dependencies
+
+## Visual Style
+
+Top-down 2D pixel-art aesthetic. Tile size 32x32 pixels. Animal sprites 32x32 pixels with 2-frame idle animation at 500ms per frame. Visitor sprites 16x16 pixels with 4-frame walk cycle at 200ms per frame. The palette is warm and inviting: soft greens for grass, sandy beige for paths, cool blue for water. Enclosures are drawn as colored rectangular zones with biome-specific border patterns. UI overlays use a semi-transparent dark background (#1a1a2ecc) with white text and accent colors. Full visual specification in the style guide feature.
+
+## Session Flow
+
+```
+[Browser Load]
+     |
+     v
+[Loading Screen] -- assets loaded --> [Main Menu]
+     |                                    |
+     |                        [New Game] [Load Game] [Credits]
+     |                            |           |
+     |                            v           v
+     |                      [Gameplay] <-- [Load Slot Select]
+     |                        |    ^
+     |                  [Pause] <-> |
+     |                        |
+     |                   [Game Over]
+     |                        |
+     |                        v
+     |                  [Score Screen]
+     |                    |        |
+     |              [Restart]  [Main Menu]
+```
+
+1. **Loading:** Display a progress bar while assets load. Minimum 500ms display to avoid flash.
+2. **Main Menu:** Title "Zoo Builder" centered, three buttons vertically stacked: New Game, Load Game (grayed if no saves), Credits.
+3. **New Game:** Initialize fresh `createGameState()`, transition to gameplay.
+4. **Gameplay:** Full simulation running. HUD bar top, sidebar right, map center. Auto-save triggers every 60 seconds.
+5. **Pause:** Overlay dims the screen 50%. Shows Resume, Save, Settings (volume), Quit to Menu. All simulation updates halt.
+6. **Game Over:** Triggered when balance <= 0 and net income < 0 for 30 continuous seconds. Overlay shows final stats.
+7. **Score Screen:** Animal count (final), peak animal count, total visitors served, total revenue earned, time played. Buttons: Restart, Main Menu.
+
+## Accessibility Considerations
+
+- **Colorblind-friendly palette:** All status indicators use both color AND shape/icon (e.g., health uses a bar that also shows a numeric percentage). The palette avoids pure red/green adjacency; uses blue-orange for contrast pairs.
+- **Keyboard navigation:** All sidebar actions reachable via keyboard. Tab cycles through buttons. Enter activates. Escape closes menus/cancels build mode. Arrow keys pan the camera. Number keys 1-5 select biome types.
+- **Text sizing:** Minimum 14px for all UI text. HUD text 16px. Tooltips 14px. Menu titles 24px.
+- **Pause on blur:** Game auto-pauses when the browser tab loses focus.
+- **Speed control:** 1x, 2x, 3x speed options so players can adjust to their comfort level.
+- **Screen reader hints:** Canvas fallback text describes current game state for screen readers (though full screen reader play is not a target).

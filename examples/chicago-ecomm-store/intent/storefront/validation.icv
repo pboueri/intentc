@@ -1,0 +1,23 @@
+target: storefront
+agent_profile: null
+validations:
+  - name: react_app_shell
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The storefront must be a React application with React Router configured for all pages (home, products, product detail, cart, checkout, orders, login, register, admin). It must render a navigation bar, main content area, and footer."
+  - name: chicago_color_theme
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: "The UI must use a Chicago-inspired color palette featuring light blue (#B3DDF2 or similar), red (#C41E3A or similar), and white. The navbar should use the blue, primary action buttons should use the red."
+  - name: auth_context
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "There must be an AuthContext provider that manages user authentication state, stores the JWT token in localStorage, and provides login/register/logout functions to child components."
+  - name: cart_context
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "There must be a CartContext provider that manages shopping cart state, persists the cart in localStorage, and provides functions to add/remove/update items and compute the cart total."

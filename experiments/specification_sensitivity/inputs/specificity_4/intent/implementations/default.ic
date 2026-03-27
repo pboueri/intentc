@@ -1,0 +1,99 @@
+---
+name: default
+tags: [meta, implementation]
+---
+
+# Implementation
+
+Single-page JavaScript application rendered entirely with HTML5 Canvas 2D. No external game frameworks, UI libraries, or runtime dependencies beyond the browser. The codebase uses plain functions and data objects rather than class hierarchies.
+
+## Stack
+
+- **Language:** Vanilla JavaScript (ES modules, no TypeScript)
+- **Rendering:** HTML5 Canvas 2D context
+- **Bundling:** Vite for dev server and production build
+- **Package manager:** npm
+- **Testing:** Vitest for unit tests
+
+## Project Structure
+
+```
+src/
+  index.html          # single HTML page with a <canvas> element
+  main.js             # entry point — creates canvas, initializes state, starts loop
+  game.js             # game loop, state creation, update/render orchestration
+  map.js              # tile grid creation, access, and A* pathfinding
+  renderer.js         # all canvas drawing — map, entities, UI overlays
+  input.js            # mouse and keyboard event handling
+  animals.js          # animal creation, update, breeding, species registry
+  enclosures.js       # enclosure creation, update, biome registry
+  economy.js          # financial update, demand curve, game-over check
+  visitors.js         # visitor spawning, movement, satisfaction
+  ui.js               # HUD, sidebar, info panel rendering and hit-testing
+  research.js         # tech tree nodes, research progress, effect application
+  constants.js        # shared configuration values (tile size, grid dims, costs)
+  utils.js            # small helpers (clamp, lerp, id generation, random)
+```
+
+## Architecture Patterns
+
+### Game State
+
+All game state lives in a single plain JavaScript object created at startup and passed by reference to every update and render function. There is no global mutable state outside this object.
+
+```js
+// Shape of the top-level state object
+{
+  tick: 0,                // current simulation tick
+  paused: false,
+  speed: 1,              // 1 = normal, 2 = fast, 4 = ultra
+  money: 10000,
+  admissionPrice: 10,
+  animals: [],           // array of animal objects
+  enclosures: [],        // array of enclosure objects
+  visitors: [],          // array of visitor objects
+  map: { /* tile grid */ },
+  ui: { /* current mode, selections, menus */ },
+  research: { /* nodes, activeResearch */ },
+}
+```
+
+### Entity Pattern
+
+Every game entity (animal, enclosure, visitor) is a plain object with an `id` field and a `type` string. There are no ES classes — entities are created by factory functions and mutated by update functions that receive them as arguments.
+
+```js
+// Generic entity shape
+{ id: "a_001", type: "animal", x: 5, y: 3, ...specificProps }
+```
+
+### Tile Grid
+
+The map is a 2D array of tile objects. Each tile knows its grid coordinates and what (if anything) occupies it.
+
+```js
+// Tile object
+{ x: 0, y: 0, type: "grass", occupant: null }
+```
+
+Tile types: `"grass"`, `"path"`, `"water"`, `"entrance"`.
+
+### Update / Render Separation
+
+The game loop uses a fixed-timestep update (16ms per tick) with variable-rate rendering via `requestAnimationFrame`. The update function advances the simulation by one tick; the render function draws the current state to the canvas. Multiple update ticks may run per frame if the browser falls behind, but rendering always happens exactly once per frame.
+
+```js
+// Simplified loop structure
+function loop(timestamp) {
+  while (accumulator >= TICK_MS) {
+    update(state, TICK_MS);
+    accumulator -= TICK_MS;
+  }
+  render(state, ctx);
+  requestAnimationFrame(loop);
+}
+```
+
+### Module Boundaries
+
+Each source file exports pure functions that operate on the state object or a subset of it. Modules do not import each other in circular patterns — the dependency graph flows from `main.js` → `game.js` → feature modules → `constants.js` / `utils.js`.

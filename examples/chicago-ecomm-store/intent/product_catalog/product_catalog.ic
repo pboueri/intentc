@@ -1,0 +1,67 @@
+---
+name: product_catalog
+depends_on:
+  - database
+tags:
+  - backend
+  - feature
+---
+
+# Product Catalog
+
+RESTful API for managing products with full CRUD operations and seed data for Chicago-themed items.
+
+## API Endpoints
+
+### GET /api/products
+- Public (no auth required)
+- Returns array of all products
+- Each product includes: id, name, description, price, image_url, inventory_count
+
+### GET /api/products/:id
+- Public (no auth required)
+- Returns a single product by ID
+- Returns 404 if product not found
+
+### POST /api/products
+- Requires: admin role (authMiddleware + adminMiddleware)
+- Accepts: `{ name, description, price, image_url, inventory_count }`
+- Validates required fields (name, price)
+- Creates and returns the new product
+
+### PUT /api/products/:id
+- Requires: admin role
+- Accepts: partial product fields to update
+- Returns updated product
+- Returns 404 if product not found
+
+### DELETE /api/products/:id
+- Requires: admin role
+- Deletes the product
+- Returns 204 on success
+- Returns 404 if product not found
+
+## Seed Data
+
+The database seed script must include these three products:
+
+### 1. Chicago Deep Dish Pizza
+- **Name**: Chicago Deep Dish Pizza
+- **Description**: A legendary thick-crusted pizza loaded with mozzarella, chunky tomato sauce, and your choice of toppings. Baked in a deep round pan, this is the authentic Chicago pizza experience straight from the heart of the Windy City.
+- **Price**: $24.99
+- **Image URL**: `https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Lou_Malnati%27s_Deep_Dish_Pizza.JPG/800px-Lou_Malnati%27s_Deep_Dish_Pizza.JPG`
+- **Inventory Count**: 50
+
+### 2. Jeppson's Malort
+- **Name**: Jeppson's Malort
+- **Description**: Chicago's most infamous spirit. This wormwood-based liqueur has been a rite of passage for Chicagoans since 1934. Bold, bitter, and unforgettable - if you can handle it, you're officially a local.
+- **Price**: $29.99
+- **Image URL**: `https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Jeppson%27s_Mal%C3%B6rt_logo.png/800px-Jeppson%27s_Mal%C3%B6rt_logo.png`
+- **Inventory Count**: 100
+
+### 3. Chicago-Style Hot Dog
+- **Name**: Chicago-Style Hot Dog
+- **Description**: An all-beef frankfurter on a poppy seed bun, dragged through the garden with yellow mustard, bright green relish, chopped onions, tomato slices, a pickle spear, sport peppers, and a dash of celery salt. No ketchup allowed.
+- **Price**: $8.99
+- **Image URL**: `https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Chicago-style_hot_dog_2.jpg/800px-Chicago-style_hot_dog_2.jpg`
+- **Inventory Count**: 200

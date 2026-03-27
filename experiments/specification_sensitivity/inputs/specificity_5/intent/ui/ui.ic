@@ -1,0 +1,485 @@
+---
+name: ui
+depends_on:
+  - game_loop
+  - renderer
+  - economy
+  - input
+tags: [interface]
+---
+
+# UI
+
+All user interface elements drawn on the canvas: HUD bar, sidebar with tabbed panels, info bar, tooltips, toasts, and the build-mode ghost preview. See `ui/layout.md` for exact pixel coordinates of every element.
+
+## Layout Constants
+
+```js
+// All pixel coordinates are absolute on the 1280x720 canvas.
+
+// HUD Bar (top)
+export const HUD_X = 0;
+export const HUD_Y = 0;
+export const HUD_W = 1280;
+export const HUD_H = 40;
+
+// Main Viewport (center-left)
+export const VIEWPORT_X = 0;
+export const VIEWPORT_Y = 40;
+export const VIEWPORT_W = 1040;
+export const VIEWPORT_H = 640;    // 720 - 40 (HUD) - 40 (info bar)
+
+// Sidebar (right)
+export const SIDEBAR_X = 1040;
+export const SIDEBAR_Y = 40;
+export const SIDEBAR_W = 240;
+export const SIDEBAR_H = 680;     // 720 - 40 (HUD)
+
+// Info Bar (bottom of viewport)
+export const INFO_X = 0;
+export const INFO_Y = 680;
+export const INFO_W = 1040;
+export const INFO_H = 40;
+
+// Tab bar (within sidebar)
+export const TAB_Y = 44;
+export const TAB_H = 32;
+export const TAB_W = 78;          // 3 tabs fit in 240px with 3px gaps
+
+// Sidebar content area (below tabs)
+export const SIDEBAR_CONTENT_X = 1044;
+export const SIDEBAR_CONTENT_Y = 80;
+export const SIDEBAR_CONTENT_W = 232;
+export const SIDEBAR_CONTENT_H = 636;
+
+// Button dimensions
+export const BTN_W = 220;
+export const BTN_H = 36;
+export const BTN_MARGIN = 4;
+
+// Tooltip
+export const TOOLTIP_MAX_W = 200;
+export const TOOLTIP_PADDING = 8;
+export const TOOLTIP_CORNER_R = 4;
+
+// Toast
+export const TOAST_W = 280;
+export const TOAST_H = 36;
+export const TOAST_X = (1040 - 280) / 2;  // centered in viewport: 380
+export const TOAST_INITIAL_Y = -36;        // starts above screen
+export const TOAST_TARGET_Y = 50;          // slides to just below HUD
+```
+
+## HUD Bar Rendering
+
+```js
+export function drawHUD(ctx, state) {
+  // Background
+  ctx.fillStyle = '#1a1a2ecc';
+  ctx.fillRect(HUD_X, HUD_Y, HUD_W, HUD_H);
+
+  ctx.font = 'bold 16px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.textBaseline = 'middle';
+  const y = HUD_H / 2;
+
+  // Money
+  ctx.fillStyle = '#ffd700';
+  ctx.textAlign = 'left';
+  ctx.fillText(`$${Math.floor(state.money).toLocaleString()}`, 16, y);
+
+  // Net income indicator
+  const summary = getFinancialSummary(state);
+  ctx.fillStyle = summary.netPerTick >= 0 ? '#5cb85c' : '#d9534f';
+  ctx.font = '14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  const netStr = summary.netPerTick >= 0 ? `+${summary.netPerTick.toFixed(1)}` : summary.netPerTick.toFixed(1);
+  ctx.fillText(`(${netStr}/tick)`, 180, y);
+
+  // Animals count
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.fillText(`Animals: ${state.animals.length}`, 340, y);
+
+  // Visitors count
+  ctx.fillText(`Visitors: ${state.visitors.length}`, 500, y);
+
+  // Time
+  const mins = Math.floor(state.timeElapsed / 60);
+  const secs = Math.floor(state.timeElapsed % 60);
+  ctx.fillText(`${mins}:${secs.toString().padStart(2, '0')}`, 660, y);
+
+  // Speed buttons
+  drawSpeedButtons(ctx, state, 780, 6);
+
+  // Pause button
+  drawPauseButton(ctx, state, 930, 6);
+
+  // Bankruptcy warning
+  if (state.economy.bankruptcyTimer > 0) {
+    ctx.fillStyle = '#d9534f';
+    ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'right';
+    const remaining = 30 - state.economy.bankruptcyTimer;
+    ctx.fillText(`BANKRUPT IN ${remaining}s`, HUD_W - 16, y);
+  }
+}
+
+function drawSpeedButtons(ctx, state, x, y) {
+  const speeds = [1, 2, 3];
+  const btnW = 40;
+  const btnH = 28;
+
+  for (let i = 0; i < speeds.length; i++) {
+    const bx = x + i * (btnW + 4);
+    const active = state.speed === speeds[i];
+
+    ctx.fillStyle = active ? '#5a5a8c' : '#3a3a5c';
+    ctx.fillRect(bx, y, btnW, btnH);
+    ctx.strokeStyle = '#505078';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, y, btnW, btnH);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${speeds[i]}x`, bx + btnW / 2, y + btnH / 2);
+  }
+}
+
+function drawPauseButton(ctx, state, x, y) {
+  const btnW = 60;
+  const btnH = 28;
+
+  ctx.fillStyle = state.phase === 'paused' ? '#5cb85c' : '#3a3a5c';
+  ctx.fillRect(x, y, btnW, btnH);
+  ctx.strokeStyle = '#505078';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, btnW, btnH);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(state.phase === 'paused' ? 'PLAY' : 'PAUSE', x + btnW / 2, y + btnH / 2);
+}
+```
+
+## Sidebar Rendering
+
+```js
+export function drawSidebar(ctx, state) {
+  // Background
+  ctx.fillStyle = '#1a1a2eee';
+  ctx.fillRect(SIDEBAR_X, SIDEBAR_Y, SIDEBAR_W, SIDEBAR_H);
+
+  // Tabs
+  drawTabs(ctx, state);
+
+  // Content based on active tab
+  switch (state.ui.activeTab) {
+    case 'build':  drawBuildTab(ctx, state); break;
+    case 'shop':   drawShopTab(ctx, state); break;
+    case 'research': drawResearchTab(ctx, state); break;
+  }
+}
+
+function drawTabs(ctx, state) {
+  const tabs = [
+    { key: 'build', label: 'Build' },
+    { key: 'shop', label: 'Shop' },
+    { key: 'research', label: 'Research' },
+  ];
+
+  for (let i = 0; i < tabs.length; i++) {
+    const tx = SIDEBAR_X + 3 + i * (TAB_W + 3);
+    const active = state.ui.activeTab === tabs[i].key;
+
+    ctx.fillStyle = active ? '#5a5a8c' : '#3a3a5c';
+    ctx.fillRect(tx, TAB_Y, TAB_W, TAB_H);
+
+    ctx.fillStyle = active ? '#ffffff' : '#b0b0cc';
+    ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(tabs[i].label, tx + TAB_W / 2, TAB_Y + TAB_H / 2);
+  }
+}
+
+function drawBuildTab(ctx, state) {
+  const biomes = ['savanna', 'aquatic', 'forest', 'arctic', 'aviary'];
+  let y = SIDEBAR_CONTENT_Y + 8;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Build Enclosure', SIDEBAR_CONTENT_X + 8, y);
+  y += 28;
+
+  for (const biome of biomes) {
+    const biomeData = BIOME[biome];
+    const canAfford = state.money >= biomeData.baseCost;
+    const isActive = state.input.mode === 'building' && state.input.buildType === biome;
+
+    // Button background
+    ctx.fillStyle = isActive ? '#5a5a8c' : (canAfford ? '#3a3a5c' : '#2a2a3c');
+    ctx.fillRect(SIDEBAR_CONTENT_X + 4, y, BTN_W, BTN_H);
+    ctx.strokeStyle = '#505078';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SIDEBAR_CONTENT_X + 4, y, BTN_W, BTN_H);
+
+    // Biome color swatch
+    ctx.fillStyle = biomeData.fillColor;
+    ctx.fillRect(SIDEBAR_CONTENT_X + 10, y + 6, 24, 24);
+
+    // Label
+    ctx.fillStyle = canAfford ? '#ffffff' : '#707090';
+    ctx.font = '14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${biomeData.name}  $${biomeData.baseCost}`, SIDEBAR_CONTENT_X + 42, y + BTN_H / 2 + 1);
+
+    y += BTN_H + BTN_MARGIN;
+  }
+}
+```
+
+## Info Bar
+
+```js
+export function drawInfoBar(ctx, state) {
+  ctx.fillStyle = '#1a1a2ecc';
+  ctx.fillRect(INFO_X, INFO_Y, INFO_W, INFO_H);
+
+  if (!state.input.selected) {
+    ctx.fillStyle = '#707090';
+    ctx.font = '14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Click an animal or enclosure to see details', INFO_X + 16, INFO_Y + INFO_H / 2);
+    return;
+  }
+
+  const sel = state.input.selected;
+  ctx.font = '14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const y = INFO_Y + INFO_H / 2;
+
+  if (sel.type === 'animal') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`${SPECIES[sel.species].name} "${sel.name}"`, INFO_X + 16, y);
+
+    // Happiness bar
+    drawMiniBar(ctx, INFO_X + 250, y - 6, 60, 12, sel.happiness / 100, happinessColor(sel.happiness));
+    ctx.fillStyle = '#b0b0cc';
+    ctx.fillText(`Happiness: ${Math.round(sel.happiness)}%`, INFO_X + 320, y);
+
+    // Hunger
+    ctx.fillText(`Hunger: ${Math.round(sel.hunger)}%`, INFO_X + 480, y);
+
+    // Health bar
+    drawMiniBar(ctx, INFO_X + 620, y - 6, 60, 12, sel.health / 100, healthBarColor(sel.health));
+    ctx.fillStyle = '#b0b0cc';
+    ctx.fillText(`Health: ${Math.round(sel.health)}%`, INFO_X + 690, y);
+
+    if (sel.sick) {
+      ctx.fillStyle = '#d9534f';
+      ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+      ctx.fillText('(SICK)', INFO_X + 840, y);
+    }
+  } else if (sel.type === 'enclosure') {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`${BIOME[sel.biome].name} Enclosure (Lv.${sel.level})`, INFO_X + 16, y);
+    ctx.fillStyle = '#b0b0cc';
+
+    const count = state.animals.filter(a => a.enclosureId === sel.id).length;
+    ctx.fillText(`Animals: ${count}/${sel.capacity}`, INFO_X + 280, y);
+
+    drawMiniBar(ctx, INFO_X + 420, y - 6, 60, 12, sel.condition / 100, healthBarColor(sel.condition));
+    ctx.fillText(`Condition: ${Math.round(sel.condition)}%`, INFO_X + 490, y);
+
+    ctx.fillText(`Repair: $${getRepairCost(sel)}`, INFO_X + 660, y);
+  }
+}
+
+function drawMiniBar(ctx, x, y, w, h, fraction, color) {
+  ctx.fillStyle = '#333333';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w * Math.max(0, Math.min(1, fraction)), h);
+}
+```
+
+## Tooltip Rendering
+
+```js
+export function drawTooltip(ctx, state) {
+  const content = getTooltipContent(state);
+  if (!content) return;
+
+  const hover = state.input.hover;
+  if (!hover) return;
+
+  const px = hover.tileX * TILE_SIZE - state.camera.x + TILE_SIZE + 4;
+  const py = hover.tileY * TILE_SIZE - state.camera.y + HUD_H;
+
+  // Measure text to size the tooltip
+  ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  const titleWidth = ctx.measureText(content.title).width;
+
+  ctx.font = '12px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  let maxLineWidth = titleWidth;
+  for (const line of content.lines) {
+    const lw = ctx.measureText(line).width;
+    if (lw > maxLineWidth) maxLineWidth = lw;
+  }
+
+  const tooltipW = Math.min(TOOLTIP_MAX_W, maxLineWidth + TOOLTIP_PADDING * 2);
+  const lineHeight = 16;
+  const tooltipH = TOOLTIP_PADDING * 2 + 18 + content.lines.length * lineHeight;
+
+  // Clamp position to viewport
+  const drawX = Math.min(px, VIEWPORT_W - tooltipW - 4);
+  const drawY = Math.min(py, VIEWPORT_H + HUD_H - tooltipH - 4);
+
+  // Background
+  ctx.fillStyle = '#1a1a2ef0';
+  ctx.beginPath();
+  roundRect(ctx, drawX, drawY, tooltipW, tooltipH, TOOLTIP_CORNER_R);
+  ctx.fill();
+  ctx.strokeStyle = '#505078';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Title
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(content.title, drawX + TOOLTIP_PADDING, drawY + TOOLTIP_PADDING);
+
+  // Lines
+  ctx.fillStyle = '#d0d0e0';
+  ctx.font = '12px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  for (let i = 0; i < content.lines.length; i++) {
+    ctx.fillText(content.lines[i], drawX + TOOLTIP_PADDING, drawY + TOOLTIP_PADDING + 18 + i * lineHeight);
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+```
+
+## Notification Toast System
+
+```js
+export function addToast(state, message) {
+  state.ui.notification_id += 1;
+  state.ui.toasts.push({
+    id: state.ui.notification_id,
+    message,
+    createdAt: performance.now(),
+    duration: 3000,  // 3 seconds
+  });
+}
+
+export function drawToasts(ctx, state, tick) {
+  const now = performance.now();
+  const toRemove = [];
+
+  for (let i = 0; i < state.ui.toasts.length; i++) {
+    const toast = state.ui.toasts[i];
+    const elapsed = now - toast.createdAt;
+
+    if (elapsed > toast.duration + 300) { // 300ms fade-out
+      toRemove.push(toast.id);
+      continue;
+    }
+
+    // Slide-in animation (first 200ms)
+    let y;
+    if (elapsed < 200) {
+      const t = elapsed / 200;
+      const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      y = TOAST_INITIAL_Y + (TOAST_TARGET_Y - TOAST_INITIAL_Y) * ease;
+    } else {
+      y = TOAST_TARGET_Y;
+    }
+
+    // Stack multiple toasts
+    y += i * (TOAST_H + 4);
+
+    // Fade-out (last 300ms)
+    let alpha = 1.0;
+    if (elapsed > toast.duration) {
+      alpha = 1.0 - (elapsed - toast.duration) / 300;
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#1a1a2ee0';
+    ctx.fillRect(TOAST_X, y, TOAST_W, TOAST_H);
+    ctx.strokeStyle = '#5050780';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(TOAST_X, y, TOAST_W, TOAST_H);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(toast.message, TOAST_X + TOAST_W / 2, y + TOAST_H / 2);
+    ctx.globalAlpha = 1.0;
+  }
+
+  // Clean up expired toasts
+  if (toRemove.length > 0) {
+    state.ui.toasts = state.ui.toasts.filter(t => !toRemove.includes(t.id));
+  }
+}
+```
+
+## Button Hit-Testing
+
+```js
+/**
+ * Check if a screen coordinate is within a button's bounds.
+ * Used by sidebar and HUD click handlers.
+ */
+export function isPointInButton(px, py, bx, by, bw, bh) {
+  return px >= bx && px <= bx + bw && py >= by && py <= by + bh;
+}
+
+/**
+ * Handle click in the sidebar area. Tests each button in the active tab.
+ */
+function handleSidebarClick(state, screenX, screenY) {
+  // Tab clicks
+  const tabs = ['build', 'shop', 'research'];
+  for (let i = 0; i < tabs.length; i++) {
+    const tx = SIDEBAR_X + 3 + i * (TAB_W + 3);
+    if (isPointInButton(screenX, screenY, tx, TAB_Y, TAB_W, TAB_H)) {
+      state.ui.activeTab = tabs[i];
+      return;
+    }
+  }
+
+  // Content area button clicks depend on active tab
+  // (Each tab's draw function must have a corresponding click handler
+  //  that checks the same button positions.)
+}
+```
+
+## Edge Cases
+
+- **Toast overflow:** Maximum 5 toasts visible at once. If more than 5 are active, the oldest are immediately removed to prevent stacking beyond the visible area.
+- **Sidebar scrolling:** If the build/shop/research list is longer than the sidebar content area, a simple virtual scroll is implemented (arrow buttons at top/bottom of the content area). The maximum visible items at once is `floor(SIDEBAR_CONTENT_H / (BTN_H + BTN_MARGIN))` = 15 buttons.
+- **Info bar with no selection:** Shows a muted-text hint: "Click an animal or enclosure to see details."
+- **Tooltip off-screen:** Tooltip position is clamped so it does not extend beyond the viewport edges.

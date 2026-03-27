@@ -1,0 +1,35 @@
+target: animals
+validations:
+  - name: animals_consume_food
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that animals consume food over time and that feeding costs money.
+        Place an animal in a compatible enclosure and let the simulation run for
+        several ticks. The zoo's balance should decrease as food costs are deducted.
+        If the balance runs out, animals should stop being fed and their hunger
+        attribute should increase.
+
+  - name: happiness_responds_to_conditions
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that animal happiness is affected by enclosure conditions.
+        Place an animal in a matching biome enclosure with adequate space and
+        confirm happiness is high or trending upward. Then place an animal in
+        a mismatched biome or an overcrowded enclosure and confirm happiness is
+        low or trending downward. The happiness value should clearly differ
+        between good and bad conditions.
+
+  - name: breeding_produces_offspring
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that animals can breed when conditions are right. Place at least
+        two animals of the same species in a compatible enclosure with enough
+        space and keep them well-fed so happiness is high. Over time, the animal
+        count should increase as offspring are produced. Breeding should not
+        occur if happiness is below the required threshold.

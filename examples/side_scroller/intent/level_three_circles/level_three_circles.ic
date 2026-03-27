@@ -1,0 +1,46 @@
+---
+name: level_three_circles
+depends_on:
+  - player
+  - level_system
+tags:
+  - level
+  - gameplay
+---
+
+# Level Three — Circles
+
+The final level embraces chaos and curves. Everything is built from circles, arcs, and curves. The mood is organic and unpredictable — a deliberate contrast to the rigid precision of Level Two. This is the hardest level, demanding adaptability and quick reflexes.
+
+## Platforms
+
+- **Rotating discs:** Circular platforms that spin. The player must account for the rotation — standing still means being carried toward the edge and sliding off.
+- **Curved surfaces:** Arc-shaped platforms where the star slides off if it doesn't keep moving or jump at the right moment.
+- **Bouncy platforms:** Small circles that bounce the player upward on contact, used for reaching high areas. Bounce height varies by platform size.
+
+## Enemies
+
+- **Bouncing balls:** Circular enemies that bounce around with semi-random trajectories, ricocheting off surfaces. Hard to predict, requiring constant awareness.
+- **Bubble-shielded enemies:** Enemies enclosed in a circular bubble shield. The star must first pop the bubble with a spin/dash attack, then hit the exposed enemy on a second pass.
+- **Orbiter enemies:** Small circles that orbit a fixed point. They block pathways and require timing to pass through gaps in their orbit.
+- The star's spin/dash attack pops circular enemies, releasing circular spark particles.
+
+## Hazards
+
+- **Pendulums / wrecking balls:** Large circles on arcs that swing back and forth through gaps the player must cross. Timing the swing is essential.
+- **Rolling boulders:** Large circles that roll along surfaces toward the player, requiring quick jumps or direction changes to avoid.
+- **Expanding rings:** Circles that pulse outward from a point, damaging the player on contact. The player must jump over or duck under them (or time movement between pulses).
+
+## Atmosphere
+
+- Color palette: warm purples, magentas, and golds on a dark background.
+- Background: floating circles and bubbles that multiply and accelerate as the timer counts down.
+- Particle effects on enemy death: circular sparks and ring bursts.
+- Music/sound feel: flowing, chaotic, building intensity.
+
+## Layout
+
+- ~60 seconds of horizontal scrolling gameplay.
+- The most chaotic layout — paths curve, platforms spin, enemies bounce unpredictably.
+- A checkpoint at roughly the halfway point.
+- The level ends at the right edge, triggering the win state and victory screen.

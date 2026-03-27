@@ -1,0 +1,58 @@
+target: economy
+validations:
+  - name: demand_curve_formula
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the visitor arrival rate is calculated using the formula:
+        arrivalRate = 2.0 * (1 + log2(speciesCount + 1)) * (avgHappiness / 100) * max(0.1, 1.5 - price / 20).
+        Test cases: (1) with 0 animals, arrival rate must be 0, (2) with 3 species,
+        avgHappiness=80, price=$5, rate should be approximately
+        2.0 * (1 + log2(4)) * 0.8 * max(0.1, 1.5 - 0.25) = 2.0 * 3.0 * 0.8 * 1.25 = 6.0,
+        (3) very high price ($30+) should produce a minimal but non-zero rate due to the
+        max(0.1, ...) floor. Marketing research must multiply the rate by 1.5.
+
+  - name: bankruptcy_detection
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify bankruptcy detection uses a 30-second grace period. The timer increments
+        each tick when balance <= 0 AND net income < 0. When the timer reaches 30, the
+        game transitions to the 'game_over' phase. If at any tick the balance goes above
+        0 or net income becomes non-negative, the timer resets to 0. The timer value
+        must be accessible for UI display (warning indicator).
+
+  - name: financial_history_tracking
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify the economy tracks a rolling history of the last 100 ticks. Each entry
+        must contain at minimum: income, expense, and net (income - expense). The
+        history array must be bounded to exactly 100 entries (older entries are removed).
+        A trend function must analyze the last 10 vs previous 10 entries and return
+        'up', 'down', or 'flat'.
+
+  - name: price_suggestion
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify a price suggestion function exists that evaluates all integer prices
+        from MIN_ADMISSION_PRICE to MAX_ADMISSION_PRICE and returns the price that
+        maximizes expected revenue (arrivalRate * price). The suggestion must be
+        recalculable on demand and not depend on historical data.
+
+  - name: revenue_and_expense_accounting
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that all money flows are accounted for: (1) visitor admission revenue
+        is added to state.money and tracked in totalRevenue, (2) food costs are deducted
+        per animal per tick, (3) maintenance costs are deducted per enclosure per tick,
+        (4) purchase costs (animals and enclosures) are deducted on buy, (5) repair
+        costs are deducted on repair. The Gift Shop research must increase per-visitor
+        revenue by 10%. The Efficient Feeding research must halve food costs.

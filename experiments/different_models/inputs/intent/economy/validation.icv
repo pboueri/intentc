@@ -1,0 +1,38 @@
+target: economy
+validations:
+  - name: money_changes_over_time
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the zoo's balance changes over time as the simulation runs.
+        Start a game, build at least one enclosure, and purchase at least one
+        animal. Let the simulation run for several ticks. The balance should
+        decrease due to food and maintenance costs. Once visitors begin arriving,
+        the balance should also receive income from admissions. The net change
+        should be visible in the financial HUD.
+
+  - name: admission_price_affects_visitors
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that changing the admission price affects visitor behavior. Set
+        up a zoo with animals and enclosures so that visitors are arriving. Note
+        the visitor arrival rate at the default price. Raise the admission price
+        significantly and observe that fewer visitors arrive per tick. Lower the
+        price well below the original and observe that more visitors arrive.
+        The relationship between price and visitor count should follow a demand
+        curve where higher prices reduce volume.
+
+  - name: game_over_on_bankruptcy
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the game ends when the zoo goes bankrupt. Create a scenario
+        where expenses exceed revenue — for example, buy many expensive animals
+        but set the admission price extremely high so almost no visitors come.
+        Let the simulation run until the balance reaches zero. The game should
+        detect the bankruptcy condition and display a game-over screen showing
+        the final animal count and other summary statistics.

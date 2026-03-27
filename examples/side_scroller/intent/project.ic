@@ -1,0 +1,29 @@
+---
+name: side_scroller
+---
+
+# Side Scroller — Geometric Platformer
+
+A browser-based side-scrolling platformer built with JavaScript and HTML5 Canvas. The player controls a star character through three distinct levels, each themed around a geometric shape: triangles, squares, and circles. Each level is approximately 60 seconds long and introduces unique mechanics derived from its shape theme.
+
+The game's visual style is abstract geometry — clean lines, bold colors, and shape-based particle effects. There are no bitmap sprites; everything is rendered procedurally from geometric primitives.
+
+## Core Concept
+
+- **Player character:** A star that can run, jump, and perform a spin/dash attack.
+- **Three levels**, each ~60 seconds, each built entirely from one geometric shape.
+- **Win condition:** Complete all three levels without losing all lives.
+- **Lose condition:** Falling off-screen or being destroyed by enemy attacks.
+
+## Shape Progression
+
+The three levels create a deliberate mechanical arc:
+1. **Triangles** — angular, sharp, momentum-based. Slopes and orientation matter.
+2. **Squares** — rigid, mechanical, grid-based. Precision and timing matter.
+3. **Circles** — chaotic, rolling, unpredictable. Adaptability matters.
+
+## Cross-Cutting Mechanics
+
+- The star's spin/dash attack interacts differently with each shape: slices through triangles, shatters squares, pops circles.
+- Each level's background geometry subtly morphs and intensifies as the 60-second timer counts down, creating visual urgency.
+- Particle effects match the current level's shape — triangle shards, square pixels, circular sparks.

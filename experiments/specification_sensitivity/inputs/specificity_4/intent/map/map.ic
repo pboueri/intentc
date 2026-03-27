@@ -1,0 +1,69 @@
+---
+name: map
+tags: [core]
+---
+
+# Map
+
+The map is a 40-column by 30-row tile grid that represents the physical layout of the zoo. Each tile is 32x32 pixels on screen, giving a total play area of 1280x960 pixels before camera zoom. The grid is the spatial foundation for everything in the game: enclosures occupy rectangular regions of tiles, visitors walk along path tiles, and the player interacts by clicking on tiles to build or select.
+
+Tiles start as grass by default. The player lays down path tiles to connect the entrance to enclosures, and water tiles can be placed as decorative features or as required elements for aquatic enclosures. The entrance tile is a special type permanently fixed at the bottom-center of the grid (column 20, row 29). All visitors spawn at this tile and must be able to reach enclosures via connected path tiles.
+
+The map module also provides A* pathfinding for visitor navigation. Visitors need to find routes from the entrance to enclosure frontages and back. The pathfinding operates on the tile grid, treating grass and path tiles as walkable and enclosure interior tiles as obstacles. Water tiles are not walkable. The algorithm returns an array of tile coordinates representing the shortest path, or an empty array if no path exists.
+
+## Data Structures
+
+```js
+// The map object
+{
+  width: 40,
+  height: 30,
+  tiles: [
+    // 2D array: tiles[y][x]
+    [{ x: 0, y: 0, type: "grass", occupant: null }, ...]
+    // ...30 rows of 40 tiles each
+  ]
+}
+
+// Tile object
+{
+  x: 12,          // grid column
+  y: 8,           // grid row
+  type: "grass",  // "grass" | "path" | "water" | "entrance"
+  occupant: null,  // null or enclosure id string
+}
+```
+
+## Key Function Signatures
+
+```js
+// Create a new map with all grass tiles and an entrance at bottom-center
+function createMap(width, height) -> map
+
+// Get the tile at grid coordinates (returns null if out of bounds)
+function getTile(map, x, y) -> tile | null
+
+// Set properties on the tile at grid coordinates
+function setTile(map, x, y, tileProps) -> void
+
+// Find shortest walkable path between two grid positions using A*
+// Returns array of {x, y} coordinates, or empty array if unreachable
+function findPath(map, from, to) -> [{x, y}, ...]
+
+// Check whether a rectangular area of tiles is free (all grass, no occupant)
+function isAreaFree(map, x, y, width, height) -> boolean
+
+// Mark a rectangular area as occupied by an enclosure
+function occupyArea(map, x, y, width, height, enclosureId) -> void
+```
+
+## Behavioral Rules
+
+- The grid is always exactly 40 columns wide and 30 rows tall. These dimensions are defined in `constants.js`.
+- Tile (0, 0) is the top-left corner. X increases rightward, Y increases downward.
+- The entrance tile is at position (20, 29) — bottom-center. It is set during `createMap()` and cannot be overwritten.
+- `getTile()` returns `null` for any coordinates outside the grid bounds. All callers must handle this.
+- `findPath()` uses A* with Manhattan distance as the heuristic. Only tiles with type `"grass"`, `"path"`, or `"entrance"` and no occupant are walkable. Diagonal movement is not allowed — only four cardinal directions.
+- `isAreaFree()` checks every tile in the rectangle. If any tile is non-grass, has an occupant, or is out of bounds, it returns false.
+- Path tiles can be placed on grass tiles. Water tiles can be placed on grass tiles. Neither can be placed on tiles occupied by an enclosure.
+- Placing a tile type updates only the `type` field; the `occupant` field is managed separately by the enclosures system.

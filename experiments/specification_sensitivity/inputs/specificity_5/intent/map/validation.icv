@@ -1,0 +1,50 @@
+target: map
+validations:
+  - name: pathfinding_correctness
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the A* pathfinding implementation returns correct shortest paths.
+        Test cases: (1) straight-line path on open grass returns a direct route,
+        (2) path around a water obstacle routes correctly without crossing water,
+        (3) path to an unreachable tile (surrounded by water) returns null,
+        (4) diagonal movement costs sqrt(2) times the tile cost, not 1.0,
+        (5) diagonal moves are blocked when an adjacent cardinal tile is not walkable
+        (no corner cutting). The heuristic must be admissible (octile distance for
+        8-directional movement).
+
+  - name: placement_validation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify isValidPlacement correctly rejects: (1) placements that extend
+        beyond map bounds, (2) placements overlapping water tiles, (3) placements
+        overlapping the entrance gate, (4) placements overlapping existing enclosures,
+        (5) placements overlapping PATH tiles. It must accept valid placements on
+        grass or dirt tiles that do not overlap any obstacle or existing enclosure.
+        The function must return a reason string for rejections.
+
+  - name: map_initialization
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify initMap() creates a 40x30 grid where: (1) the entrance gate occupies
+        at least one tile on the left edge near row 15, (2) a PATH extends from the
+        entrance inward, (3) all remaining tiles default to GRASS, (4) a few
+        decorative water features exist at fixed positions, (5) every tile value
+        is a valid TILE constant (0-4). The grid dimensions must be exactly
+        MAP_COLS x MAP_ROWS.
+
+  - name: coordinate_conversion
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify that tileToPixel and pixelToTile are exact inverses:
+        pixelToTile(tileToPixel(c, r)) must return {col: c, row: r} for all valid
+        tile coordinates. Also verify that screenToTile correctly incorporates the
+        camera offset, so clicking at screen position (x, y) with camera at (cx, cy)
+        maps to the tile at world position (x + cx, y + cy).

@@ -1,0 +1,18 @@
+target: database
+agent_profile: null
+validations:
+  - name: schema_definition
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The database feature must include SQL migration files or a schema definition that creates the users, products, orders, and order_items tables with the correct columns, types, primary keys, and foreign key relationships as specified in the feature intent."
+  - name: db_connection_module
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "There must be a database connection module (e.g., db.js) that configures a PostgreSQL connection pool using the pg library and exports a query helper function."
+  - name: seed_script
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "There must be a seed script that populates the database with initial data including an admin user and the three Chicago seed products (deep dish pizza, Malort, Chicago hot dog)."

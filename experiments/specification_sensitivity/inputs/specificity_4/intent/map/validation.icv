@@ -1,0 +1,34 @@
+target: map
+validations:
+  - name: grid_renders_correctly
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the tile grid is visible on the canvas. The map should
+        display as a 40x30 grid of tiles. Grass tiles should be the default
+        fill. The entrance tile at the bottom-center should be visually
+        distinct from regular grass tiles. Tile boundaries should be
+        discernible so the player can identify individual grid cells.
+  - name: tile_placement_works
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the player can place path and water tiles on the map.
+        Selecting a tile type from the build menu and clicking on a grass
+        tile should change that tile's type. The new tile should render with
+        the correct visual style. Tiles that are occupied by an enclosure
+        should reject placement attempts.
+  - name: pathfinding_functional
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that A* pathfinding works correctly. When a path of connected
+        walkable tiles exists between the entrance and an enclosure, visitors
+        should be able to navigate to it. If no walkable route exists (e.g.,
+        the path is blocked), visitors should not teleport or get stuck in
+        walls — they should either wait or leave. The pathfinding should
+        handle edge cases like the destination being adjacent to the
+        entrance without errors.

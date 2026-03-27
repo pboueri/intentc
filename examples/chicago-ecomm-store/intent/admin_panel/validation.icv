@@ -1,0 +1,23 @@
+target: admin_panel
+agent_profile: null
+validations:
+  - name: admin_access_control
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The admin panel at /admin must only be accessible to users with the 'admin' role. Non-admin users must be redirected to the home page. The admin link in the navbar must only appear for admin users."
+  - name: product_management_table
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The admin panel must display a table of all products showing image, name, price, inventory count, and action buttons for edit and delete."
+  - name: add_product
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The admin panel must have an Add New Product form with fields for name, description, price, image URL, and inventory count. Submitting the form must call POST /api/products and refresh the product list."
+  - name: edit_and_delete
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The admin panel must support editing products (pre-populated form, PUT request) and deleting products (confirmation dialog, DELETE request). Both operations must refresh the product list on success."

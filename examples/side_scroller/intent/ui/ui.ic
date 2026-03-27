@@ -1,0 +1,48 @@
+---
+name: ui
+depends_on:
+  - game_engine
+  - level_system
+tags:
+  - ui
+---
+
+# UI — Menus, HUD, and Screens
+
+All non-gameplay user interface elements: the title screen, HUD overlay during gameplay, pause menu, game over screen, and victory screen. All UI is rendered on the Canvas — no HTML overlays.
+
+## Title Screen
+
+- Displays the game title with a star character rendered at the center.
+- Background: slowly drifting mix of triangles, squares, and circles — a preview of all three levels.
+- "Press any key to start" prompt that pulses.
+- Starts Level One on input.
+
+## HUD (Heads-Up Display)
+
+- Displayed during gameplay, drawn on top of the game canvas.
+- Elements:
+  - **Timer:** 60-second countdown, prominently displayed. Changes color as time runs low (white → yellow → red).
+  - **Lives:** Remaining lives shown as small star icons.
+  - **Health:** Current HP shown as filled/empty pips or a small bar.
+  - **Level indicator:** Current level name and shape icon (triangle / square / circle).
+  - **Dash cooldown:** Small indicator near the player or in the HUD corner showing when the spin/dash attack is ready.
+
+## Pause Menu
+
+- Toggled with Escape key.
+- Pauses the game loop (freezes all updates and the timer).
+- Displays "PAUSED" overlay with options: Resume, Restart Level, Quit to Title.
+
+## Game Over Screen
+
+- Shown when the player loses all lives.
+- Displays "GAME OVER" with the level reached and time survived.
+- Options: Retry (restart from Level One) or Quit to Title.
+
+## Victory Screen
+
+- Shown after completing Level Three.
+- Celebratory animation: an explosion of triangles, squares, and circles radiating outward from a central star.
+- Displays total time across all three levels.
+- Options: Play Again or Quit to Title.

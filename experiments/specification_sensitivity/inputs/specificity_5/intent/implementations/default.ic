@@ -1,0 +1,312 @@
+---
+name: default
+tags: [meta, implementation]
+---
+
+# Implementation
+
+Single-page JavaScript application rendered entirely with HTML5 Canvas 2D context. No external game frameworks or UI libraries. All game logic in vanilla ES modules.
+
+## Technology Stack
+
+- **Language:** Vanilla JavaScript (ES2022, ES modules)
+- **Rendering:** HTML5 Canvas 2D context, single `<canvas>` element
+- **Bundling:** Vite 5.x for dev server and production build
+- **Testing:** Vitest 1.x for unit tests
+- **Package manager:** npm
+- **No runtime dependencies** apart from dev tooling
+
+## package.json
+
+```json
+{
+  "name": "zoo-builder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}
+```
+
+## vite.config.js
+
+```js
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  root: '.',
+  base: './',
+  build: {
+    outDir: 'dist',
+    target: 'es2022',
+    minify: 'terser',
+    sourcemap: false,
+    rollupOptions: {
+      input: 'index.html',
+    },
+  },
+  server: {
+    port: 3000,
+    open: true,
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/*.test.js'],
+  },
+});
+```
+
+## Complete Directory Structure
+
+```
+zoo-builder/
+  index.html
+  vite.config.js
+  package.json
+  src/
+    main.js               # Entry point: creates canvas, boots game
+    constants.js           # All magic numbers and configuration
+    game_loop.js           # requestAnimationFrame loop, fixed timestep
+    state.js               # createGameState(), state shape definition
+    map.js                 # Tile grid, A* pathfinding, placement validation
+    renderer.js            # All canvas drawing, camera, layers, mini-map
+    input.js               # Mouse/keyboard event handlers, state machine
+    animals.js             # Species data, animal update, breeding, death
+    enclosures.js          # Biome defs, degradation, repair, upgrades
+    economy.js             # Revenue, costs, demand curve, bankruptcy
+    visitors.js            # Visitor AI, pathfinding, satisfaction
+    ui.js                  # HUD, sidebar, tooltips, toasts, build ghost
+    research.js            # Tech tree, progress, unlock effects
+    audio.js               # Web Audio API, music, SFX, volume control
+    save_system.js         # localStorage save/load, serialization, slots
+    utils.js               # clamp, lerp, distance, random helpers
+  src/__tests__/
+    animals.test.js
+    economy.test.js
+    enclosures.test.js
+    map.test.js
+    visitors.test.js
+    save_system.test.js
+    game_loop.test.js
+  public/
+    (static assets if any)
+```
+
+## Module Dependency Graph
+
+```
+main.js
+  +-- game_loop.js
+  |     +-- state.js
+  |     +-- map.js
+  |     +-- renderer.js
+  |     |     +-- map.js
+  |     |     +-- ui.js
+  |     +-- input.js
+  |     +-- animals.js
+  |     |     +-- constants.js
+  |     +-- enclosures.js
+  |     |     +-- constants.js
+  |     +-- economy.js
+  |     |     +-- constants.js
+  |     +-- visitors.js
+  |     |     +-- map.js (pathfinding)
+  |     |     +-- constants.js
+  |     +-- research.js
+  |     |     +-- constants.js
+  |     +-- audio.js
+  |     +-- save_system.js
+  |           +-- state.js
+  +-- constants.js
+  +-- utils.js (imported by many modules)
+```
+
+## Entry Point Flow
+
+### index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zoo Builder</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0d1a;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="1280" height="720" aria-label="Zoo Builder game canvas">
+    Zoo Builder: A zoo management simulation game. Use mouse to interact and keyboard for shortcuts.
+  </canvas>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
+```
+
+### src/main.js
+
+```js
+import { createGameState } from './state.js';
+import { startGameLoop } from './game_loop.js';
+import { setupInput } from './input.js';
+import { initAudio } from './audio.js';
+import { loadSaveSlots } from './save_system.js';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Disable image smoothing for pixel-art crispness
+ctx.imageSmoothingEnabled = false;
+
+const state = createGameState();
+const saveSlots = loadSaveSlots();
+
+setupInput(canvas, state);
+initAudio();
+startGameLoop(ctx, state);
+```
+
+## Error Handling Strategy
+
+1. **Graceful degradation:** If audio context fails to initialize (e.g., autoplay policy), the game runs silently. Audio functions become no-ops.
+2. **Save corruption:** `deserializeState` wraps parsing in try/catch. If a save slot contains invalid JSON or a version mismatch that cannot be migrated, the slot is marked as corrupted and the player is warned. The game does not crash.
+3. **Frame budget overrun:** If a single update takes > 50ms (3x the budget), the delta accumulator is clamped to prevent a "spiral of death" where the simulation tries to catch up and falls further behind.
+4. **Missing assets:** All rendering uses procedural drawing (colored rectangles, circles, lines). There are no external image assets that can fail to load. If a future version adds sprite sheets, the renderer falls back to procedural shapes on load error.
+5. **Input edge cases:** All coordinate translations clamp to map bounds. Clicking outside the map grid is a no-op. Double-click does not trigger double-actions.
+
+## Performance Budget
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Frame time | < 16ms | `performance.now()` delta in game loop |
+| Update phase | < 8ms | Profile in devtools |
+| Render phase | < 8ms | Profile in devtools |
+| Memory (heap) | < 100MB | Chrome DevTools memory panel |
+| JS bundle (gzip) | < 50KB | Vite build output |
+| Initial load | < 2s | Lighthouse on 3G throttle |
+
+## constants.js Shape
+
+```js
+// --- Canvas ---
+export const CANVAS_WIDTH = 1280;
+export const CANVAS_HEIGHT = 720;
+
+// --- Tiles ---
+export const TILE_SIZE = 32;
+export const MAP_COLS = 40;
+export const MAP_ROWS = 30;
+
+// --- Sprites ---
+export const ANIMAL_SPRITE_SIZE = 32;
+export const VISITOR_SPRITE_SIZE = 16;
+
+// --- Animation ---
+export const ANIMAL_IDLE_FRAMES = 2;
+export const ANIMAL_IDLE_MS = 500;
+export const VISITOR_WALK_FRAMES = 4;
+export const VISITOR_WALK_MS = 200;
+
+// --- Economy ---
+export const STARTING_MONEY = 10000;
+export const FOOD_COST_PER_TICK = 0.5;   // multiplied by species foodCost
+export const MAINTENANCE_COST_BASE = 0.2;
+export const BANKRUPTCY_GRACE_SECONDS = 30;
+
+// --- Animals ---
+export const BREED_THRESHOLD = 80;        // happiness >= this to breed
+export const BREED_CHANCE_PER_TICK = 0.02; // 2% per tick per eligible pair
+export const BREED_COOLDOWN_DEFAULT = 60;  // ticks
+export const HUNGER_RATE = 0.3;           // per tick
+export const HAPPINESS_LERP = 0.05;       // per tick toward target
+export const HEALTH_DECAY_RATE = 0.1;     // per tick when unhappy
+
+// --- Visitors ---
+export const VISITOR_SPEED = 1.5;         // tiles per second
+export const VISITOR_VIEW_TIME = 3.0;     // seconds
+export const MAX_VISITORS = 50;
+
+// --- UI ---
+export const HUD_HEIGHT = 40;
+export const SIDEBAR_WIDTH = 240;
+export const INFO_BAR_HEIGHT = 40;
+export const TOOLTIP_MAX_WIDTH = 200;
+export const TOAST_DURATION_MS = 3000;
+
+// --- Research ---
+export const RESEARCH_BASE_COST = 2000;
+export const RESEARCH_COST_MULTIPLIER = 1.5;
+
+// --- Save ---
+export const SAVE_VERSION = 1;
+export const AUTO_SAVE_INTERVAL_S = 60;
+export const MAX_SAVE_SLOTS = 3;
+
+// --- Speeds ---
+export const SPEED_OPTIONS = [1, 2, 3];
+```
+
+## State Shape (summary)
+
+```js
+export function createGameState() {
+  return {
+    phase: 'menu',           // 'loading' | 'menu' | 'playing' | 'paused' | 'game_over'
+    tick: 0,
+    timeElapsed: 0,          // real seconds
+    speed: 1,                // 1, 2, or 3
+    money: STARTING_MONEY,
+    admissionPrice: 5,
+    animals: [],             // Array<AnimalEntity>
+    enclosures: [],          // Array<EnclosureEntity>
+    visitors: [],            // Array<VisitorEntity>
+    map: null,               // 2D array initialized by map.js
+    research: {},            // keyed by node id, { unlocked, progress }
+    camera: { x: 0, y: 0 },
+    input: { mode: 'idle', hover: null, selected: null },
+    ui: { toasts: [], activeTab: 'build' },
+    economy: { history: [], bankruptcyTimer: 0, peakAnimals: 0, totalVisitors: 0, totalRevenue: 0 },
+    audio: { musicVolume: 0.5, sfxVolume: 0.7 },
+    autoSaveTimer: 0,
+  };
+}
+```
+
+## Testing Strategy
+
+Unit tests cover pure logic modules:
+
+- **animals.test.js** — Happiness formula, hunger increase, breeding eligibility, death condition
+- **economy.test.js** — Demand curve output at various price/species combos, bankruptcy timer, net income calculation
+- **enclosures.test.js** — Degradation rate, repair cost formula, upgrade capacity increases
+- **map.test.js** — A* pathfinding returns valid path, `isValidPlacement` boundary checks
+- **visitors.test.js** — State transitions, satisfaction accumulation, spawn rate calculation
+- **save_system.test.js** — Serialize/deserialize round-trip, corrupt data handling, version migration
+- **game_loop.test.js** — State machine transitions, delta accumulator clamping
+
+Each test file targets the exported functions of its module, injecting a mock state object. No canvas or DOM mocking is needed for logic tests.

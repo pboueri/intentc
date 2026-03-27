@@ -1,0 +1,32 @@
+---
+name: default
+---
+
+# Default Implementation
+
+## Technology Stack
+
+### Backend
+- **Runtime**: Node.js (v18+)
+- **Framework**: Express.js
+- **Database**: PostgreSQL with the `pg` (node-postgres) driver
+- **Authentication**: JSON Web Tokens (JWT) via `jsonwebtoken`, password hashing via `bcrypt`
+- **API Style**: RESTful JSON API with `/api` prefix
+
+### Frontend
+- **Framework**: React 18+ with React Router v6 for client-side routing
+- **Styling**: Tailwind CSS for utility-first styling with a custom Chicago color theme
+- **State Management**: React Context API for auth state and cart state
+- **HTTP Client**: Fetch API for API communication
+- **Build Tool**: Vite
+
+### Project Structure
+- Monorepo layout with `client/` and `server/` top-level directories
+- `server/` contains Express app, routes, middleware, migrations, and seed scripts
+- `client/` contains Vite-powered React app with pages, components, and context providers
+
+### Development
+- **Package Manager**: npm
+- `npm run dev` in root starts both client and server concurrently
+- `npm run migrate` runs database migrations
+- `npm run seed` populates seed data

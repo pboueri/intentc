@@ -1,0 +1,290 @@
+---
+name: enclosures
+depends_on:
+  - map
+tags: [gameplay]
+---
+
+# Enclosures
+
+Enclosures are the physical habitats placed on the tile grid that house animals. Each enclosure belongs to a biome type, has a condition that degrades over time, and can be repaired or upgraded through three tiers. The player must balance expansion (more enclosures) with maintenance (keeping existing ones in good condition).
+
+## Biome Definitions
+
+```js
+export const BIOME = {
+  savanna: {
+    name: 'Savanna',
+    baseCost: 500,
+    baseCapacity: 3,
+    maintenanceCostPerTick: 0.2,
+    defaultWidth: 4,
+    defaultHeight: 4,
+    fillColor: '#c8b060',
+    borderColor: '#a08830',
+    description: 'Open grassland for plains animals. Houses lions, elephants, giraffes.',
+  },
+  aquatic: {
+    name: 'Aquatic',
+    baseCost: 600,
+    baseCapacity: 3,
+    maintenanceCostPerTick: 0.3,
+    defaultWidth: 4,
+    defaultHeight: 3,
+    fillColor: '#5ba0d0',
+    borderColor: '#3080b0',
+    description: 'Water-heavy habitat with pools. Houses crocodiles, dolphins.',
+  },
+  forest: {
+    name: 'Forest',
+    baseCost: 450,
+    baseCapacity: 4,
+    maintenanceCostPerTick: 0.15,
+    defaultWidth: 3,
+    defaultHeight: 3,
+    fillColor: '#3a7a3a',
+    borderColor: '#2a5a2a',
+    description: 'Dense wooded area. Houses monkeys and other tree-dwellers.',
+  },
+  arctic: {
+    name: 'Arctic',
+    baseCost: 700,
+    baseCapacity: 3,
+    maintenanceCostPerTick: 0.35,
+    defaultWidth: 4,
+    defaultHeight: 4,
+    fillColor: '#e0e8f0',
+    borderColor: '#b0c0d0',
+    description: 'Cold, icy habitat. Houses penguins, polar bears.',
+  },
+  aviary: {
+    name: 'Aviary',
+    baseCost: 400,
+    baseCapacity: 5,
+    maintenanceCostPerTick: 0.1,
+    defaultWidth: 3,
+    defaultHeight: 3,
+    fillColor: '#f0e8a0',
+    borderColor: '#d0c870',
+    description: 'Enclosed sky habitat for birds. Houses parrots, eagles.',
+  },
+};
+```
+
+## Enclosure Entity Shape
+
+```js
+let nextEnclosureId = 1;
+
+export function createEnclosure(biome, col, row) {
+  const biomeData = BIOME[biome];
+  return {
+    id: nextEnclosureId++,
+    biome,                          // key into BIOME table
+    col,                            // top-left tile column
+    row,                            // top-left tile row
+    width: biomeData.defaultWidth,  // width in tiles
+    height: biomeData.defaultHeight,// height in tiles
+    level: 1,                       // upgrade level: 1, 2, or 3
+    condition: 100,                 // 0 (ruined) to 100 (pristine)
+    capacity: biomeData.baseCapacity, // current max animals
+  };
+}
+```
+
+## Upgrade System
+
+Three upgrade levels with exact values:
+
+```js
+const UPGRADE_TABLE = {
+  // level: { capacityMultiplier, costMultiplier, maintenanceMultiplier }
+  1: { capacityMult: 1.0, costToUpgrade: 0,    maintenanceMult: 1.0 },
+  2: { capacityMult: 1.5, costToUpgrade: 0.8,  maintenanceMult: 1.3 },
+  3: { capacityMult: 2.0, costToUpgrade: 1.5,  maintenanceMult: 1.6 },
+};
+
+/**
+ * Cost to upgrade from current level to next level.
+ * Formula: biome.baseCost * nextLevel.costToUpgrade
+ * Advanced Enclosures research reduces upgrade cost by 30%.
+ */
+export function getUpgradeCost(enclosure, state) {
+  if (enclosure.level >= 3) return Infinity; // max level
+  const nextLevel = enclosure.level + 1;
+  const biomeData = BIOME[enclosure.biome];
+  let cost = biomeData.baseCost * UPGRADE_TABLE[nextLevel].costToUpgrade;
+  if (state.research.advanced_enclosures.unlocked) {
+    cost *= 0.7; // 30% discount
+  }
+  return Math.round(cost);
+}
+
+/**
+ * Apply upgrade to an enclosure.
+ */
+export function upgradeEnclosure(state, enclosureId) {
+  const enc = state.enclosures.find(e => e.id === enclosureId);
+  if (!enc || enc.level >= 3) return { success: false, reason: 'Already at max level' };
+
+  const cost = getUpgradeCost(enc, state);
+  if (state.money < cost) return { success: false, reason: 'Insufficient funds' };
+
+  state.money -= cost;
+  enc.level += 1;
+
+  // Recalculate capacity
+  const biomeData = BIOME[enc.biome];
+  enc.capacity = Math.floor(biomeData.baseCapacity * UPGRADE_TABLE[enc.level].capacityMult);
+
+  return { success: true };
+}
+```
+
+## Degradation Formula
+
+```js
+/**
+ * Update all enclosures for one tick.
+ * Condition degrades based on animal count.
+ * Maintenance cost is deducted from balance.
+ */
+export function updateEnclosures(state) {
+  for (const enc of state.enclosures) {
+    const biomeData = BIOME[enc.biome];
+    const animalsInside = state.animals.filter(a => a.enclosureId === enc.id).length;
+
+    // --- Degradation ---
+    // Formula: condition -= 0.01 * animalCount * 1 (per tick)
+    // More animals = faster degradation
+    // Empty enclosures still degrade at a minimum rate
+    const degradeRate = 0.01 * Math.max(1, animalsInside);
+    enc.condition = Math.max(0, enc.condition - degradeRate);
+
+    // --- Maintenance cost ---
+    const maintenanceMult = UPGRADE_TABLE[enc.level].maintenanceMult;
+    const maintenanceCost = biomeData.maintenanceCostPerTick * maintenanceMult;
+
+    if (state.money >= maintenanceCost) {
+      state.money -= maintenanceCost;
+      // Maintenance slows degradation slightly (already factored into base rate)
+    } else {
+      // Can't afford maintenance: double degradation
+      enc.condition = Math.max(0, enc.condition - degradeRate);
+    }
+  }
+}
+```
+
+## Repair
+
+```js
+/**
+ * Repair cost formula: (100 - condition) * 2
+ * Restores condition to 100%.
+ */
+export function getRepairCost(enclosure) {
+  return Math.round((100 - enclosure.condition) * 2);
+}
+
+export function repairEnclosure(state, enclosureId) {
+  const enc = state.enclosures.find(e => e.id === enclosureId);
+  if (!enc) return { success: false, reason: 'Enclosure not found' };
+
+  const cost = getRepairCost(enc);
+  if (cost <= 0) return { success: false, reason: 'Already at full condition' };
+  if (state.money < cost) return { success: false, reason: 'Insufficient funds' };
+
+  state.money -= cost;
+  enc.condition = 100;
+
+  return { success: true };
+}
+```
+
+## Placement and Demolition
+
+```js
+import { isValidPlacement, autoConnectPath } from './map.js';
+import { playSound } from './audio.js';
+
+/**
+ * Place a new enclosure on the map.
+ */
+export function placeEnclosure(state, biome, col, row) {
+  const biomeData = BIOME[biome];
+  const width = biomeData.defaultWidth;
+  const height = biomeData.defaultHeight;
+
+  // Validate placement
+  const check = isValidPlacement(state.map, col, row, width, height, state.enclosures);
+  if (!check.valid) return { success: false, reason: check.reason };
+
+  // Check funds
+  if (state.money < biomeData.baseCost) {
+    return { success: false, reason: 'Insufficient funds' };
+  }
+
+  // Create and add enclosure
+  const enc = createEnclosure(biome, col, row);
+  state.enclosures.push(enc);
+  state.money -= biomeData.baseCost;
+
+  // Auto-connect path from nearest existing path to enclosure
+  autoConnectPath(state.map, enc);
+
+  playSound('build');
+  return { success: true, enclosure: enc };
+}
+
+/**
+ * Demolish an enclosure. Warns if animals are inside.
+ * Animals inside become homeless (enclosureId = -1).
+ * Refunds 50% of base cost.
+ */
+export function demolishEnclosure(state, enclosureId) {
+  const enc = state.enclosures.find(e => e.id === enclosureId);
+  if (!enc) return { success: false, reason: 'Enclosure not found' };
+
+  const animalsInside = state.animals.filter(a => a.enclosureId === enclosureId);
+
+  // Evict animals (they become "homeless" and rapidly lose happiness)
+  for (const animal of animalsInside) {
+    animal.enclosureId = -1;
+  }
+
+  // Refund 50%
+  const refund = Math.round(BIOME[enc.biome].baseCost * 0.5);
+  state.money += refund;
+
+  // Remove enclosure
+  state.enclosures = state.enclosures.filter(e => e.id !== enclosureId);
+
+  if (animalsInside.length > 0) {
+    addToast(state, `Enclosure demolished. ${animalsInside.length} animal(s) displaced!`);
+  }
+
+  return { success: true, refund, displacedAnimals: animalsInside.length };
+}
+```
+
+## Enclosure Visual Specification
+
+Each enclosure is rendered as a filled rectangle with a biome-specific pattern overlay:
+
+| Biome | Fill | Pattern | Border |
+|-------|------|---------|--------|
+| Savanna | `#c8b060` | Horizontal grass tufts (2px lines) | `#a08830`, 2px solid |
+| Aquatic | `#5ba0d0` | Sine-wave lines (water ripple) | `#3080b0`, 2px solid |
+| Forest | `#3a7a3a` | Small 2px circles (leaf dots) | `#2a5a2a`, 2px solid |
+| Arctic | `#e0e8f0` | Diagonal hash lines (ice crystal) | `#b0c0d0`, 2px solid |
+| Aviary | `#f0e8a0` | Vertical bars (cage wire, 8px spacing) | `#d0c870`, 2px solid |
+
+Upgrade level is shown as gold pips (small 6x6 squares) in the top-left corner of the enclosure. A condition below 30% causes the border to pulse between its normal color and danger red (#d9534f) at 1 Hz.
+
+## Edge Cases
+
+- **Zero-condition enclosure:** Does not auto-destroy. Animals inside are very unhappy. The player must repair or demolish it.
+- **Demolish with animals:** Animals are evicted (enclosureId = -1), not deleted. They appear on the map at their last tile position and lose happiness rapidly until moved to another enclosure or they die.
+- **Upgrade at low condition:** Upgrading does not repair the enclosure. The player may want to repair first to get the happiness bonus. Upgrade cost is independent of condition.
+- **Capacity reduction:** Capacity only increases with upgrades; it never decreases. If animals already exceed new capacity after a hypothetical future feature, they remain but trigger overcrowding penalties.

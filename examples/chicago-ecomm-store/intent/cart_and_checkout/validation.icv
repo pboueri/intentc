@@ -1,0 +1,23 @@
+target: cart_and_checkout
+agent_profile: null
+validations:
+  - name: cart_page
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The cart page at /cart must display all items in the cart with images, names, prices, quantity controls, line totals, and a subtotal. It must have a Proceed to Checkout button and handle the empty cart state."
+  - name: checkout_flow
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The checkout page must show an order summary, a shipping address form with required field validation, a notice that payment is not implemented, and a Place Order button that creates an order via POST /api/orders and clears the cart on success."
+  - name: orders_api
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The backend must implement POST /api/orders (create order from cart items), GET /api/orders (list authenticated user's orders), and GET /api/orders/:id (single order detail). All require authentication. Order detail must include line items."
+  - name: order_history_page
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The order history page at /orders must be a protected route that fetches and displays the authenticated user's past orders with date, total, status, and item count. Clicking an order should show its full line item details."

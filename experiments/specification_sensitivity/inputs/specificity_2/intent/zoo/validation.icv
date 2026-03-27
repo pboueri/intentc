@@ -1,0 +1,20 @@
+target: zoo
+validations:
+  - name: game_loads
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the game loads in a browser without errors.
+        The HTML page should display a canvas element and the game loop should start running.
+        There should be a visible zoo map grid and some form of UI for player interaction.
+  - name: core_loop_functional
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that the core game loop works:
+        1. The player can place at least one type of enclosure on the map.
+        2. The player can purchase at least one animal and assign it to an enclosure.
+        3. Visitors arrive over time and generate revenue.
+        4. The player's money balance updates based on income and expenses.

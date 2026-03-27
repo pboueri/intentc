@@ -1,0 +1,258 @@
+---
+name: game_loop
+depends_on: []
+tags: [core]
+---
+
+# Game Loop
+
+The central simulation driver. Uses `requestAnimationFrame` with a fixed-timestep accumulator pattern to ensure deterministic updates regardless of display refresh rate. The game loop owns the state machine that governs all phase transitions.
+
+## State Machine
+
+```
+  loading ──(assets ready)──> menu
+  menu ──(new game)──> playing
+  menu ──(load game)──> playing
+  playing ──(Escape / pause btn)──> paused
+  playing ──(bankruptcy 30s)──> game_over
+  paused ──(resume)──> playing
+  paused ──(quit)──> menu
+  game_over ──(restart)──> playing
+  game_over ──(menu)──> menu
+```
+
+Valid transitions are enforced; any other transition is a no-op logged as a warning.
+
+## Core Data Structures
+
+```js
+/**
+ * The complete game state shape. Every field is initialized here.
+ * This is the single source of truth for the entire game.
+ */
+export function createGameState() {
+  return {
+    // Phase and timing
+    phase: 'menu',             // 'loading' | 'menu' | 'playing' | 'paused' | 'game_over'
+    tick: 0,                   // integer tick counter
+    timeElapsed: 0,            // total real seconds elapsed while playing
+    speed: 1,                  // simulation speed multiplier: 1, 2, or 3
+    lastTimestamp: 0,          // last RAF timestamp (ms), set on first frame
+    accumulator: 0,            // fixed-timestep accumulator (seconds)
+
+    // Economy
+    money: 10000,              // current balance in dollars
+    admissionPrice: 5,         // dollars per visitor
+
+    // Entities
+    animals: [],               // Array<AnimalEntity>
+    enclosures: [],            // Array<EnclosureEntity>
+    visitors: [],              // Array<VisitorEntity>
+
+    // Map
+    map: null,                 // 2D array [row][col] of TileType, initialized by initMap()
+
+    // Research
+    research: {
+      efficient_feeding:  { unlocked: false, progress: 0 },
+      breeding_program:   { unlocked: false, progress: 0 },
+      advanced_enclosures:{ unlocked: false, progress: 0 },
+      marketing:          { unlocked: false, progress: 0 },
+      exotic_species:     { unlocked: false, progress: 0 },
+      veterinary_care:    { unlocked: false, progress: 0 },
+      gift_shop:          { unlocked: false, progress: 0 },
+      night_zoo:          { unlocked: false, progress: 0 },
+    },
+
+    // Camera
+    camera: { x: 0, y: 0, targetX: 0, targetY: 0 },
+
+    // Input
+    input: {
+      mode: 'idle',            // 'idle' | 'selecting' | 'building' | 'dragging'
+      hover: null,             // { tileX, tileY } or null
+      selected: null,          // { type: 'enclosure'|'animal', id } or null
+      buildType: null,         // biome string when in building mode
+      contextMenu: null,       // { x, y, items[] } or null
+    },
+
+    // UI
+    ui: {
+      toasts: [],              // Array<{ message, createdAt, duration }>
+      activeTab: 'build',      // 'build' | 'shop' | 'research'
+      notification_id: 0,      // incrementing ID for toasts
+    },
+
+    // Economy tracking
+    economy: {
+      history: [],             // last 100 ticks: Array<{ income, expense, net }>
+      bankruptcyTimer: 0,      // seconds of continuous negative balance
+      peakAnimals: 0,          // highest animal count reached
+      totalVisitors: 0,        // lifetime visitor count
+      totalRevenue: 0,         // lifetime revenue
+    },
+
+    // Audio
+    audio: {
+      musicVolume: 0.5,        // 0.0 to 1.0
+      sfxVolume: 0.7,          // 0.0 to 1.0
+      musicPlaying: false,
+    },
+
+    // Save
+    autoSaveTimer: 0,          // seconds since last auto-save
+  };
+}
+```
+
+## Fixed-Timestep Game Loop Implementation
+
+```js
+const TICK_RATE = 1.0;           // 1 simulation tick per second (base speed)
+const MAX_ACCUMULATOR = 0.25;    // clamp to prevent spiral of death (250ms max catchup)
+
+/**
+ * Start the game loop. Call once from main.js.
+ */
+export function startGameLoop(ctx, state) {
+  function frame(timestamp) {
+    if (state.lastTimestamp === 0) {
+      state.lastTimestamp = timestamp;
+    }
+
+    const deltaMs = timestamp - state.lastTimestamp;
+    state.lastTimestamp = timestamp;
+    const deltaSec = Math.min(deltaMs / 1000, MAX_ACCUMULATOR);
+
+    if (state.phase === 'playing') {
+      state.accumulator += deltaSec * state.speed;
+      state.timeElapsed += deltaSec;
+
+      // Fixed timestep: consume accumulator in TICK_RATE chunks
+      while (state.accumulator >= TICK_RATE) {
+        state.accumulator -= TICK_RATE;
+        state.tick += 1;
+        updateTick(state);
+      }
+    }
+
+    // Always render (even when paused — we still draw the pause overlay)
+    render(ctx, state);
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+}
+```
+
+## Update Dispatch
+
+Each tick dispatches updates to all subsystems in a deterministic order:
+
+```js
+import { updateAnimals } from './animals.js';
+import { updateEnclosures } from './enclosures.js';
+import { updateEconomy } from './economy.js';
+import { updateVisitors } from './visitors.js';
+import { updateResearch } from './research.js';
+import { checkAutoSave } from './save_system.js';
+
+function updateTick(state) {
+  // 1. Economy first: collect revenue, deduct costs, update demand
+  updateEconomy(state);
+
+  // 2. Enclosures: degrade condition
+  updateEnclosures(state);
+
+  // 3. Animals: hunger, happiness, health, breeding, death
+  updateAnimals(state);
+
+  // 4. Visitors: spawn, pathfind, walk, view, exit
+  updateVisitors(state);
+
+  // 5. Research: progress active research if any
+  updateResearch(state);
+
+  // 6. Auto-save check
+  state.autoSaveTimer += TICK_RATE;
+  checkAutoSave(state);
+
+  // 7. Track peak animals
+  if (state.animals.length > state.economy.peakAnimals) {
+    state.economy.peakAnimals = state.animals.length;
+  }
+}
+```
+
+## Phase Transition Logic
+
+```js
+const VALID_TRANSITIONS = {
+  loading:   ['menu'],
+  menu:      ['playing'],
+  playing:   ['paused', 'game_over'],
+  paused:    ['playing', 'menu'],
+  game_over: ['playing', 'menu'],
+};
+
+export function transitionPhase(state, newPhase) {
+  const allowed = VALID_TRANSITIONS[state.phase];
+  if (!allowed || !allowed.includes(newPhase)) {
+    console.warn(`Invalid phase transition: ${state.phase} -> ${newPhase}`);
+    return false;
+  }
+
+  const oldPhase = state.phase;
+  state.phase = newPhase;
+
+  // Side effects on transition
+  if (newPhase === 'playing' && oldPhase === 'menu') {
+    // Fresh game or loaded game — reset timestamp to avoid delta spike
+    state.lastTimestamp = 0;
+    state.accumulator = 0;
+  }
+
+  if (newPhase === 'playing' && oldPhase === 'game_over') {
+    // Restart: create fresh state but preserve audio settings
+    const audioSettings = { ...state.audio };
+    Object.assign(state, createGameState());
+    state.audio = audioSettings;
+    state.phase = 'playing';
+    state.lastTimestamp = 0;
+  }
+
+  if (newPhase === 'paused') {
+    // Reset accumulator so we don't catch up on unpause
+    state.accumulator = 0;
+  }
+
+  return true;
+}
+```
+
+## Speed Control
+
+```js
+export function setSpeed(state, speed) {
+  if ([1, 2, 3].includes(speed)) {
+    state.speed = speed;
+  }
+}
+
+export function togglePause(state) {
+  if (state.phase === 'playing') {
+    transitionPhase(state, 'paused');
+  } else if (state.phase === 'paused') {
+    transitionPhase(state, 'playing');
+  }
+}
+```
+
+## Edge Cases
+
+- **Tab hidden:** When the browser tab is hidden, `requestAnimationFrame` stops firing. On return, `deltaMs` can be very large. The `MAX_ACCUMULATOR` clamp (0.25s) prevents the simulation from trying to catch up hundreds of ticks.
+- **First frame:** `lastTimestamp` starts at 0 and is set on the first `frame()` call, yielding a delta of 0 for the first iteration. This is intentional — no update runs on the first frame.
+- **Speed change during accumulator:** Changing speed mid-tick is safe because `speed` only affects how fast the accumulator fills, not the tick size. Each tick always represents exactly `TICK_RATE` seconds of simulation.
+- **Game over during update:** `updateEconomy` may trigger game over mid-dispatch. The remaining subsystem updates still run for that tick (they are idempotent on a game_over state), and the next frame's `if (state.phase === 'playing')` check stops further ticks.

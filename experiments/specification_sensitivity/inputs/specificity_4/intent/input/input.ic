@@ -1,0 +1,60 @@
+---
+name: input
+depends_on:
+  - map
+tags: [core]
+---
+
+# Input
+
+The input module handles all player interaction through mouse and keyboard events on the canvas. It translates raw browser events into game-meaningful actions: selecting tiles, placing buildings, panning the camera, and triggering keyboard shortcuts. The module maintains a small handler state that tracks the current mouse position, pressed keys, and active drag operations, but all resulting game state mutations flow through the main update cycle.
+
+The input system supports two primary modes: select mode and build mode. In select mode, clicking a tile that contains an enclosure or animal selects it and opens its info panel. In build mode, clicking an empty tile places the currently selected building type (enclosure or path tile). The player toggles between modes via the sidebar UI. ESC always returns to select mode and clears any selection.
+
+Coordinate conversion is a critical responsibility of this module. The player clicks in screen-pixel space, but the game operates in tile-grid space. The `screenToTile` function accounts for the camera offset and tile size to map a mouse click to the correct grid cell. This conversion is used by both the click handler and the hover preview that highlights the tile under the cursor.
+
+## Data Structures
+
+```js
+// Input handler state (internal to the module)
+{
+  mouseX: 0,
+  mouseY: 0,
+  mouseDown: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  isDragging: false,
+  keysDown: new Set(),
+}
+```
+
+## Key Function Signatures
+
+```js
+// Create input handler and bind event listeners to the canvas
+// Returns a handler object with current input state
+function createInputHandler(canvas, state) -> handler
+
+// Convert screen pixel coordinates to tile grid coordinates
+function screenToTile(mouseX, mouseY, camera) -> { x, y }
+
+// Process all pending input events and update game state accordingly
+// Called at the start of each update tick
+function processInput(handler, state) -> void
+
+// Destroy the input handler and remove event listeners
+function destroyInputHandler(handler) -> void
+```
+
+## Behavioral Rules
+
+- Left mouse click in select mode: if the clicked tile has an occupant (enclosure), select that enclosure and show its info panel. If the tile has no occupant, deselect.
+- Left mouse click in build mode: if the clicked area is free (checked via `isAreaFree`), place the selected building type. If the area is not free, do nothing (no error feedback needed beyond the placement not occurring).
+- Mouse drag (click and hold + move): pan the camera by the delta between the current mouse position and the drag start position. A drag is distinguished from a click by a movement threshold of 4 pixels.
+- Mouse move (no button): update `hoveredTile` in the UI state so the renderer can draw a highlight on the tile under the cursor. In build mode, also show a placement preview (ghosted rectangle for enclosure footprint).
+- Keyboard P: toggle pause on/off.
+- Keyboard 1: set speed to 1 (normal). Keyboard 2: set speed to 2 (fast). Keyboard 4: set speed to 4 (ultra).
+- Keyboard ESC: switch to select mode, clear `selectedEntity`, clear `selectedBiome`.
+- Arrow keys (or WASD): pan the camera in the corresponding direction at a fixed speed per frame.
+- All keyboard shortcuts work regardless of the current UI mode. They are processed before mode-specific input.
+- The input handler registers `mousedown`, `mouseup`, `mousemove`, `keydown`, and `keyup` events on the canvas or window as appropriate.

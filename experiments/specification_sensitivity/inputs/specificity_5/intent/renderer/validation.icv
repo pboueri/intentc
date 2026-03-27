@@ -1,0 +1,57 @@
+target: renderer
+validations:
+  - name: layer_rendering_order
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the render function draws layers in the exact order specified:
+        (1) ground tiles, (2) enclosure fills, (3) enclosure borders, (4) path overlay,
+        (5) animals sorted by y-coordinate, (6) visitors sorted by y-coordinate,
+        (7) build ghost if in building mode, (8) UI overlays (HUD, sidebar, info bar,
+        tooltips, toasts), (9) mini-map. Each category must be fully drawn before the
+        next begins. Animals and visitors must be y-sorted to give correct visual overlap.
+
+  - name: camera_bounds_clamping
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify the camera position is clamped so it never shows area outside the map.
+        The minimum camera x and y must be 0. The maximum camera x must be
+        (MAP_COLS * TILE_SIZE - VIEWPORT_WIDTH) and maximum y must be
+        (MAP_ROWS * TILE_SIZE - VIEWPORT_HEIGHT). If the map is smaller than the
+        viewport in either dimension, the camera should be locked to 0 on that axis.
+        Smooth scrolling must use interpolation (lerp) toward a target, not jump directly.
+
+  - name: viewport_culling
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify the ground tile drawing loop only iterates over tiles visible in the
+        current viewport, not all 40*30=1200 tiles. The start/end column and row
+        should be calculated from the camera position and viewport dimensions.
+        Off-screen tiles must not have any draw calls executed for them.
+
+  - name: minimap_rendering
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: >
+        Verify a mini-map is rendered in the bottom-right area of the main viewport
+        (not overlapping the sidebar). It should be approximately 80x60 pixels, showing
+        the full map with 2px per tile. Enclosures should be drawn on the mini-map in
+        their biome color. A white rectangle should indicate the current camera viewport
+        position on the mini-map.
+
+  - name: build_ghost_preview
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that when the input mode is 'building' and the mouse hovers over the map,
+        a semi-transparent preview of the enclosure is drawn at the hover position. The
+        preview must use reduced opacity (alpha ~0.4). If the placement is invalid, an
+        additional red overlay must indicate the invalid placement. The ghost must follow
+        the cursor in real time and disappear when build mode is exited.

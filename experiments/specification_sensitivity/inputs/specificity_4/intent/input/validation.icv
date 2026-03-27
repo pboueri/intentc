@@ -1,0 +1,40 @@
+target: input
+validations:
+  - name: tile_selection
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that clicking on the canvas selects the correct tile. In
+        select mode, clicking on an enclosure tile should select that
+        enclosure and display its information. Clicking on an empty tile
+        should deselect any current selection. The selected tile should be
+        visually highlighted.
+  - name: build_mode_placement
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that build mode works for placing enclosures and paths. The
+        player should be able to enter build mode via the sidebar, select an
+        enclosure type, and click on the map to place it. The enclosure
+        should appear at the clicked location. Attempting to place on an
+        occupied area should fail silently (no crash, no placement).
+  - name: keyboard_shortcuts
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that keyboard shortcuts function correctly. P should toggle
+        pause, 1/2/4 should change game speed, ESC should return to select
+        mode and clear selection, and arrow keys should pan the camera.
+        Each shortcut should have an immediate visible effect.
+  - name: camera_drag
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that clicking and dragging on the map pans the camera. The
+        view should follow the mouse movement smoothly. A short click (less
+        than 4 pixels of movement) should be treated as a click, not a drag.
+        Dragging should not select or deselect entities.

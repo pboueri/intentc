@@ -1,0 +1,363 @@
+---
+name: visitors
+depends_on:
+  - map
+  - economy
+  - animals
+  - enclosures
+tags: [gameplay]
+---
+
+# Visitors
+
+AI-driven visitors that spawn at the entrance, walk paths via A* pathfinding, view enclosures, and eventually exit. Visitors are the connective tissue between the economy and the zoo — their admission fees fund everything, and their satisfaction reflects zoo quality.
+
+## Visitor Entity Shape
+
+```js
+let nextVisitorId = 1;
+
+export function createVisitor(entranceCol, entranceRow) {
+  return {
+    id: nextVisitorId++,
+    x: entranceCol,               // current fractional tile x (float for smooth movement)
+    y: entranceRow,               // current fractional tile y
+    state: 'spawn',               // 'spawn' | 'walk_to_enclosure' | 'view' | 'walk_to_next' | 'exit'
+    path: null,                   // Array<{col, row}> current pathfinding route
+    pathIndex: 0,                 // current index in path array
+    targetEnclosure: null,        // enclosure ID being walked toward
+    viewTimer: 0,                 // seconds spent viewing current enclosure
+    satisfaction: 50,             // 0 to 100, starts neutral
+    viewedEnclosures: new Set(),  // set of enclosure IDs already visited
+    color: randomVisitorColor(),  // display color
+    age: 0,                       // ticks since spawn (0 on first tick)
+    speed: 1.5,                   // tiles per second
+  };
+}
+
+function randomVisitorColor() {
+  const colors = ['#e06060', '#6060e0', '#60c060', '#e0a030', '#c060c0', '#60c0c0'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+```
+
+## Visitor State Machine
+
+```
+  spawn ──(find target enclosure)──> walk_to_enclosure
+  spawn ──(no enclosures exist)──> exit
+  walk_to_enclosure ──(arrived)──> view
+  walk_to_enclosure ──(path blocked)──> exit
+  view ──(3 seconds elapsed)──> walk_to_next
+  walk_to_next ──(find unvisited enclosure)──> walk_to_enclosure
+  walk_to_next ──(all visited or chance to leave)──> exit
+  exit ──(reached entrance)──> [removed from state]
+```
+
+## Full Update Loop
+
+```js
+import { findPath } from './map.js';
+import { calculateArrivalRate } from './economy.js';
+import { VISITOR_SPEED, VISITOR_VIEW_TIME, MAX_VISITORS, TILE_SIZE } from './constants.js';
+
+// Path cache: memoize paths between entrance and enclosures
+const pathCache = new Map();
+
+/**
+ * Update all visitors for one tick.
+ */
+export function updateVisitors(state) {
+  // --- Spawn new visitors based on arrival rate ---
+  spawnVisitors(state);
+
+  // --- Update existing visitors ---
+  const toRemove = [];
+
+  for (const visitor of state.visitors) {
+    visitor.age += 1;
+
+    switch (visitor.state) {
+      case 'spawn':
+        updateSpawn(visitor, state);
+        break;
+      case 'walk_to_enclosure':
+        updateWalking(visitor, state);
+        break;
+      case 'view':
+        updateViewing(visitor, state);
+        break;
+      case 'walk_to_next':
+        updateWalkToNext(visitor, state);
+        break;
+      case 'exit':
+        updateExit(visitor, state);
+        if (isAtEntrance(visitor)) {
+          toRemove.push(visitor.id);
+        }
+        break;
+    }
+  }
+
+  // Remove visitors who have exited
+  if (toRemove.length > 0) {
+    state.visitors = state.visitors.filter(v => !toRemove.includes(v.id));
+  }
+}
+```
+
+## Spawning
+
+```js
+function spawnVisitors(state) {
+  if (state.visitors.length >= MAX_VISITORS) return;
+  if (state.animals.length === 0) return;
+
+  const arrivalRate = calculateArrivalRate(state);
+
+  // Fractional arrivals: accumulate probability, spawn integer visitors
+  // arrivalRate is visitors per tick. Spawn floor(rate) + maybe 1 more.
+  const guaranteedSpawns = Math.floor(arrivalRate);
+  const fractionalChance = arrivalRate - guaranteedSpawns;
+
+  let spawns = guaranteedSpawns;
+  if (Math.random() < fractionalChance) spawns += 1;
+
+  // Find entrance tile
+  const entranceCol = 0;
+  const entranceRow = Math.floor(state.map.length / 2); // row 15
+
+  for (let i = 0; i < spawns && state.visitors.length < MAX_VISITORS; i++) {
+    const visitor = createVisitor(entranceCol, entranceRow);
+    state.visitors.push(visitor);
+    state.economy.totalVisitors += 1;
+  }
+}
+```
+
+## Walking Logic (A* with Path Caching)
+
+```js
+function updateWalking(visitor, state) {
+  if (!visitor.path || visitor.pathIndex >= visitor.path.length) {
+    // Arrived at destination
+    if (visitor.state === 'walk_to_enclosure') {
+      visitor.state = 'view';
+      visitor.viewTimer = 0;
+    } else if (visitor.state === 'exit') {
+      // Will be picked up by the removal check
+    }
+    return;
+  }
+
+  // Move toward next waypoint
+  const target = visitor.path[visitor.pathIndex];
+  const dx = target.col - visitor.x;
+  const dy = target.row - visitor.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  if (dist < 0.05) {
+    // Close enough to waypoint; advance to next
+    visitor.x = target.col;
+    visitor.y = target.row;
+    visitor.pathIndex += 1;
+  } else {
+    // Move toward waypoint
+    const step = visitor.speed / Math.max(dist, 0.01); // normalize
+    visitor.x += dx * Math.min(step, 1);
+    visitor.y += dy * Math.min(step, 1);
+  }
+}
+
+/**
+ * Get a cached path or compute a new one.
+ * Cache key: "fromCol,fromRow->toCol,toRow"
+ */
+function getCachedPath(grid, fromCol, fromRow, toCol, toRow) {
+  const key = `${fromCol},${fromRow}->${toCol},${toRow}`;
+  if (pathCache.has(key)) return pathCache.get(key);
+
+  const path = findPath(grid, fromCol, fromRow, toCol, toRow);
+  if (path) {
+    pathCache.set(key, path);
+    // Limit cache size
+    if (pathCache.size > 200) {
+      const firstKey = pathCache.keys().next().value;
+      pathCache.delete(firstKey);
+    }
+  }
+  return path;
+}
+```
+
+## State Handlers
+
+```js
+function updateSpawn(visitor, state) {
+  // Pick a random unvisited enclosure to visit
+  const target = pickNextEnclosure(visitor, state);
+  if (!target) {
+    // No enclosures to visit — leave immediately
+    visitor.state = 'exit';
+    setExitPath(visitor, state);
+    return;
+  }
+
+  visitor.targetEnclosure = target.id;
+  visitor.viewedEnclosures.add(target.id);
+
+  // Pathfind to enclosure entrance (just outside the enclosure border)
+  const enc = target;
+  const destCol = enc.col - 1; // stand just outside the left edge
+  const destRow = enc.row + Math.floor(enc.height / 2); // vertically centered
+
+  const path = getCachedPath(state.map, Math.round(visitor.x), Math.round(visitor.y), destCol, destRow);
+  if (path) {
+    visitor.path = path;
+    visitor.pathIndex = 0;
+    visitor.state = 'walk_to_enclosure';
+  } else {
+    visitor.state = 'exit';
+    setExitPath(visitor, state);
+  }
+}
+
+function updateViewing(visitor, state) {
+  visitor.viewTimer += 1; // 1 tick = 1 second
+
+  // Satisfaction formula: increases based on enclosure quality
+  const enc = state.enclosures.find(e => e.id === visitor.targetEnclosure);
+  if (enc) {
+    const animalsInside = state.animals.filter(a => a.enclosureId === enc.id);
+    const avgAnimalHappiness = animalsInside.length > 0
+      ? animalsInside.reduce((s, a) => s + a.happiness, 0) / animalsInside.length
+      : 0;
+
+    // Visitor appeal bonus from species
+    const maxAppeal = animalsInside.length > 0
+      ? Math.max(...animalsInside.map(a => SPECIES[a.species].visitorAppeal))
+      : 0;
+
+    const enclosureQuality = (avgAnimalHappiness / 100) * (enc.condition / 100) * maxAppeal;
+
+    // satisfaction += enclosureQuality * 0.1 * dt (dt=1 per tick)
+    visitor.satisfaction = Math.min(100, visitor.satisfaction + enclosureQuality * 0.1);
+  }
+
+  // Done viewing after VISITOR_VIEW_TIME seconds
+  if (visitor.viewTimer >= VISITOR_VIEW_TIME) {
+    visitor.state = 'walk_to_next';
+  }
+}
+
+function updateWalkToNext(visitor, state) {
+  // Chance to leave based on how many enclosures visited
+  const leaveChance = visitor.viewedEnclosures.size * 0.15; // 15% per enclosure visited
+  if (Math.random() < leaveChance) {
+    visitor.state = 'exit';
+    setExitPath(visitor, state);
+    return;
+  }
+
+  const target = pickNextEnclosure(visitor, state);
+  if (!target) {
+    visitor.state = 'exit';
+    setExitPath(visitor, state);
+    return;
+  }
+
+  visitor.targetEnclosure = target.id;
+  visitor.viewedEnclosures.add(target.id);
+
+  const enc = target;
+  const destCol = enc.col - 1;
+  const destRow = enc.row + Math.floor(enc.height / 2);
+
+  const path = getCachedPath(state.map, Math.round(visitor.x), Math.round(visitor.y), destCol, destRow);
+  if (path) {
+    visitor.path = path;
+    visitor.pathIndex = 0;
+    visitor.state = 'walk_to_enclosure';
+  } else {
+    visitor.state = 'exit';
+    setExitPath(visitor, state);
+  }
+}
+
+function setExitPath(visitor, state) {
+  const entranceCol = 0;
+  const entranceRow = Math.floor(state.map.length / 2);
+  const path = getCachedPath(state.map, Math.round(visitor.x), Math.round(visitor.y), entranceCol, entranceRow);
+  visitor.path = path || [{ col: entranceCol, row: entranceRow }];
+  visitor.pathIndex = 0;
+}
+
+function updateExit(visitor, state) {
+  updateWalking(visitor, state);
+}
+
+function isAtEntrance(visitor) {
+  return Math.round(visitor.x) === 0 && Math.abs(visitor.y - 15) < 2;
+}
+```
+
+## Picking Next Enclosure
+
+```js
+function pickNextEnclosure(visitor, state) {
+  // Choose a random unvisited enclosure that has at least one animal
+  const candidates = state.enclosures.filter(enc =>
+    !visitor.viewedEnclosures.has(enc.id) &&
+    state.animals.some(a => a.enclosureId === enc.id)
+  );
+
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+```
+
+## Crowd Rendering
+
+When more than 3 visitors are at the same enclosure (within 2 tiles of each other), they render as a group instead of individual dots:
+
+```js
+/**
+ * Determine if visitors should be rendered as a crowd cluster.
+ * Returns groups of visitors that are within 2 tiles of each other.
+ */
+export function getCrowdClusters(visitors) {
+  const clusters = [];
+  const assigned = new Set();
+
+  for (const v of visitors) {
+    if (assigned.has(v.id)) continue;
+    const cluster = [v];
+    assigned.add(v.id);
+
+    for (const other of visitors) {
+      if (assigned.has(other.id)) continue;
+      const dx = Math.abs(v.x - other.x);
+      const dy = Math.abs(v.y - other.y);
+      if (dx <= 2 && dy <= 2) {
+        cluster.push(other);
+        assigned.add(other.id);
+      }
+    }
+
+    if (cluster.length >= 3) {
+      clusters.push(cluster);
+    }
+  }
+  return clusters;
+}
+```
+
+When a crowd cluster is detected, instead of drawing individual visitor dots, draw a small group icon: a larger circle with a count badge (e.g., a 12px circle with the number "5" in the center).
+
+## Edge Cases
+
+- **No enclosures:** Visitors spawn, see nothing, and immediately exit. They still pay admission, but satisfaction remains at the neutral 50 (no bonus or penalty).
+- **Path blocked:** If `findPath` returns null (enclosure unreachable due to water or layout), the visitor skips that enclosure. If all enclosures are unreachable, the visitor exits.
+- **MAX_VISITORS cap:** Hard cap at 50 simultaneous visitors to keep performance bounded. Excess arrival rate is simply lost. This prevents pathfinding from consuming too much CPU.
+- **Path cache invalidation:** The path cache is never explicitly invalidated. When enclosures are placed or paths change, stale entries may exist briefly. The cache size limit (200 entries) and LRU-style eviction keep this bounded. For correctness, a visitor that reaches a dead end re-pathfinds without the cache.
+- **Visitor at same tile as animal:** Visitors walk on PATH tiles adjacent to enclosures, not inside them. There is no collision between visitors and animals.

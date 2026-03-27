@@ -1,0 +1,77 @@
+---
+name: enclosures
+tags: [gameplay]
+---
+
+# Enclosures
+
+Enclosures are the physical habitats placed on the tile grid that house animals. Each enclosure has a biome type that determines which animal species can live in it, a capacity that limits how many animals it can comfortably hold, and a condition value that degrades over time and must be repaired with money. Enclosures are the primary building block of the zoo — the player's first action is always to place one.
+
+There are five biome types: savanna, aquatic, forest, arctic, and aviary. Each biome has a distinct visual color, a base construction cost, an ongoing maintenance cost per tick, a default capacity, and a tile footprint. Biome choice determines which species are compatible — lions and elephants need savanna, penguins need arctic, and so on. The player must plan their zoo layout to accommodate the species they want to attract.
+
+Enclosures degrade over time. The `condition` value starts at 100 and decreases by a small amount each tick. When condition drops below 50, animal happiness in that enclosure gets a penalty. When condition drops below 20, animals start losing health. The player can repair an enclosure at any time by spending money, which restores condition to 100. Upgrades are also available — spending a larger sum increases the enclosure's capacity, allowing more animals to live there without overcrowding.
+
+## Data Structures
+
+```js
+// Biome registry — static data for each biome type
+const BIOMES = {
+  savanna: { name: "Savanna", color: "#D4A017", baseCost: 1000, maintenanceCostPerTick: 0.3, defaultCapacity: 6,  tileFootprint: { w: 4, h: 4 } },
+  aquatic: { name: "Aquatic", color: "#4A90D9", baseCost: 1500, maintenanceCostPerTick: 0.5, defaultCapacity: 4,  tileFootprint: { w: 3, h: 4 } },
+  forest:  { name: "Forest",  color: "#2E7D32", baseCost: 800,  maintenanceCostPerTick: 0.2, defaultCapacity: 5,  tileFootprint: { w: 3, h: 3 } },
+  arctic:  { name: "Arctic",  color: "#B3E5FC", baseCost: 1200, maintenanceCostPerTick: 0.4, defaultCapacity: 4,  tileFootprint: { w: 3, h: 3 } },
+  aviary:  { name: "Aviary",  color: "#FDD835", baseCost: 600,  maintenanceCostPerTick: 0.15, defaultCapacity: 8, tileFootprint: { w: 2, h: 3 } },
+};
+
+// Individual enclosure object
+{
+  id: "enc_001",
+  type: "enclosure",
+  biome: "savanna",
+  x: 10,              // top-left tile column
+  y: 5,               // top-left tile row
+  width: 4,           // tile width
+  height: 4,          // tile height
+  capacity: 6,        // max comfortable animal space units
+  condition: 100,     // 0–100
+  animals: [],        // array of animal ids housed here
+}
+```
+
+## Key Function Signatures
+
+```js
+// Create a new enclosure of the given biome at the specified tile position
+function createEnclosure(biome, x, y) -> enclosure
+
+// Update a single enclosure for one tick: condition degradation
+function updateEnclosure(enclosure, dt) -> void
+
+// Update all enclosures in the state
+function updateEnclosures(state, dt) -> void
+
+// Repair an enclosure to full condition (costs money)
+function repairEnclosure(enclosure, state) -> boolean
+
+// Upgrade enclosure capacity by a fixed amount (costs money)
+function upgradeEnclosure(enclosure, state) -> boolean
+
+// Get biome data from the registry
+function getBiomeData(biome) -> biomeInfo
+
+// Calculate total space used by animals in an enclosure
+function getUsedCapacity(enclosure, animals) -> number
+```
+
+## Behavioral Rules
+
+- Enclosures are placed by the player in build mode. Placement requires all tiles in the footprint to be free (grass, no occupant). On placement, those tiles are marked with the enclosure's id as their occupant.
+- Condition decreases by 0.02 per tick for all enclosures. This means an unrepaired enclosure degrades from 100 to 0 in approximately 5000 ticks (~83 seconds at normal speed).
+- When condition is below 50, all animals in the enclosure receive a happiness penalty of -0.1 per tick (stacks with other penalties).
+- When condition is below 20, all animals in the enclosure receive a health penalty of -0.05 per tick.
+- Repair cost is 30% of the biome's base cost. Repair instantly restores condition to 100.
+- Upgrade cost is 50% of the biome's base cost. Upgrade increases capacity by 2 space units. There is no limit on the number of upgrades.
+- The `animals` array in the enclosure stores animal id strings, not full animal objects. The actual animal objects live in `state.animals`.
+- An enclosure cannot be removed or demolished once placed. The player must manage existing enclosures — they cannot reclaim the tiles.
+- The enclosure's tile area includes one row of "frontage" tiles along its southern edge (y + height) that visitors stand on when viewing. These tiles must be path-accessible for visitors to visit the enclosure.
+- Maintenance cost per tick is deducted from the zoo's balance by the economy module, not by the enclosure module.

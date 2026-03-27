@@ -1,0 +1,32 @@
+target: visitors
+validations:
+  - name: visitors_spawn_and_move
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that visitors spawn at the entrance and walk along paths.
+        After building enclosures and laying paths from the entrance, small
+        colored dots (visitors) should appear at the bottom-center entrance
+        tile and move along the path tiles toward enclosures. They should
+        follow the path rather than cutting through walls or enclosures.
+  - name: visitors_view_enclosures
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that visitors stop at enclosures to view them. When a visitor
+        reaches an enclosure's frontage, it should pause for a noticeable
+        duration before moving on. After viewing, it should move to another
+        enclosure or head back to the entrance. Visitors should not get
+        stuck permanently at any location.
+  - name: visitor_count_reflects_appeal
+    type: agent_validation
+    severity: error
+    args:
+      rubric: >
+        Verify that visitor volume correlates with zoo quality. A zoo with
+        more animals and reasonable admission prices should show more
+        visitors on screen than an empty or very expensive zoo. Adding
+        animals and lowering prices should result in visibly more visitor
+        dots moving through the zoo over time.
