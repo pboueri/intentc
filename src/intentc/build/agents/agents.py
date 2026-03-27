@@ -229,6 +229,7 @@ class AgentProfile(BaseModel):
     timeout: float = 3600.0
     retries: int = 3
     model_id: str | None = None
+    effort: str | None = None  # Claude-specific: "low", "medium", "high", "max"
     prompt_templates: PromptTemplates | None = None
     sandbox_write_paths: list[str] = Field(default_factory=list)
     sandbox_read_paths: list[str] = Field(default_factory=list)
@@ -544,6 +545,8 @@ class ClaudeAgent(Agent):
         cmd = ["claude"]
         if self._profile.model_id:
             cmd.extend(["--model", self._profile.model_id])
+        if self._profile.effort:
+            cmd.extend(["--effort", self._profile.effort])
         cmd.extend(self._profile.cli_args)
         cmd.append(prompt)
 
@@ -564,6 +567,8 @@ class ClaudeAgent(Agent):
         ]
         if self._profile.model_id:
             cmd.extend(["--model", self._profile.model_id])
+        if self._profile.effort:
+            cmd.extend(["--effort", self._profile.effort])
         cmd.extend(self._profile.cli_args)
         return cmd
 

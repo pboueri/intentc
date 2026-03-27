@@ -135,7 +135,7 @@ Generic base that wraps any command-line tool. Constructs a prompt from BuildCon
 
 ## ClaudeAgent
 
-Specialization for Claude Code. Non-interactive invocations use the `claude` CLI with `-p` (prompt), `--verbose`, `--output-format stream-json`, and `--dangerously-skip-permissions`. If `profile.model_id` is set, `--model` is also passed. All `profile.cli_args` are appended.
+Specialization for Claude Code. Non-interactive invocations use the `claude` CLI with `-p` (prompt), `--verbose`, `--output-format stream-json`, and `--dangerously-skip-permissions`. If `profile.model_id` is set, `--model` is also passed. If `profile.effort` is set, `--effort` is also passed (valid values: `"low"`, `"medium"`, `"high"`, `"max"`). All `profile.cli_args` are appended.
 
 When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
@@ -185,6 +185,7 @@ Type AgentProfile:
     timeout: float                                 # seconds, default 3600.0 (1 hour)
     retries: integer                               # retries on error, default 3
     model_id: string or null                       # provider-specific model identifier, optional
+    effort: string or null                         # provider-specific effort level, optional (e.g. "low", "medium", "high", "max" for Claude)
     prompt_templates: PromptTemplates or null       # template overrides, optional
     sandbox_write_paths: list of string             # default empty
     sandbox_read_paths: list of string              # default empty

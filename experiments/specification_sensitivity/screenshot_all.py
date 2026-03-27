@@ -28,9 +28,9 @@ SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 GRID_OUTPUT = EXPERIMENT_DIR / "output" / "analysis" / "screenshot_grid.png"
 GRID_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
-WIDTH = 800
-HEIGHT = 600
-WAIT_MS = 3000  # Wait for game to render
+WIDTH = 1280
+HEIGHT = 960
+WAIT_MS = 5000  # Wait for game to render
 
 
 def find_servable_path(run_dir: Path) -> tuple[Path, bool]:

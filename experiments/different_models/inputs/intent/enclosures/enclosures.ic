@@ -1,0 +1,45 @@
+---
+name: enclosures
+tags: [gameplay]
+---
+
+# Enclosures
+
+Enclosures are the physical habitats that house animals in the zoo. They are the foundational building block the player places on the map. Every animal must live in an enclosure, and the type and quality of that enclosure directly affect animal happiness, visitor appeal, and ongoing costs.
+
+## Biome Types
+
+Each enclosure belongs to one of the following biome types:
+
+- **Savanna** — Open grassland habitat suited for lions, elephants, giraffes, and other plains animals.
+- **Aquatic** — Water-heavy habitat with pools and streams, suited for crocodiles and semi-aquatic species.
+- **Forest** — Dense, wooded habitat suited for monkeys, parrots, and other tree-dwelling animals.
+- **Arctic** — Cold, icy habitat suited for penguins, polar bears, and other cold-climate species.
+
+Each biome type has a distinct visual appearance on the tile grid so the player can easily identify enclosure types at a glance. Animals placed in their preferred biome receive a happiness bonus; animals in an incompatible biome suffer a happiness penalty.
+
+## Placement
+
+Enclosures are placed on the tile grid by the player. Each enclosure occupies a rectangular footprint of tiles (e.g., 3x3 or 4x4). The player selects an enclosure type from a build menu, then clicks on the map to place it. Enclosures cannot overlap with each other or with other structures. Placement costs money, deducted from the zoo's balance immediately.
+
+The player should receive clear visual feedback during placement — a preview of the footprint, color-coded to indicate whether the placement is valid (enough space, enough funds) or invalid (overlapping, insufficient funds).
+
+## Capacity
+
+Every enclosure has a maximum animal capacity. This is the number of animals that can comfortably live in the enclosure without overcrowding. If more animals are placed in an enclosure than its capacity allows, all animals inside suffer a happiness penalty due to overcrowding.
+
+Capacity is determined by the enclosure's size and upgrade level. A base-level 3x3 savanna enclosure might hold 2 animals, while an upgraded version of the same footprint could hold 4.
+
+## Degradation and Maintenance
+
+Enclosures degrade over time. Each tick, an enclosure's condition decreases slightly. As condition drops, the enclosure provides less of a happiness bonus to its animals and looks visually worn. If condition drops very low, animals inside become unhappy and the enclosure may start losing capacity.
+
+The player pays a per-tick maintenance cost for each enclosure to slow degradation. Maintenance is automatic — the cost is deducted from the balance each tick. If the player cannot afford maintenance, degradation accelerates.
+
+The player can also perform a manual repair action on an enclosure to restore its condition to full, at a one-time cost.
+
+## Upgrades
+
+Enclosures can be upgraded to improve their capacity and provide a happiness bonus to the animals inside. Upgrading costs a lump sum of money and takes effect immediately. Upgraded enclosures have a higher maximum capacity, a higher base happiness contribution, and a slightly higher maintenance cost.
+
+There are multiple upgrade tiers. Each tier increases the enclosure's effectiveness but also its upkeep. The player must decide whether the increased capacity and happiness are worth the ongoing expense.
