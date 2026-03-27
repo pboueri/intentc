@@ -1,0 +1,136 @@
+# Different Models Experiment - Summary
+
+## Build Results
+
+| Model | Effort | Build | LOC | Files | Quality Score |
+|-------|--------|-------|-----|-------|---------------|
+| haiku | default | FAIL | 0 | 0 | FAILED |
+| sonnet | low | PASS | 1191 | 10 | GOOD |
+| sonnet | medium | PASS | 1283 | 12 | GOOD |
+| sonnet | high | PASS | 1605 | 13 | GOOD |
+| opus | low | PASS | 1584 | 12 | GOOD |
+| opus | medium | PASS | 1164 | 8 | GOOD |
+| opus | high | PASS | 1590 | 9 | GOOD |
+
+## LOC Breakdown
+
+### sonnet_low
+- Total: 1191 lines across 10 files
+  - .js: 1164
+  - .html: 17
+  - .json: 10
+
+### sonnet_medium
+- Total: 1283 lines across 12 files
+  - .js: 1242
+  - .html: 26
+  - .json: 15
+
+### sonnet_high
+- Total: 1605 lines across 13 files
+  - .js: 1573
+  - .html: 17
+  - .json: 15
+
+### opus_low
+- Total: 1584 lines across 12 files
+  - .js: 1548
+  - .json: 19
+  - .html: 17
+
+### opus_medium
+- Total: 1164 lines across 8 files
+  - .js: 969
+  - .html: 181
+  - .json: 14
+
+### opus_high
+- Total: 1590 lines across 9 files
+  - .js: 1399
+  - .html: 177
+  - .json: 14
+
+## Quality Evaluations
+
+### haiku
+- **Score:** FAILED
+- **Summary:** Build failed - no output produced
+
+### sonnet_low
+- **Score:** GOOD
+- **Summary:** A well-structured, modular implementation that covers the full core loop: building enclosures, purchasing animals, setting admission prices, breeding, enclosure degradation/repair/upgrade, and a game-over condition. The code is cleanly organized across six files with good separation of concerns and readable logic. The main shortcomings are a missing pause UI, dead code from unused factory functions, truncated species display, and the absence of visual visitor entities — but none prevent the game from being playable and engaging.
+- **Issues (6):**
+  - Dual ID generators: `generateId()` in state.js and `generateSimpleId()` in update.js both start at 1, risking ID collisions if both are used; state.js factory functions `createEnclosure`/`createAnimal` are dead code since update.js creates objects inline.
+  - No pause button in the UI despite pause/unpause logic being fully implemented in loop.js (`setPaused`/`isPaused` are exported but never wired to any control).
+  - Only 5 of 8 animal species are shown in the add-animal panel due to `.slice(0, 5)` truncation, making some species permanently inaccessible for certain biomes.
+  - Build-panel button closures capture `canAfford` at render time; if balance changes between render and click (within the same frame), the guard may be stale, though actual placement re-validates cost so the impact is cosmetic.
+  - No biome-compatibility gate on `addAnimal` — the player can place any species in any enclosure with only a happiness penalty, while the spec implies animals should be assigned to 'compatible enclosures'.
+  - Visitors are purely numerical; the spec describes visitors that 'walk through the zoo' but no visitor entities or movement are rendered.
+
+### sonnet_medium
+- **Score:** GOOD
+- **Summary:** A well-structured and complete implementation that faithfully covers all core spec features: biome-based enclosures on a tile grid, animal purchasing and breeding, happiness/sickness/death mechanics, enclosure degradation and upgrades, a demand-curve-driven economy, and a clean pause/game-over flow. The code is cleanly modularized across state, entities, renderer, input, and loop files with good separation of concerns. The main shortcomings are minor UI limitations (no sidebar scrolling, no high-DPI support) and the inability to remove misplaced enclosures, but there are no critical logic bugs that would prevent enjoyable gameplay.
+- **Issues (6):**
+  - Sidebar has no scrolling: if many animals are in an enclosure or the info panel grows tall, content is clipped via a `y + 28 > CANVAS_H - 10` break, making some buy-animal buttons unreachable.
+  - No devicePixelRatio handling for the canvas, so rendering will appear blurry on high-DPI/Retina displays.
+  - The pause button uses Unicode symbols (⏸/▶) rendered via canvas with Arial font, which may not display correctly on all platforms.
+  - No way to sell, release, or remove animals or enclosures, so a misplaced enclosure permanently wastes grid space and incurs ongoing maintenance costs with no recourse.
+  - The game over restart via Object.assign(s, fresh) works but leaves the canvas cursor style potentially stuck on 'crosshair' if the player was in build mode when the game ended.
+  - Only 2 incompatible animal species are shown in the sidebar (hardcoded slice), so the player cannot purchase certain cross-biome animals without selecting a different enclosure type.
+
+### sonnet_high
+- **Score:** GOOD
+- **Summary:** A well-structured and fairly complete zoo builder implementation with clean module separation across entities, rendering, input, and game loop. The core gameplay loop of building enclosures, purchasing animals, setting prices, and attracting visitors works, and the UI provides solid visual feedback. However, a crash-on-restart bug, a largely non-functional breeding system due to flawed pairing logic, and hardcoded HUD hit regions that break at different resolutions are notable issues that would degrade the player experience.
+- **Issues (5):**
+  - Restart (press R) resets economy object without totalRevenue, totalVisitorsServed, or peakAnimalCount fields, causing undefined.toLocaleString() crash on the game-over screen after a second playthrough.
+  - Breeding pairs animals by sequential array index rather than grouping by species+enclosure, so breeding only works if compatible pairs happen to be adjacent in the filtered array — most valid pairs are silently skipped.
+  - HUD click detection for price +/- buttons and admission label uses hardcoded pixel coordinates (e.g., sx >= 490) that only work at specific window widths; on smaller or larger screens the hit targets are misaligned or unreachable.
+  - Camera panning right (d/ArrowRight) and down (s/ArrowDown) has no upper bound, allowing the player to scroll infinitely past the map edge.
+  - Animals whose health reaches 0 suffer no consequence — there is no death or removal mechanic, so the health/sickness system is cosmetic only.
+
+### opus_low
+- **Score:** GOOD
+- **Summary:** This is a well-structured implementation that delivers the core gameplay loop: building enclosures, purchasing animals, setting admission prices, breeding, and a functioning economy with a game-over condition. The code is cleanly modularized across state, entities, input, and rendering layers, and includes meaningful unit tests for animal and enclosure mechanics. The main gaps are the complete absence of camera panning (limiting playability on smaller viewports), no capacity enforcement on animal purchases, and visitors being purely mathematical rather than visual entities.
+- **Issues (6):**
+  - No camera panning implemented — camera is always at (0,0) and there is no code to move it, so on smaller screens parts of the 1200x800 map are inaccessible and enclosures placed there are unreachable.
+  - purchaseAnimal() does not check enclosure capacity, so animals can be purchased into already-full enclosures without restriction (overcrowding penalty applies but purchase is never blocked).
+  - isPlacementValid() uses a hardcoded helper function await_import_state() that duplicates MAP_COLS/MAP_ROWS constants instead of importing them, creating a fragile coupling that can silently diverge from the actual values in state.js.
+  - Animal shop auto-assigns animals to any enclosure when no biome-matching enclosure exists, potentially placing animals in mismatched biomes without informing the player of the consequence.
+  - The visitors array in state is initialized but never populated or used — visitors exist only as a mathematical rate, not as entities, contrary to the spec's description of visitors walking through the zoo.
+  - No way to sell or remove enclosures or animals, meaning a player who spends all funds on empty enclosures with no income has no recovery path other than waiting for game over.
+
+### opus_medium
+- **Score:** GOOD
+- **Summary:** A well-structured, modular implementation that covers all core spec features — enclosure building, animal management with happiness/hunger/health, breeding, an economic loop with visitors and admission pricing, pause, and game-over conditions. The code is clean and readable with good separation of concerns and a basic test suite. The main weaknesses are the effectively dead `canPlaceAnimal` function (meaning no capacity enforcement on animal placement), the disconnected visual-vs-economic visitor systems, and the lack of camera panning for larger maps.
+- **Issues (7):**
+  - `canPlaceAnimal` is dead code — it is never called by `placeAnimal` or any input handler, so there is no validation before placing an animal (no capacity or biome check enforced).
+  - `canPlaceAnimal` computes `usedSpace` but never checks it against `enc.capacity`; the function unconditionally returns `true`, making the capacity logic meaningless.
+  - `tickAccumulator` is declared in state but never read or written anywhere — dead field.
+  - Admission price input listens for `change` (fires on blur) instead of `input`, so the price doesn't update until the user clicks away from the field.
+  - Visual visitors in `updateVisitors` are completely decoupled from the economic visitors in `updateEconomy` — the visitor dots on screen don't correspond to the visitors generating revenue, which could confuse players.
+  - No camera panning or scrolling is implemented; if the canvas is smaller than the 30×20 tile map at 40px/tile (1200×800), parts of the map are inaccessible.
+  - No way to sell or remove enclosures or release animals, meaning misplaced enclosures permanently consume grid space and funds.
+
+### opus_high
+- **Score:** GOOD
+- **Summary:** A solid implementation that covers the core game loop: enclosure placement, animal management with happiness/hunger/health/breeding, a demand-curve-driven economy, enclosure degradation and upgrades, and game-over detection. The code is cleanly separated into modules (state, entities, renderer, input) with reasonable test coverage. The main gaps are the non-functional camera system (making the map potentially inaccessible), static non-moving visitors, and a few constant-duplication issues that could cause maintenance drift.
+- **Issues (7):**
+  - No camera pan/scroll controls exist despite cameraX/cameraY state fields — parts of the map may be inaccessible on smaller screens
+  - Space/P pause key listener doesn't call preventDefault(), so pressing space scrolls the page in most browsers
+  - Visitors are placed at random positions and never move — they are static dots that appear and vanish, contradicting the spec's 'walks through the zoo' description
+  - Upgrade tiers are hardcoded as an inline array in input.js updateEnclosurePanel() instead of using the imported UPGRADE_TIERS constant, creating a duplication/drift risk
+  - REPAIR_COST_RATIO is exported from state.js but never used; repairEnclosure() hardcodes 0.5 instead
+  - drawGrid() in renderer.js draws grid lines, then fills the entire background rectangle over them, then redraws grid lines — the first pass is wasted work
+  - The await_imports() helper in entities.js hardcodes MAP_WIDTH=20 and MAP_HEIGHT=15 instead of importing from state.js, creating a fragile duplication that could silently diverge
+
+## Screenshots
+
+See [screenshot_grid.html](screenshot_grid.html) for visual comparison.
+
+- haiku: FAILED (X)
+- sonnet_low: captured
+- sonnet_medium: captured
+- sonnet_high: captured
+- opus_low: captured
+- opus_medium: captured
+- opus_high: captured
