@@ -2,7 +2,6 @@
 name: economy
 depends_on:
   - game_loop
-  - animals
   - enclosures
 tags: [gameplay, core]
 ---

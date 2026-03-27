@@ -2,7 +2,6 @@
 name: enclosures
 depends_on:
   - map
-  - economy
 tags: [gameplay]
 ---
 
