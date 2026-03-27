@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+import re
 import sys
 import http.server
 import threading
@@ -74,7 +75,7 @@ def get_free_port() -> int:
 
 
 async def take_screenshot(page, url: str, output_path: Path):
-    """Navigate to URL and take a screenshot."""
+    """Navigate to URL, click through any start menu, and take a screenshot."""
     try:
         await page.goto(url, wait_until="networkidle", timeout=15000)
     except Exception:
@@ -83,9 +84,45 @@ async def take_screenshot(page, url: str, output_path: Path):
         except Exception:
             pass
 
-    # Wait for rendering
+    # Wait for initial render
+    await page.wait_for_timeout(WAIT_MS)
+
+    # Try to click through start menus — attempt multiple strategies
+    await _click_through_menu(page)
+
+    # Wait for game to render after click
     await page.wait_for_timeout(WAIT_MS)
     await page.screenshot(path=str(output_path))
+
+
+async def _click_through_menu(page):
+    """Try to click 'New Game', 'Start', 'Play' or similar buttons."""
+    # Strategy 1: Click DOM buttons with common start-game text
+    for text in ["New Game", "Start", "Play", "Start Game", "Begin", "new game"]:
+        try:
+            btn = page.get_by_text(text, exact=False).first
+            if await btn.is_visible(timeout=500):
+                await btn.click()
+                await page.wait_for_timeout(1000)
+                return
+        except Exception:
+            pass
+
+    # Strategy 2: Force game state from 'menu' to 'playing' via injected window.__gameState
+    try:
+        await page.evaluate("""() => {
+            if (window.__gameState) {
+                const s = window.__gameState;
+                if (s.phase === 'menu' || s.phase === 'loading') {
+                    s.phase = 'playing';
+                    if (s.lastTimestamp !== undefined) s.lastTimestamp = 0;
+                    if (s.accumulator !== undefined) s.accumulator = 0;
+                }
+            }
+        }""")
+        await page.wait_for_timeout(2000)
+    except Exception:
+        pass
 
 
 async def screenshot_all_runs():
@@ -103,7 +140,26 @@ async def screenshot_all_runs():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         context = await browser.new_context(viewport={"width": WIDTH, "height": HEIGHT})
+
         page = await context.new_page()
+
+        # Intercept JS responses to inject state exposure + auto-start.
+        # This patches createGameState() calls to expose state on window,
+        # and adds a setTimeout to initialize the map and transition to 'playing'.
+        # No source files are modified — interception is in-memory only.
+        async def _intercept_js(route):
+            response = await route.fetch()
+            body = await response.text()
+            if "createGameState" in body:
+                body = re.sub(
+                    r"(const state = createGameState\(\);)",
+                    r"\1\nwindow.__gameState = state;",
+                    body
+                )
+                body += '\nsetTimeout(async () => { try { const {initMap} = await import("./map.js"); if (window.__gameState && !window.__gameState.map) window.__gameState.map = initMap(); if (window.__gameState) { window.__gameState.phase = "playing"; window.__gameState.lastTimestamp = 0; } } catch(e) {} }, 500);'
+            await route.fulfill(response=response, body=body)
+
+        await page.route("**/*.js", _intercept_js)
 
         for spec_level, runs in sorted(runs_by_spec.items()):
             for i, run_dir in enumerate(runs):
