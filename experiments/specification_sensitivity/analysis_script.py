@@ -52,22 +52,70 @@ def collect_source_text(src_dir: Path) -> str:
     return "\n".join(texts)
 
 
-def anonymize_source(text: str) -> str:
-    """Remove variable names and normalize whitespace for NCD."""
-    # Remove comments
+def normalize_source(text: str) -> str:
+    """Light normalization for NCD — remove comments but keep identifiers and strings."""
+    # Remove single-line comments
     text = re.sub(r"//.*$", "", text, flags=re.MULTILINE)
+    # Remove multi-line comments
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
-    # Remove string literals
-    text = re.sub(r'"[^"]*"', '""', text)
-    text = re.sub(r"'[^']*'", "''", text)
-    text = re.sub(r"`[^`]*`", "``", text)
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    # Normalize whitespace (but keep newlines as single separators)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    return text.strip()
 
 
 def ncd(x: str, y: str) -> float:
-    """Normalized Compression Distance between two strings."""
+    """Normalized Compression Distance between two strings.
+
+    Uses a chunked approach to work around gzip's 32KB window limitation.
+    For texts larger than 16KB, splits into chunks and averages pairwise NCD.
+    """
+    CHUNK_SIZE = 16000  # Stay well within gzip's 32KB window
+
+    if len(x) <= CHUNK_SIZE and len(y) <= CHUNK_SIZE:
+        return _ncd_raw(x, y)
+
+    # For larger texts, compute NCD on aligned chunks and average
+    # Split both texts into chunks of similar semantic units (by lines)
+    x_lines = x.split("\n")
+    y_lines = y.split("\n")
+
+    def make_chunks(lines, chunk_chars):
+        chunks = []
+        current = []
+        current_len = 0
+        for line in lines:
+            current.append(line)
+            current_len += len(line) + 1
+            if current_len >= chunk_chars:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
+
+    x_chunks = make_chunks(x_lines, CHUNK_SIZE)
+    y_chunks = make_chunks(y_lines, CHUNK_SIZE)
+
+    # Compare each x chunk against each y chunk, take the minimum
+    # (best match) for each x chunk, then average
+    if not x_chunks or not y_chunks:
+        return _ncd_raw(x, y)
+
+    best_matches = []
+    for xc in x_chunks:
+        best = min(_ncd_raw(xc, yc) for yc in y_chunks)
+        best_matches.append(best)
+    for yc in y_chunks:
+        best = min(_ncd_raw(xc, yc) for xc in x_chunks)
+        best_matches.append(best)
+
+    return statistics.mean(best_matches)
+
+
+def _ncd_raw(x: str, y: str) -> float:
+    """Raw NCD using gzip compression."""
     xb = x.encode("utf-8")
     yb = y.encode("utf-8")
     xyb = xb + yb
@@ -176,7 +224,7 @@ def load_all_runs():
                 continue
 
             raw_text = collect_source_text(src_dir)
-            anon_text = anonymize_source(raw_text)
+            norm_text = normalize_source(raw_text)
             lines = count_lines(src_dir)
             files = count_files(src_dir)
             filenames = get_filenames(src_dir)
@@ -185,7 +233,7 @@ def load_all_runs():
             spec_data.append({
                 "run_dir": run_dir,
                 "raw_text": raw_text,
-                "anon_text": anon_text,
+                "norm_text": norm_text,
                 "lines": lines,
                 "files": files,
                 "filenames": filenames,
@@ -207,7 +255,7 @@ def compute_pairwise_ncd(runs: list) -> list[float]:
     ncds = []
     for i in range(len(runs)):
         for j in range(i + 1, len(runs)):
-            d = ncd(runs[i]["anon_text"], runs[j]["anon_text"])
+            d = ncd(runs[i]["norm_text"], runs[j]["norm_text"])
             ncds.append(d)
     return ncds
 
@@ -296,11 +344,17 @@ def plot_lines_of_code(data: dict):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Mean LOC with error bars
-    ax1.errorbar(levels, means, yerr=stds, fmt="s-", capsize=5, capthick=2,
-                 markersize=8, linewidth=2, color="#4CAF50")
+    # Left: Strip plot showing all individual data points with box plot
+    colors = ["#BBDEFB", "#C8E6C9", "#FFF9C4", "#FFCCBC", "#E1BEE7"]
+    bp = ax1.boxplot([all_lines[l] for l in levels], positions=levels,
+                     widths=0.4, patch_artist=True, zorder=2)
+    for patch, color in zip(bp["boxes"], colors[:len(levels)]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
     for spec_level, lines in all_lines.items():
-        ax1.scatter([spec_level] * len(lines), lines, alpha=0.3, color="#4CAF50", s=30)
+        jitter = np.random.uniform(-0.12, 0.12, len(lines))
+        ax1.scatter([spec_level + j for j in jitter], lines,
+                    alpha=0.7, color="#4CAF50", s=50, zorder=3, edgecolor="white", linewidth=0.5)
 
     ax1.set_xlabel("Specificity Level", fontsize=14)
     ax1.set_ylabel("Lines of Code", fontsize=14)
@@ -308,28 +362,36 @@ def plot_lines_of_code(data: dict):
     ax1.set_xticks(levels)
     ax1.grid(True, alpha=0.3)
 
-    # Coefficient of variation (CV) — normalized measure of spread
+    # Right: Relative spread — show (max-min)/mean and std/mean side by side
+    ranges_norm = []
     cvs = []
     for spec_level in levels:
         lines = all_lines[spec_level]
         m = statistics.mean(lines)
         s = statistics.stdev(lines) if len(lines) > 1 else 0
+        r = (max(lines) - min(lines)) / m if m > 0 else 0
         cvs.append(s / m if m > 0 else 0)
+        ranges_norm.append(r)
 
-    ax2.bar(levels, cvs, color="#FF9800", alpha=0.8, width=0.6)
+    x = np.array(levels)
+    w = 0.3
+    ax2.bar(x - w/2, ranges_norm, w, color="#FF9800", alpha=0.8, label="Range / Mean")
+    ax2.bar(x + w/2, cvs, w, color="#2196F3", alpha=0.8, label="CV (σ/μ)")
+
     ax2.set_xlabel("Specificity Level", fontsize=14)
-    ax2.set_ylabel("Coefficient of Variation (σ/μ)", fontsize=14)
-    ax2.set_title("LOC Variance (Normalized) vs. Specificity", fontsize=16)
+    ax2.set_ylabel("Normalized Spread", fontsize=14)
+    ax2.set_title("LOC Spread (Normalized) vs. Specificity", fontsize=16)
     ax2.set_xticks(levels)
     ax2.grid(True, alpha=0.3, axis="y")
+    ax2.legend(fontsize=12)
 
     fig.tight_layout()
     fig.savefig(str(ANALYSIS_DIR / "specificity_vs_raw_lines_of_code.png"), dpi=150)
     plt.close(fig)
     print("Saved: specificity_vs_raw_lines_of_code.png")
 
-    return {l: {"mean": m, "std": s, "cv": c}
-            for l, m, s, c in zip(levels, means, stds, cvs)}
+    return {l: {"mean": m, "std": s, "cv": c, "range_norm": r}
+            for l, m, s, c, r in zip(levels, means, stds, cvs, ranges_norm)}
 
 
 def plot_structural_similarity(data: dict):

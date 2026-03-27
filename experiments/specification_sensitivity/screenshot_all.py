@@ -138,54 +138,97 @@ async def screenshot_all_runs():
 
 
 def create_grid():
-    """Create a 5x5 grid image from individual screenshots."""
+    """Create a 5x5 grid image with clear axis labels, padding, and borders."""
+    from PIL import ImageDraw, ImageFont
+
     cols = 5  # runs
     rows = 5  # specificity levels
 
-    # Determine cell size from first available screenshot
-    cell_w, cell_h = WIDTH, HEIGHT
+    # Shrink screenshots and add generous padding
+    thumb_w = WIDTH * 3 // 4  # 960
+    thumb_h = HEIGHT * 3 // 4  # 720
+    pad = 20  # padding around each thumbnail
+    cell_w = thumb_w + pad * 2
+    cell_h = thumb_h + pad * 2
+    margin_left = 260  # space for row labels
+    margin_top = 100   # space for column labels + title
+    margin_bottom = 40
+    bg_color = (240, 240, 245)       # light grey background
+    cell_bg = (200, 200, 210)        # slightly darker cell background
+    border_color = (100, 100, 120)   # visible border
+    text_color = (30, 30, 40)
 
-    grid = Image.new("RGB", (cols * cell_w, rows * cell_h), color=(30, 30, 30))
+    total_w = margin_left + cols * cell_w + margin_bottom
+    total_h = margin_top + rows * cell_h + margin_bottom
 
+    grid = Image.new("RGB", (total_w, total_h), color=bg_color)
+    draw = ImageDraw.Draw(grid)
+
+    try:
+        title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 48)
+        label_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 36)
+        axis_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 42)
+    except Exception:
+        title_font = ImageFont.load_default()
+        label_font = title_font
+        axis_font = title_font
+
+    # Title
+    draw.text((total_w // 2, 20), "Zoo Builder — Visual Variance by Specificity Level",
+              fill=text_color, font=title_font, anchor="mt")
+
+    # Column headers (Run 1..5)
+    for col in range(cols):
+        x = margin_left + col * cell_w + cell_w // 2
+        draw.text((x, margin_top - 20), f"Run {col + 1}",
+                  fill=text_color, font=label_font, anchor="mb")
+
+    # Row labels and screenshots
     for spec_level in range(1, 6):
+        row = spec_level - 1
+        y_offset = margin_top + row * cell_h
+
+        # Row label (rotated would be ideal, but just use horizontal)
+        draw.text((margin_left - 20, y_offset + cell_h // 2),
+                  f"Specificity {spec_level}",
+                  fill=text_color, font=label_font, anchor="rm")
+
         for run_num in range(1, 6):
-            path = SCREENSHOT_DIR / f"spec{spec_level}_run{run_num}.png"
-            row = spec_level - 1
             col = run_num - 1
+            x_offset = margin_left + col * cell_w
+
+            # Cell background (creates visible separation)
+            draw.rectangle(
+                [x_offset, y_offset, x_offset + cell_w - 1, y_offset + cell_h - 1],
+                fill=cell_bg
+            )
+
+            # Border
+            draw.rectangle(
+                [x_offset, y_offset, x_offset + cell_w - 1, y_offset + cell_h - 1],
+                outline=border_color, width=2
+            )
+
+            path = SCREENSHOT_DIR / f"spec{spec_level}_run{run_num}.png"
+            thumb_x = x_offset + pad
+            thumb_y = y_offset + pad
 
             if path.exists():
-                img = Image.open(path).resize((cell_w, cell_h))
-                grid.paste(img, (col * cell_w, row * cell_h))
+                img = Image.open(path).resize((thumb_w, thumb_h), Image.LANCZOS)
+                grid.paste(img, (thumb_x, thumb_y))
+                # Inner border around the screenshot itself
+                draw.rectangle(
+                    [thumb_x - 1, thumb_y - 1, thumb_x + thumb_w, thumb_y + thumb_h],
+                    outline=(60, 60, 70), width=1
+                )
             else:
-                # Draw placeholder
-                placeholder = Image.new("RGB", (cell_w, cell_h), color=(60, 60, 60))
-                grid.paste(placeholder, (col * cell_w, row * cell_h))
-
-    # Add labels
-    try:
-        from PIL import ImageDraw, ImageFont
-
-        draw = ImageDraw.Draw(grid)
-        try:
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 24)
-            small_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 18)
-        except Exception:
-            font = ImageFont.load_default()
-            small_font = font
-
-        # Row labels (specificity levels)
-        for row in range(rows):
-            label = f"Spec {row + 1}"
-            draw.text((10, row * cell_h + 10), label, fill="white", font=font,
-                       stroke_width=2, stroke_fill="black")
-
-        # Column labels (run numbers)
-        for col in range(cols):
-            label = f"Run {col + 1}"
-            draw.text((col * cell_w + cell_w - 100, 10), label, fill="white", font=small_font,
-                       stroke_width=2, stroke_fill="black")
-    except Exception as e:
-        print(f"Warning: Could not add labels: {e}")
+                # Placeholder
+                draw.rectangle(
+                    [thumb_x, thumb_y, thumb_x + thumb_w - 1, thumb_y + thumb_h - 1],
+                    fill=(160, 160, 170)
+                )
+                draw.text((thumb_x + thumb_w // 2, thumb_y + thumb_h // 2),
+                          "No Data", fill=(100, 100, 110), font=label_font, anchor="mm")
 
     grid.save(str(GRID_OUTPUT), quality=95)
     print(f"\nGrid saved to: {GRID_OUTPUT}")
