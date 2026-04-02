@@ -1,6 +1,6 @@
 # Specification Sensitivity Experiment Results
 
-**Date:** 1774578751.9965365
+**Date:** 1774907476.9276264
 
 ## Summary Table
 
@@ -31,4 +31,7 @@ measures agreement on project structure and API surface.
 - `specificity_vs_raw_lines_of_code.png` — Size variance
 - `specificity_vs_structural_similarity.png` — Structure agreement
 - `specificity_vs_file_count.png` — File count distribution
+- `specificity_vs_code_spec_ratio.png` — Code-to-spec line ratio
+- `loc_vs_spec_lines.png` — Code output vs spec line count + ratio
+- `files_vs_spec_files.png` — Output files vs spec file count + ratio
 - `screenshot_grid.png` — Visual comparison (5x5 grid)
