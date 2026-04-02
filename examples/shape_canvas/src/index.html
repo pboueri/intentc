@@ -106,9 +106,24 @@
             // Build scene shapes relative to current canvas size
             const quadW = midX;
             const quadH = midY;
+            const radius = Math.min(quadW, quadH) * 0.3;
+            const circleCX = quadW / 2;
+            const circleCY = midY + quadH / 2;
+            const squareSize = radius * 1.4;
+            const triSize = radius * 1.2;
+
             const sceneShapes = [
                 // Red circle centered in bottom-left quadrant
-                createCircle(quadW / 2, midY + quadH / 2, Math.min(quadW, quadH) * 0.3, 'red'),
+                createCircle(circleCX, circleCY, radius, 'red'),
+                // Green triangle in top-left quadrant, above the red circle
+                createTriangle(
+                    circleCX, midY - quadH / 2 + quadH * 0.15,
+                    circleCX - triSize, midY - quadH * 0.15,
+                    circleCX + triSize, midY - quadH * 0.15,
+                    'green'
+                ),
+                // Blue square in bottom-right quadrant, to the right of red circle, vertically aligned
+                createRectangle(midX + (quadW - squareSize) / 2, circleCY - squareSize / 2, squareSize, squareSize, 'blue'),
             ];
 
             // Render all shapes
