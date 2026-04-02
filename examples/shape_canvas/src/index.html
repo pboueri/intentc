@@ -103,8 +103,16 @@
 
             ctx.setLineDash([]);
 
+            // Build scene shapes relative to current canvas size
+            const quadW = midX;
+            const quadH = midY;
+            const sceneShapes = [
+                // Red circle centered in bottom-left quadrant
+                createCircle(quadW / 2, midY + quadH / 2, Math.min(quadW, quadH) * 0.3, 'red'),
+            ];
+
             // Render all shapes
-            for (const shape of shapes) {
+            for (const shape of sceneShapes) {
                 drawShape(shape);
             }
         }
