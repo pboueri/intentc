@@ -73,24 +73,25 @@
             const midY = h / 2;
             const unit = Math.min(w, h) / 8;
 
+            // Red circle center in bottom-left quadrant
+            const circleCX = midX / 2;
+            const circleCY = midY + midY / 2;
+
             return [
-                // Top-left quadrant: circle
-                createCircle(midX / 2, midY / 2, unit, '#e74c3c'),
-                // Top-right quadrant: triangle
+                // Bottom-left quadrant: red circle
+                createCircle(circleCX, circleCY, unit, '#e74c3c'),
+                // Top-left quadrant: green triangle above the red circle
                 createTriangle(
-                    midX + midX / 2, midY / 2 - unit,
-                    midX + midX / 2 - unit, midY / 2 + unit,
-                    midX + midX / 2 + unit, midY / 2 + unit,
+                    circleCX, midY / 2 - unit,
+                    circleCX - unit, midY / 2 + unit,
+                    circleCX + unit, midY / 2 + unit,
                     '#2ecc71'
                 ),
-                // Bottom-left quadrant: red circle
-                createCircle(midX / 2, midY + midY / 2, unit, '#e74c3c'),
-                // Bottom-right quadrant: additional shapes
-                createCircle(midX + midX / 2 - unit, midY + midY / 2, unit * 0.6, '#f39c12'),
+                // Bottom-right quadrant: blue square to the right of the red circle, vertically aligned
                 createRectangle(
-                    midX + midX / 2 + unit * 0.2, midY + midY / 2 - unit * 0.5,
-                    unit, unit,
-                    '#9b59b6'
+                    midX + midX / 2 - unit, circleCY - unit,
+                    unit * 2, unit * 2,
+                    '#3498db'
                 ),
             ];
         }
