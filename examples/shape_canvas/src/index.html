@@ -31,6 +31,45 @@
         const canvas = document.getElementById('shapeCanvas');
         const ctx = canvas.getContext('2d');
 
+        // Shape definitions
+        function createCircle(cx, cy, radius, color) {
+            return { type: 'circle', cx, cy, radius, color };
+        }
+
+        function createTriangle(x1, y1, x2, y2, x3, y3, color) {
+            return { type: 'triangle', vertices: [{x: x1, y: y1}, {x: x2, y: y2}, {x: x3, y: y3}], color };
+        }
+
+        function createRectangle(x, y, width, height, color) {
+            return { type: 'rectangle', x, y, width, height, color };
+        }
+
+        // Shape rendering
+        function drawShape(shape) {
+            ctx.fillStyle = shape.color;
+            switch (shape.type) {
+                case 'circle':
+                    ctx.beginPath();
+                    ctx.arc(shape.cx, shape.cy, shape.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case 'triangle':
+                    ctx.beginPath();
+                    ctx.moveTo(shape.vertices[0].x, shape.vertices[0].y);
+                    ctx.lineTo(shape.vertices[1].x, shape.vertices[1].y);
+                    ctx.lineTo(shape.vertices[2].x, shape.vertices[2].y);
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case 'rectangle':
+                    ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+                    break;
+            }
+        }
+
+        // Scene: list of shapes to render
+        const shapes = [];
+
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -63,6 +102,11 @@
             ctx.stroke();
 
             ctx.setLineDash([]);
+
+            // Render all shapes
+            for (const shape of shapes) {
+                drawShape(shape);
+            }
         }
 
         window.addEventListener('resize', resizeCanvas);
