@@ -1,0 +1,29 @@
+---
+name: guide
+depends_on:
+  - green_triangle
+  - blue_square
+---
+
+# Guide
+
+Create a README.md and a start.sh script in the project root directory (the parent of `src/`).
+
+## README.md
+
+Write a README that includes:
+
+- **Project title and description**: What Shape Canvas is — a self-contained shape canvas application that renders geometric shapes (a red circle, green triangle, and blue square) on a 2D canvas divided into quadrants.
+- **How to run**: Instructions for running the application using `start.sh`.
+- **What you'll see**: A brief description of the rendered scene — three colored shapes positioned across the canvas quadrants.
+
+Keep the README concise and practical.
+
+## start.sh
+
+Create a shell script `start.sh` that:
+
+- Launches the application in the simplest way appropriate for the implementation (e.g., opening an HTML file in the browser, starting an HTTP server, running a script, etc.).
+- Prints the local URL or file path to the terminal so the user knows where to look.
+- Is executable (`chmod +x`).
+- Works on macOS and Linux without external dependencies beyond what the implementation already requires.
