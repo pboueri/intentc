@@ -193,6 +193,32 @@ def extract_functions(src_dir: Path) -> set:
     return funcs - keywords
 
 
+INPUTS_DIR = EXPERIMENT_DIR / "inputs"
+
+
+def count_spec_lines(spec_level: int) -> int:
+    """Count total lines in all input specification files for a given level."""
+    spec_dir = INPUTS_DIR / f"specificity_{spec_level}"
+    total = 0
+    if not spec_dir.exists():
+        return 0
+    for f in spec_dir.rglob("*"):
+        if f.is_file():
+            try:
+                total += len(f.read_text(errors="replace").splitlines())
+            except Exception:
+                pass
+    return total
+
+
+def count_spec_files(spec_level: int) -> int:
+    """Count total input specification files for a given level."""
+    spec_dir = INPUTS_DIR / f"specificity_{spec_level}"
+    if not spec_dir.exists():
+        return 0
+    return sum(1 for f in spec_dir.rglob("*") if f.is_file())
+
+
 def jaccard(a: set, b: set) -> float:
     """Jaccard similarity between two sets."""
     if not a and not b:
@@ -485,6 +511,161 @@ def plot_file_count(data: dict):
     print("Saved: specificity_vs_file_count.png")
 
 
+def plot_code_to_spec_ratio(data: dict):
+    """Plot code-to-spec line ratio vs specificity level (standalone)."""
+    levels = []
+    means = []
+    stds = []
+    all_ratios = {}
+
+    for spec_level in sorted(data.keys()):
+        runs = data[spec_level]
+        if not runs:
+            continue
+        spec_lines = count_spec_lines(spec_level)
+        if spec_lines == 0:
+            continue
+        ratios = [r["lines"] / spec_lines for r in runs]
+        levels.append(spec_level)
+        means.append(statistics.mean(ratios))
+        stds.append(statistics.stdev(ratios) if len(ratios) > 1 else 0)
+        all_ratios[spec_level] = ratios
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.errorbar(levels, means, yerr=stds, fmt="o-", capsize=5, capthick=2,
+                markersize=8, linewidth=2, color="#2196F3")
+
+    # Scatter individual points
+    for spec_level, ratios in all_ratios.items():
+        ax.scatter([spec_level] * len(ratios), ratios, alpha=0.3, color="#2196F3", s=30)
+
+    ax.set_xlabel("Specificity Level", fontsize=14)
+    ax.set_ylabel("Ratio (Code LOC / Spec Lines)", fontsize=14)
+    ax.set_title("Code-to-Spec Line Ratio vs. Specification Specificity\n"
+                 "(Lower Ratio = Less Code Amplification per Spec Line)", fontsize=16)
+    ax.set_xticks(levels)
+    ax.set_xticklabels([f"Level {l}" for l in levels])
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(str(ANALYSIS_DIR / "specificity_vs_code_spec_ratio.png"), dpi=150)
+    plt.close(fig)
+    print("Saved: specificity_vs_code_spec_ratio.png")
+
+
+def plot_loc_vs_spec_lines(data: dict):
+    """Plot code output (LOC) vs input specification line count, with ratio."""
+    spec_lines_map = {}
+    levels = sorted(data.keys())
+    for spec_level in levels:
+        spec_lines_map[spec_level] = count_spec_lines(spec_level)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Left: Scatter — X = spec line count, Y = code output LOC
+    colors_by_level = {1: "#2196F3", 2: "#4CAF50", 3: "#FF9800", 4: "#E91E63", 5: "#9C27B0"}
+    for spec_level in levels:
+        runs = data[spec_level]
+        if not runs:
+            continue
+        x = spec_lines_map[spec_level]
+        locs = [r["lines"] for r in runs]
+        mean_loc = statistics.mean(locs)
+        color = colors_by_level.get(spec_level, "#333")
+        ax1.scatter([x] * len(locs), locs, alpha=0.5, color=color, s=50, zorder=3,
+                    edgecolor="white", linewidth=0.5)
+        ax1.scatter(x, mean_loc, marker="D", s=120, color=color, zorder=4,
+                    edgecolor="black", linewidth=1.2, label=f"Level {spec_level} (mean)")
+
+    ax1.set_xlabel("Specification Line Count", fontsize=14)
+    ax1.set_ylabel("Code Output (Lines of Code)", fontsize=14)
+    ax1.set_title("Code Output vs. Specification Size (Lines)", fontsize=16)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+
+    # Right: Ratio (code output / spec lines) per generation
+    for spec_level in levels:
+        runs = data[spec_level]
+        if not runs:
+            continue
+        x = spec_lines_map[spec_level]
+        ratios = [r["lines"] / x for r in runs if x > 0]
+        mean_ratio = statistics.mean(ratios) if ratios else 0
+        color = colors_by_level.get(spec_level, "#333")
+        ax2.scatter([x] * len(ratios), ratios, alpha=0.5, color=color, s=50, zorder=3,
+                    edgecolor="white", linewidth=0.5)
+        ax2.scatter(x, mean_ratio, marker="D", s=120, color=color, zorder=4,
+                    edgecolor="black", linewidth=1.2, label=f"Level {spec_level} (mean)")
+
+    ax2.set_xlabel("Specification Line Count", fontsize=14)
+    ax2.set_ylabel("Ratio (Code LOC / Spec Lines)", fontsize=14)
+    ax2.set_title("Code-to-Spec Line Ratio vs. Specification Size", fontsize=16)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(str(ANALYSIS_DIR / "loc_vs_spec_lines.png"), dpi=150)
+    plt.close(fig)
+    print("Saved: loc_vs_spec_lines.png")
+
+
+def plot_files_vs_spec_files(data: dict):
+    """Plot output file count vs input specification file count, with ratio."""
+    spec_files_map = {}
+    levels = sorted(data.keys())
+    for spec_level in levels:
+        spec_files_map[spec_level] = count_spec_files(spec_level)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    colors_by_level = {1: "#2196F3", 2: "#4CAF50", 3: "#FF9800", 4: "#E91E63", 5: "#9C27B0"}
+
+    # Left: Scatter — X = spec file count, Y = output file count
+    for spec_level in levels:
+        runs = data[spec_level]
+        if not runs:
+            continue
+        x = spec_files_map[spec_level]
+        file_counts = [r["files"] for r in runs]
+        mean_files = statistics.mean(file_counts)
+        color = colors_by_level.get(spec_level, "#333")
+        ax1.scatter([x] * len(file_counts), file_counts, alpha=0.5, color=color, s=50,
+                    zorder=3, edgecolor="white", linewidth=0.5)
+        ax1.scatter(x, mean_files, marker="D", s=120, color=color, zorder=4,
+                    edgecolor="black", linewidth=1.2, label=f"Level {spec_level} (mean)")
+
+    ax1.set_xlabel("Specification File Count", fontsize=14)
+    ax1.set_ylabel("Output File Count", fontsize=14)
+    ax1.set_title("Output Files vs. Specification Files", fontsize=16)
+    ax1.legend(fontsize=10)
+    ax1.grid(True, alpha=0.3)
+
+    # Right: Ratio (output files / spec files) per generation
+    for spec_level in levels:
+        runs = data[spec_level]
+        if not runs:
+            continue
+        x = spec_files_map[spec_level]
+        ratios = [r["files"] / x for r in runs if x > 0]
+        mean_ratio = statistics.mean(ratios) if ratios else 0
+        color = colors_by_level.get(spec_level, "#333")
+        ax2.scatter([x] * len(ratios), ratios, alpha=0.5, color=color, s=50, zorder=3,
+                    edgecolor="white", linewidth=0.5)
+        ax2.scatter(x, mean_ratio, marker="D", s=120, color=color, zorder=4,
+                    edgecolor="black", linewidth=1.2, label=f"Level {spec_level} (mean)")
+
+    ax2.set_xlabel("Specification File Count", fontsize=14)
+    ax2.set_ylabel("Ratio (Output Files / Spec Files)", fontsize=14)
+    ax2.set_title("File Count Ratio vs. Specification Files", fontsize=16)
+    ax2.legend(fontsize=10)
+    ax2.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(str(ANALYSIS_DIR / "files_vs_spec_files.png"), dpi=150)
+    plt.close(fig)
+    print("Saved: files_vs_spec_files.png")
+
+
 def generate_summary(data: dict, ncd_results: dict, loc_results: dict):
     """Generate a summary markdown file."""
     lines = ["# Specification Sensitivity Experiment Results\n"]
@@ -518,6 +699,9 @@ def generate_summary(data: dict, ncd_results: dict, loc_results: dict):
     lines.append("- `specificity_vs_raw_lines_of_code.png` — Size variance")
     lines.append("- `specificity_vs_structural_similarity.png` — Structure agreement")
     lines.append("- `specificity_vs_file_count.png` — File count distribution")
+    lines.append("- `specificity_vs_code_spec_ratio.png` — Code-to-spec line ratio")
+    lines.append("- `loc_vs_spec_lines.png` — Code output vs spec line count + ratio")
+    lines.append("- `files_vs_spec_files.png` — Output files vs spec file count + ratio")
     lines.append("- `screenshot_grid.png` — Visual comparison (5x5 grid)")
 
     summary_path = ANALYSIS_DIR / "summary.md"
@@ -548,6 +732,15 @@ def main():
 
     print(f"\n=== Computing file counts ===")
     plot_file_count(data)
+
+    print(f"\n=== Computing code-to-spec ratio ===")
+    plot_code_to_spec_ratio(data)
+
+    print(f"\n=== Computing LOC vs spec lines ===")
+    plot_loc_vs_spec_lines(data)
+
+    print(f"\n=== Computing files vs spec files ===")
+    plot_files_vs_spec_files(data)
 
     print(f"\n=== Generating summary ===")
     generate_summary(data, ncd_results, loc_results)

@@ -1,0 +1,6 @@
+- [ ] init plan needs AgentError: Failed to launch Claude interactive mode: [Errno 2] No such file or directory: 'src'
+- [ ] no way to modify code outside of init or plan. There should be a refine mode or a skill that describes how to manipulate the files
+- [ ] init plan fails if the feature already exists
+- [ ] still not clear where to put end to end tests and the like
+- [ ] intent plan you have to accept everything which sucksi
+- [ ] intentc clean should reverse all the diffs or something -- or apply a patch that's the inversse of all the diffs
