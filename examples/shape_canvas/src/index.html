@@ -96,6 +96,15 @@
             ctx.fillText("Bottom-Left", 10, midY + 20);
             ctx.fillText("Bottom-Right", midX + 10, midY + 20);
 
+            // Add shapes relative to canvas size
+            shapes.length = 0;
+
+            // Red circle centered in the bottom-left quadrant
+            const blCenterX = midX / 2;
+            const blCenterY = midY + midY / 2;
+            const circleRadius = Math.min(midX, midY) * 0.25;
+            createCircle(blCenterX, blCenterY, circleRadius, "#e03030");
+
             // Render all shapes
             for (const shape of shapes) {
                 drawShape(shape);
