@@ -16,6 +16,40 @@
         const canvas = document.getElementById("canvas");
         const ctx = canvas.getContext("2d");
 
+        // Shape definitions
+        const shapes = [];
+
+        function createCircle(cx, cy, radius, color) {
+            shapes.push({ type: "circle", cx, cy, radius, color });
+        }
+
+        function createTriangle(x1, y1, x2, y2, x3, y3, color) {
+            shapes.push({ type: "triangle", points: [{x: x1, y: y1}, {x: x2, y: y2}, {x: x3, y: y3}], color });
+        }
+
+        function createRectangle(x, y, width, height, color) {
+            shapes.push({ type: "rectangle", x, y, width, height, color });
+        }
+
+        // Shape renderers
+        function drawShape(shape) {
+            ctx.fillStyle = shape.color;
+            if (shape.type === "circle") {
+                ctx.beginPath();
+                ctx.arc(shape.cx, shape.cy, shape.radius, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (shape.type === "triangle") {
+                ctx.beginPath();
+                ctx.moveTo(shape.points[0].x, shape.points[0].y);
+                ctx.lineTo(shape.points[1].x, shape.points[1].y);
+                ctx.lineTo(shape.points[2].x, shape.points[2].y);
+                ctx.closePath();
+                ctx.fill();
+            } else if (shape.type === "rectangle") {
+                ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+            }
+        }
+
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -61,6 +95,11 @@
             ctx.fillText("Top-Right", midX + 10, 20);
             ctx.fillText("Bottom-Left", 10, midY + 20);
             ctx.fillText("Bottom-Right", midX + 10, midY + 20);
+
+            // Render all shapes
+            for (const shape of shapes) {
+                drawShape(shape);
+            }
         }
 
         window.addEventListener("resize", resize);
