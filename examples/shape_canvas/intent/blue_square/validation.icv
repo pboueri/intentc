@@ -1,0 +1,8 @@
+target: blue_square
+agent_profile: null
+validations:
+  - name: final_scene_validation
+    type: agent_validation
+    severity: error
+    args:
+      rubric: "The canvas displays exactly three shapes: a red circle in the bottom-left quadrant, a green triangle above the circle in the top-left quadrant, and a blue square to the right of the circle in the bottom-right quadrant. All three shapes are clearly visible, correctly colored, and positioned relative to each other as specified."

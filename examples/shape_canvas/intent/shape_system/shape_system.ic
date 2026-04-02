@@ -1,0 +1,15 @@
+---
+name: shape_system
+depends_on:
+  - canvas_core
+---
+
+# Shape System
+
+Define a shape system that supports rendering the following geometric primitives onto the canvas:
+
+- **Circle** — defined by center position and radius.
+- **Triangle** — defined by three vertex points.
+- **Rectangle** — defined by top-left position, width, and height.
+
+Each shape has a fill color and is drawn onto the canvas. Shapes should be clearly visible and appropriately sized relative to the canvas.

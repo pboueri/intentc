@@ -1,0 +1,7 @@
+---
+name: python
+---
+
+# Python Implementation
+
+Implement the shape canvas as a Python application using only the standard library. Serve the canvas as an HTML page via a built-in HTTP server (e.g., `http.server`). The server should generate or serve an HTML file that renders the canvas and shapes in the browser. No external packages or dependencies beyond Python's standard library.

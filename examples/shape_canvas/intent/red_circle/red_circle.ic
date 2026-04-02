@@ -1,0 +1,9 @@
+---
+name: red_circle
+depends_on:
+  - shape_system
+---
+
+# Red Circle
+
+Place a red filled circle in the **bottom-left quadrant** of the canvas. The circle should be clearly visible and centered within the bottom-left quadrant area.

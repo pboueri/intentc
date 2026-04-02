@@ -1,0 +1,9 @@
+---
+name: green_triangle
+depends_on:
+  - red_circle
+---
+
+# Green Triangle
+
+Place a green filled triangle **above the red circle**. The triangle should be positioned in the top-left quadrant, horizontally aligned with the red circle below it. It should be clearly visible and appropriately sized.
