@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shape Canvas</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+
+        // Shape definitions
+        const shapes = [];
+
+        function createCircle(cx, cy, radius, color) {
+            shapes.push({ type: "circle", cx, cy, radius, color });
+        }
+
+        function createTriangle(x1, y1, x2, y2, x3, y3, color) {
+            shapes.push({ type: "triangle", points: [{x: x1, y: y1}, {x: x2, y: y2}, {x: x3, y: y3}], color });
+        }
+
+        function createRectangle(x, y, width, height, color) {
+            shapes.push({ type: "rectangle", x, y, width, height, color });
+        }
+
+        // Shape renderers
+        function drawShape(shape) {
+            ctx.fillStyle = shape.color;
+            if (shape.type === "circle") {
+                ctx.beginPath();
+                ctx.arc(shape.cx, shape.cy, shape.radius, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (shape.type === "triangle") {
+                ctx.beginPath();
+                ctx.moveTo(shape.points[0].x, shape.points[0].y);
+                ctx.lineTo(shape.points[1].x, shape.points[1].y);
+                ctx.lineTo(shape.points[2].x, shape.points[2].y);
+                ctx.closePath();
+                ctx.fill();
+            } else if (shape.type === "rectangle") {
+                ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+            }
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            draw();
+        }
+
+        function draw() {
+            const w = canvas.width;
+            const h = canvas.height;
+            const midX = w / 2;
+            const midY = h / 2;
+
+            // Background
+            ctx.fillStyle = "#f0f0f0";
+            ctx.fillRect(0, 0, w, h);
+
+            // Border
+            ctx.strokeStyle = "#333";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(1, 1, w - 2, h - 2);
+
+            // Quadrant dividers
+            ctx.strokeStyle = "#ccc";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([6, 4]);
+
+            ctx.beginPath();
+            ctx.moveTo(midX, 0);
+            ctx.lineTo(midX, h);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, midY);
+            ctx.lineTo(w, midY);
+            ctx.stroke();
+
+            ctx.setLineDash([]);
+
+            // Quadrant labels
+            ctx.fillStyle = "#aaa";
+            ctx.font = "14px sans-serif";
+            ctx.fillText("Top-Left", 10, 20);
+            ctx.fillText("Top-Right", midX + 10, 20);
+            ctx.fillText("Bottom-Left", 10, midY + 20);
+            ctx.fillText("Bottom-Right", midX + 10, midY + 20);
+
+            // Add shapes relative to canvas size
+            shapes.length = 0;
+
+            // Red circle centered in the bottom-left quadrant
+            const blCenterX = midX / 2;
+            const blCenterY = midY + midY / 2;
+            const circleRadius = Math.min(midX, midY) * 0.25;
+            createCircle(blCenterX, blCenterY, circleRadius, "#e03030");
+
+            // Green triangle in the top-left quadrant, above the red circle
+            const triSize = circleRadius * 1.2;
+            const triCenterX = blCenterX;
+            const triCenterY = midY / 2;
+            createTriangle(
+                triCenterX, triCenterY - triSize,
+                triCenterX - triSize, triCenterY + triSize * 0.7,
+                triCenterX + triSize, triCenterY + triSize * 0.7,
+                "#30b030"
+            );
+
+            // Blue square in the bottom-right quadrant, to the right of the red circle, vertically aligned
+            const sqSize = circleRadius * 1.4;
+            const brCenterX = midX + midX / 2;
+            const sqX = brCenterX - sqSize / 2;
+            const sqY = blCenterY - sqSize / 2;
+            createRectangle(sqX, sqY, sqSize, sqSize, "#3070e0");
+
+            // Render all shapes
+            for (const shape of shapes) {
+                drawShape(shape);
+            }
+        }
+
+        window.addEventListener("resize", resize);
+        resize();
+    </script>
+</body>
+</html>

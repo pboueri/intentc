@@ -1,0 +1,7 @@
+---
+name: default
+---
+
+# JavaScript Implementation
+
+Implement the shape canvas as a single self-contained HTML file that can be opened directly in a browser (no server required). All JavaScript and CSS should be inline within the HTML file. No external libraries or CDN dependencies.

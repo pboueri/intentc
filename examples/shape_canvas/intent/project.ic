@@ -1,0 +1,9 @@
+---
+name: shape_canvas
+---
+
+# Shape Canvas
+
+A locally-servable shape canvas application that renders geometric shapes on a 2D canvas. Users can place different shapes (circles, triangles, rectangles) at specific positions with distinct colors. The canvas is divided into quadrants, and shapes are positioned relative to each other to form a composed scene.
+
+The application should be servable from a local file or local server with no external dependencies.

@@ -1,0 +1,9 @@
+---
+name: blue_square
+depends_on:
+  - red_circle
+---
+
+# Blue Square
+
+Place a blue filled square **to the right of the red circle**. The square should be positioned in the bottom-right quadrant, vertically aligned with the red circle to its left. It should be clearly visible and appropriately sized.
