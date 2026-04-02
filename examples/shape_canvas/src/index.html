@@ -5,72 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shape Canvas</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            overflow: hidden;
-            background: #1a1a1a;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100vw;
-            height: 100vh;
-        }
-        canvas {
-            border: 2px solid #444;
-            display: block;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+        canvas { display: block; }
     </style>
 </head>
 <body>
-    <canvas id="shapeCanvas"></canvas>
+    <canvas id="canvas"></canvas>
     <script>
-        const canvas = document.getElementById('shapeCanvas');
-        const ctx = canvas.getContext('2d');
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
 
-        // Shape definitions
-        function createCircle(cx, cy, radius, color) {
-            return { type: 'circle', cx, cy, radius, color };
-        }
-
-        function createTriangle(x1, y1, x2, y2, x3, y3, color) {
-            return { type: 'triangle', vertices: [{x: x1, y: y1}, {x: x2, y: y2}, {x: x3, y: y3}], color };
-        }
-
-        function createRectangle(x, y, width, height, color) {
-            return { type: 'rectangle', x, y, width, height, color };
-        }
-
-        // Shape rendering
-        function drawShape(shape) {
-            ctx.fillStyle = shape.color;
-            switch (shape.type) {
-                case 'circle':
-                    ctx.beginPath();
-                    ctx.arc(shape.cx, shape.cy, shape.radius, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                case 'triangle':
-                    ctx.beginPath();
-                    ctx.moveTo(shape.vertices[0].x, shape.vertices[0].y);
-                    ctx.lineTo(shape.vertices[1].x, shape.vertices[1].y);
-                    ctx.lineTo(shape.vertices[2].x, shape.vertices[2].y);
-                    ctx.closePath();
-                    ctx.fill();
-                    break;
-                case 'rectangle':
-                    ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
-                    break;
-            }
-        }
-
-        // Scene: list of shapes to render
-        const shapes = [];
-
-        function resizeCanvas() {
+        function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             draw();
@@ -82,12 +28,17 @@
             const midX = w / 2;
             const midY = h / 2;
 
-            // Clear and fill background
-            ctx.fillStyle = '#f5f5f5';
+            // Background
+            ctx.fillStyle = "#f0f0f0";
             ctx.fillRect(0, 0, w, h);
 
-            // Draw quadrant dividers
-            ctx.strokeStyle = '#ccc';
+            // Border
+            ctx.strokeStyle = "#333";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(1, 1, w - 2, h - 2);
+
+            // Quadrant dividers
+            ctx.strokeStyle = "#ccc";
             ctx.lineWidth = 1;
             ctx.setLineDash([6, 4]);
 
@@ -103,37 +54,17 @@
 
             ctx.setLineDash([]);
 
-            // Build scene shapes relative to current canvas size
-            const quadW = midX;
-            const quadH = midY;
-            const radius = Math.min(quadW, quadH) * 0.3;
-            const circleCX = quadW / 2;
-            const circleCY = midY + quadH / 2;
-            const squareSize = radius * 1.4;
-            const triSize = radius * 1.2;
-
-            const sceneShapes = [
-                // Red circle centered in bottom-left quadrant
-                createCircle(circleCX, circleCY, radius, 'red'),
-                // Green triangle in top-left quadrant, above the red circle
-                createTriangle(
-                    circleCX, midY - quadH / 2 + quadH * 0.15,
-                    circleCX - triSize, midY - quadH * 0.15,
-                    circleCX + triSize, midY - quadH * 0.15,
-                    'green'
-                ),
-                // Blue square in bottom-right quadrant, to the right of red circle, vertically aligned
-                createRectangle(midX + (quadW - squareSize) / 2, circleCY - squareSize / 2, squareSize, squareSize, 'blue'),
-            ];
-
-            // Render all shapes
-            for (const shape of sceneShapes) {
-                drawShape(shape);
-            }
+            // Quadrant labels
+            ctx.fillStyle = "#aaa";
+            ctx.font = "14px sans-serif";
+            ctx.fillText("Top-Left", 10, 20);
+            ctx.fillText("Top-Right", midX + 10, 20);
+            ctx.fillText("Bottom-Left", 10, midY + 20);
+            ctx.fillText("Bottom-Right", midX + 10, midY + 20);
         }
 
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+        window.addEventListener("resize", resize);
+        resize();
     </script>
 </body>
 </html>
