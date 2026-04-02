@@ -20,8 +20,8 @@
             height: 100vh;
         }
         canvas {
-            display: block;
             border: 2px solid #444;
+            display: block;
         }
     </style>
 </head>
@@ -31,72 +31,7 @@
         const canvas = document.getElementById('shapeCanvas');
         const ctx = canvas.getContext('2d');
 
-        // Shape definitions
-        function createCircle(cx, cy, radius, color) {
-            return { type: 'circle', cx, cy, radius, color };
-        }
-
-        function createTriangle(x1, y1, x2, y2, x3, y3, color) {
-            return { type: 'triangle', points: [{x: x1, y: y1}, {x: x2, y: y2}, {x: x3, y: y3}], color };
-        }
-
-        function createRectangle(x, y, width, height, color) {
-            return { type: 'rectangle', x, y, width, height, color };
-        }
-
-        // Shape rendering
-        function drawShape(shape) {
-            ctx.fillStyle = shape.color;
-            switch (shape.type) {
-                case 'circle':
-                    ctx.beginPath();
-                    ctx.arc(shape.cx, shape.cy, shape.radius, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                case 'triangle':
-                    ctx.beginPath();
-                    ctx.moveTo(shape.points[0].x, shape.points[0].y);
-                    ctx.lineTo(shape.points[1].x, shape.points[1].y);
-                    ctx.lineTo(shape.points[2].x, shape.points[2].y);
-                    ctx.closePath();
-                    ctx.fill();
-                    break;
-                case 'rectangle':
-                    ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
-                    break;
-            }
-        }
-
-        // Scene: shapes positioned relative to canvas quadrants
-        function buildScene(w, h) {
-            const midX = w / 2;
-            const midY = h / 2;
-            const unit = Math.min(w, h) / 8;
-
-            // Red circle center in bottom-left quadrant
-            const circleCX = midX / 2;
-            const circleCY = midY + midY / 2;
-
-            return [
-                // Bottom-left quadrant: red circle
-                createCircle(circleCX, circleCY, unit, '#e74c3c'),
-                // Top-left quadrant: green triangle above the red circle
-                createTriangle(
-                    circleCX, midY / 2 - unit,
-                    circleCX - unit, midY / 2 + unit,
-                    circleCX + unit, midY / 2 + unit,
-                    '#2ecc71'
-                ),
-                // Bottom-right quadrant: blue square to the right of the red circle, vertically aligned
-                createRectangle(
-                    midX + midX / 2 - unit, circleCY - unit,
-                    unit * 2, unit * 2,
-                    '#3498db'
-                ),
-            ];
-        }
-
-        function resize() {
+        function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             draw();
@@ -108,11 +43,11 @@
             const midX = w / 2;
             const midY = h / 2;
 
-            // Background
+            // Clear and fill background
             ctx.fillStyle = '#f5f5f5';
             ctx.fillRect(0, 0, w, h);
 
-            // Quadrant dividers
+            // Draw quadrant dividers
             ctx.strokeStyle = '#ccc';
             ctx.lineWidth = 1;
             ctx.setLineDash([6, 4]);
@@ -128,24 +63,10 @@
             ctx.stroke();
 
             ctx.setLineDash([]);
-
-            // Quadrant labels
-            ctx.fillStyle = '#bbb';
-            ctx.font = '14px sans-serif';
-            ctx.textAlign = 'center';
-            const pad = 30;
-            ctx.fillText('Top-Left', midX / 2, pad);
-            ctx.fillText('Top-Right', midX + midX / 2, pad);
-            ctx.fillText('Bottom-Left', midX / 2, midY + pad);
-            ctx.fillText('Bottom-Right', midX + midX / 2, midY + pad);
-
-            // Draw shapes
-            const shapes = buildScene(w, h);
-            shapes.forEach(drawShape);
         }
 
-        window.addEventListener('resize', resize);
-        resize();
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
     </script>
 </body>
 </html>
