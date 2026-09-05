@@ -254,7 +254,8 @@ abstract class StorageBackend:
 - `get_validation_results(target: string, build_result_id: integer or null = null) -> list of map` — Validation rows for a target, newest first. When `build_result_id` is null, rows for the latest build are returned: those linked by `build_result_id` OR sharing the latest build's `generation_id` (validations run during a build are recorded before the build result row exists, so they are linked by generation). Each map has `name`, `type`, `severity`, `status`, `reason`, `timestamp`.
 
 ### Build Step Methods
-- `save_build_step(build_result_id: integer, step: BuildStep, log: string, step_order: integer) -> void` — Insert a build step with its log output.
+- `save_build_step(build_result_id: integer, step: BuildStep, log: string, step_order: integer) -> void` — Insert a build step with its log output. `BuildStep` itself carries no log text; this method is how captured agent/command output is attached to a step (`build_steps.log`). `save_build_result` inserts its steps with an empty log.
+- `get_build_steps(build_result_id: integer) -> list of map` — Steps for a build result in order, each map with `phase`, `status`, `duration_secs`, `summary`, `log`. This is how stored log text is read back.
 
 ### Validation Result Methods
 - `save_validation_result(build_result_id: integer or null, generation_id: string, target: string, validation_file_version_id: integer or null, name: string, type: string, severity: string, status: string, reason: string, duration_secs: float or null) -> integer` — Insert and return the ID.

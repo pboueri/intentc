@@ -46,7 +46,8 @@ validations:
         Verify tests demonstrate a full storage roundtrip:
         1. Create a generation
         2. Record an intent file version
-        3. Save a build result with steps (including log text)
+        3. Save a build result with steps, then attach log text to a step via
+           save_build_step and read it back with get_build_steps
         4. Save an agent response
         5. Save validation results
         6. Log generation events
