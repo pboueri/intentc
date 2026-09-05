@@ -1,0 +1,58 @@
+### Context
+You are working in the context of the following project:
+
+{project}
+
+with the following implementation approach:
+
+{implementation}
+
+### Task
+Determine whether two output directories, both built from the project intent above, are
+**functionally equivalent** from the perspective of a user or consumer of the software.
+This is not a textual diff: the code may be structured, named, and organized completely
+differently in each directory. What matters is whether the software behaves the same.
+
+- Reference build (build A): `{output_dir_a}`
+- Candidate build (build B): `{output_dir_b}`
+
+Evaluate the following dimensions, in order, for as many as are applicable to the project.
+Stop early only if a dimension's failure makes further comparison meaningless.
+
+1. `public_api` — Do both builds expose the same public interfaces (module exports, function
+   signatures, class hierarchies, CLI commands, API endpoints, or whatever constitutes the
+   public surface)? Structural differences in file layout or naming are acceptable as long as
+   the contract is the same.
+2. `test_suite` — Can the test suite from build A pass against build B, and vice versa? Attempt
+   to cross-run tests where feasible. If tests are too tightly coupled to internal structure to
+   cross-run, note this and evaluate based on test coverage and intent instead.
+3. `runtime_behavior` — Does the software behave the same when used? Exercise it through its
+   primary interface (CLI invocations, API calls, imports) with representative inputs and
+   compare outputs. This is the most important dimension: if the software does the same thing,
+   it is equivalent regardless of how it is built.
+4. `dependency_compatibility` — Do both builds declare compatible dependencies? Significant
+   version mismatches or missing dependencies that affect runtime behavior are divergences.
+   Minor version differences in pinned dependencies are acceptable.
+5. `configuration_compatibility` — Do both builds respect the same configuration surface (config
+   files, environment variables, default values)?
+
+Inspect the code and run commands as needed in both directories; do not modify any files in
+either directory.
+
+### Response
+When you are done, write a JSON file to `{response_file}` with the following structure:
+```json
+{{
+  "status": "equivalent" or "divergent",
+  "dimensions": [
+    {{
+      "name": "public_api",
+      "status": "pass" or "fail",
+      "rationale": "what was compared and why it passed or failed"
+    }}
+  ],
+  "summary": "human-readable overall assessment explaining the verdict"
+}}
+```
+The overall `status` is `"equivalent"` only if every evaluated dimension passes. If any
+dimension fails, the status is `"divergent"`. You MUST write this file before you finish.
