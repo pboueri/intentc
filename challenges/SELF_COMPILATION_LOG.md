@@ -82,3 +82,51 @@
 3. **Sandbox computation is a behavioral detail** — Missing `_apply_sandbox_paths` changes agent constraints at runtime, not just internal structure
 4. **Exception types matter for retry semantics** — Catching `AgentError` vs generic `Exception` changes which failures are retried
 5. **Exact code examples > prose descriptions** — Adding Python code snippets to intent files was the most effective way to eliminate ambiguity
+
+## Iteration 4 — full recompile with intent revisions (2026-09-05)
+
+**What was tried:** deleted `src/` entirely and regenerated every feature from
+`intent/` in DAG order (core/specifications → core/project → build/storage →
+build/agents → build/state → build/validations → build/builder →
+build/end_to_end → interfaces/cli → differencing → workflows/init). Nested
+`claude -p --dangerously-skip-permissions` invocations were blocked in the
+build environment, so the compiling agent was the Claude Code session itself,
+following the same build prompt and running each feature's validations before
+moving on.
+
+**Intent changes made first** (committed separately from the generated code):
+
+- Deterministic validation types `command_validation` and `file_exists`, with
+  parse-time checks of `.icv` files (missing rubric/command/paths, duplicate
+  names, unknown severity). The "run the tests" agent rubrics on every intentc
+  feature became command validations.
+- `intentc check` — a lint of the intent project (unknown deps, cycles,
+  `.icv` target/directory mismatches, missing validations, dangling file
+  references) that `build` runs first.
+- Staleness by content hash (`source_hash` on build results) and automatic
+  `refresh_outdated()` at the start of every build and `status`.
+- `intentc log`, dry-run plans, "next you can build" hints, warning-vs-error
+  rendering, and explicit exit-code rules for unknown targets, broken configs,
+  missing `intent/`, and missing git.
+- Prompt variables `{output_dir}`, `{dependencies}`, `{feature_name}`.
+- Fixed three rubrics that contradicted their intents (retry semantics,
+  prompt loading via importlib.resources).
+
+**What the recompile found:**
+
+- `check` immediately caught a duplicate validation name and three intents
+  whose `name` did not match their directory.
+- pytest's default `norecursedirs` includes `build`, so the previous
+  `src/intentc/build/` tests were never collected by `uv run pytest` (100
+  tests ran; ~250 existed). Fixed in `pyproject.toml` and specified in the
+  implementation intent.
+- The SQLite connection was shared by the validation thread pool without a
+  lock (`cannot start a transaction within a transaction`). Now locked and
+  specified.
+- `clean` restored *to* the checkpoint rather than to before it, and touched
+  the whole tree; it now restores `<sha>~1` scoped to the output directory.
+
+**Result:** 191 tests pass; every deterministic validation in `intent/` passes
+against the regenerated `src/`; the todo-app example builds end-to-end
+(build → validate → status → log → diff → stale rebuild → clean) with a
+CLI-provider agent.
