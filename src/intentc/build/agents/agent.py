@@ -134,6 +134,7 @@ class PromptTemplates(BaseModel):
     validate_template: str = ""
     plan: str = ""
     difference: str = ""
+    init: str = ""
 
 
 def _read_bundled_prompt(package: str, filename: str) -> str:
@@ -154,6 +155,7 @@ def load_default_prompts() -> PromptTemplates:
         validate_template=_read_bundled_prompt("intentc.build.agents", "validate.prompt"),
         plan=_read_bundled_prompt("intentc.build.agents", "plan.prompt"),
         difference=_read_bundled_prompt("intentc.differencing", "difference.prompt"),
+        init=_read_bundled_prompt("intentc.build.agents", "init.prompt"),
     )
 
 
@@ -242,6 +244,98 @@ def render_prompt(
     return _safe_format(template, variables)
 
 
+_SPECIFICATIONS_SUMMARY = """\
+### Intent files (.ic)
+
+Markdown files with YAML frontmatter delimited by `---` lines, e.g.:
+
+```
+---
+name: models
+depends_on:
+  - core/types
+tags: [foundation]
+---
+
+# Body
+
+Free-form markdown describing what this feature should do.
+```
+
+- `name` (string, required) — matches the feature's directory path (e.g. a file at
+  `intent/build/models/models.ic` has `name: build/models`).
+- `depends_on` (list of strings, optional) — feature paths this feature needs built
+  first. Supports glob wildcards (e.g. `core/*`). Must form an acyclic graph.
+- `tags` (list of strings, optional) — free-form categorization.
+- `authors` (list of strings, optional).
+- Everything after the closing `---` is the body: a natural-language description of
+  what to build, detailed enough for an agent to implement it.
+
+`intent/project.ic` is a special singleton intent file (no `depends_on`) describing
+the project as a whole. `intent/implementations/<name>.ic` files describe a target
+language/stack/conventions; `default.ic` is used when there is more than one.
+
+### Validation files (.icv)
+
+Pure YAML (no frontmatter delimiters), living alongside the feature's `.ic` file
+(conventionally `validation.icv`):
+
+```yaml
+target: build/models
+version: 1
+validations:
+  - name: models-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      command: "pytest src/build/models"
+  - name: models-file-exists
+    type: file_exists
+    severity: error
+    args:
+      paths:
+        - "{output_dir}/models/__init__.py"
+  - name: models-review
+    type: agent_validation
+    severity: warning
+    args:
+      rubric: |
+        Describe in plain language what a reviewer should check for.
+```
+
+- `target` (string, required) — the feature path this validates, or `project` for
+  project-wide assertions.
+- `validations` (list, required) — each entry needs a unique `name`, a `type`
+  (`command_validation`, `file_exists`, or `agent_validation`), a `severity`
+  (`error` blocks the build, `warning` is advisory), and `args` matching the type:
+  - `command_validation.args.command` — a shell command that must exit 0.
+  - `file_exists.args.paths` — paths/globs relative to the output directory.
+  - `agent_validation.args.rubric` — a natural-language description an agent judges.
+
+Prefer deterministic validations (`file_exists`, `command_validation`) where
+possible; use `agent_validation` for judgement calls."""
+
+
+def _specifications_summary() -> str:
+    """A condensed summary of the .ic/.icv file format conventions for the init prompt."""
+    return _SPECIFICATIONS_SUMMARY
+
+
+def render_init_prompt(
+    template: str,
+    project_name: str,
+    user_prompt: str = "",
+) -> str:
+    """Render the init prompt template with the project name, spec summary, and
+    optional user-provided project description."""
+    variables = {
+        "project_name": project_name,
+        "specifications": _specifications_summary(),
+        "user_prompt": user_prompt,
+    }
+    return _safe_format(template, variables)
+
+
 def render_differencing_prompt(template: str, ctx: DifferencingContext) -> str:
     """Render a differencing prompt template against a DifferencingContext."""
     variables = {
@@ -301,6 +395,9 @@ class Agent(ABC):
 
     @abstractmethod
     def plan(self, ctx: BuildContext) -> None: ...
+
+    @abstractmethod
+    def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None: ...
 
     @abstractmethod
     def get_name(self) -> str: ...
@@ -391,6 +488,10 @@ class CLIAgent(Agent):
     def plan(self, ctx: BuildContext) -> None:
         prompt = render_prompt(self.templates.plan, ctx)
         self._invoke(prompt)
+
+    def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
+        rendered = render_init_prompt(self.templates.init, project_name, user_prompt=prompt or "")
+        self._invoke(rendered)
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +637,19 @@ class ClaudeAgent(Agent):
         except OSError as exc:
             raise AgentError(f"Failed to launch claude in interactive mode: {exc}") from exc
 
+    def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
+        if prompt is None:
+            rendered = render_init_prompt(self.templates.init, project_name)
+            command = self._build_command(rendered, interactive=True)
+            self.log("    agent: entering interactive init session")
+            try:
+                subprocess.run(command, check=False)
+            except OSError as exc:
+                raise AgentError(f"Failed to launch claude in interactive mode: {exc}") from exc
+        else:
+            rendered = render_init_prompt(self.templates.init, project_name, user_prompt=prompt)
+            self._run_noninteractive(rendered)
+
 
 # ---------------------------------------------------------------------------
 # MockAgent
@@ -557,6 +671,7 @@ class MockAgent(Agent):
         self.validate_calls: list[tuple[BuildContext, Validation]] = []
         self.difference_calls: list[DifferencingContext] = []
         self.plan_calls: list[BuildContext] = []
+        self.init_calls: list[tuple[str, str, Optional[str]]] = []
         self.build_response = build_response or BuildResponse(
             status="success", summary="mock build", files_created=[], files_modified=[]
         )
@@ -581,6 +696,9 @@ class MockAgent(Agent):
 
     def plan(self, ctx: BuildContext) -> None:
         self.plan_calls.append(ctx)
+
+    def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
+        self.init_calls.append((project_name, intent_dir, prompt))
 
     def get_name(self) -> str:
         return self.name

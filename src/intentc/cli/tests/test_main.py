@@ -15,7 +15,7 @@ from typing import Optional
 import pytest
 from typer.testing import CliRunner
 
-from intentc.build.agents import AgentProfile, ValidationResponse
+from intentc.build.agents import AgentError, AgentProfile, ValidationResponse
 from intentc.build.builder.builder import BuildOptions
 from intentc.build.state import TargetStatus
 from intentc.build.storage import BuildResult, BuildStep
@@ -388,10 +388,10 @@ class TestDiffAndLog:
 # ---------------------------------------------------------------------------
 
 
-class TestInit:
+class TestInitNoInteractive:
     def test_creates_project_and_config(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(main.app, ["init", "myproj"])
+        result = runner.invoke(main.app, ["init", "myproj", "--no-interactive"])
 
         assert result.exit_code == 0
         assert (tmp_path / "intent" / "project.ic").is_file()
@@ -400,11 +400,119 @@ class TestInit:
 
     def test_refuses_to_overwrite(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        runner.invoke(main.app, ["init", "myproj"])
+        runner.invoke(main.app, ["init", "myproj", "--no-interactive"])
+
+        result = runner.invoke(main.app, ["init", "myproj", "--no-interactive"])
+
+        assert result.exit_code == 2
+
+    def test_no_interactive_and_prompt_are_mutually_exclusive(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(
+            main.app, ["init", "myproj", "--no-interactive", "-P", "a calculator"]
+        )
+        assert result.exit_code == 2
+
+
+class _FakeInitAgent:
+    """Stands in for an Agent in interactive/one-shot init CLI tests."""
+
+    instances: list["_FakeInitAgent"] = []
+
+    def __init__(self, profile, log=None) -> None:
+        self.profile = profile
+        self.log = log
+        self.init_calls: list[tuple[str, str, Optional[str]]] = []
+        self.write_extra_feature = True
+        _FakeInitAgent.instances.append(self)
+
+    def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
+        self.init_calls.append((project_name, intent_dir, prompt))
+        if self.write_extra_feature:
+            extra = IntentFile(name="extra", depends_on=[], body="An extra agent-authored feature.")
+            write_intent_file(extra, Path(intent_dir) / "extra" / "extra.ic")
+            extra_vf = ValidationFile(
+                target="extra",
+                version=1,
+                validations=[
+                    Validation(
+                        name="extra-check",
+                        type=ValidationType.FILE_EXISTS.value,
+                        severity=Severity.ERROR,
+                        args={"paths": ["README.md"]},
+                    )
+                ],
+            )
+            write_validation_file(extra_vf, Path(intent_dir) / "extra" / "validation.icv")
+
+
+class TestInitInteractive:
+    def test_launches_agent_and_validates_result(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        _FakeInitAgent.instances = []
+        monkeypatch.setattr(main, "create_from_profile", lambda profile, log=None: _FakeInitAgent(profile, log))
 
         result = runner.invoke(main.app, ["init", "myproj"])
 
-        assert result.exit_code == 2
+        assert result.exit_code == 0, result.output
+        assert len(_FakeInitAgent.instances) == 1
+        agent = _FakeInitAgent.instances[0]
+        assert agent.init_calls == [("myproj", str(tmp_path / "intent"), None)]
+        assert agent.profile.sandbox_write_paths == [str(tmp_path / "intent")]
+        assert (tmp_path / "intent" / "extra" / "extra.ic").is_file()
+        assert (tmp_path / ".intentc" / "config.yaml").is_file()
+        assert "Next steps" in result.output
+
+    def test_agent_error_exits_1(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        class _RaisingAgent:
+            def __init__(self, profile, log=None) -> None:
+                pass
+
+            def init(self, project_name, intent_dir, prompt=None) -> None:
+                raise AgentError("boom")
+
+        monkeypatch.setattr(main, "create_from_profile", lambda profile, log=None: _RaisingAgent(profile, log))
+
+        result = runner.invoke(main.app, ["init", "myproj"])
+
+        assert result.exit_code == 1
+        assert "boom" in result.output
+
+    def test_invalid_agent_output_exits_1(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        class _BrokenAgent:
+            def __init__(self, profile, log=None) -> None:
+                pass
+
+            def init(self, project_name, intent_dir, prompt=None) -> None:
+                (Path(intent_dir) / "project.ic").write_text("not valid frontmatter", encoding="utf-8")
+
+        monkeypatch.setattr(main, "create_from_profile", lambda profile, log=None: _BrokenAgent(profile, log))
+
+        result = runner.invoke(main.app, ["init", "myproj"])
+
+        assert result.exit_code == 1
+
+
+class TestInitOneShot:
+    def test_prompt_flag_runs_single_shot_and_skips_next_steps(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _FakeInitAgent.instances = []
+        monkeypatch.setattr(main, "create_from_profile", lambda profile, log=None: _FakeInitAgent(profile, log))
+
+        result = runner.invoke(main.app, ["init", "myproj", "-P", "a calculator app"])
+
+        assert result.exit_code == 0, result.output
+        agent = _FakeInitAgent.instances[0]
+        assert agent.init_calls == [("myproj", str(tmp_path / "intent"), "a calculator app")]
+        assert "Next steps" not in result.output
 
 
 # ---------------------------------------------------------------------------

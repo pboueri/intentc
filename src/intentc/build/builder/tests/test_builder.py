@@ -171,6 +171,9 @@ class ScriptedAgent(Agent):
     def plan(self, ctx: BuildContext) -> None:
         return None
 
+    def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
+        return None
+
     def get_name(self) -> str:
         return "scripted"
 

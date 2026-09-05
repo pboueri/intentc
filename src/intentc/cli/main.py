@@ -101,10 +101,25 @@ def _resolve_implementation_or_exit(project: Project, name: Optional[str]):
 # ---------------------------------------------------------------------------
 
 
+def _collect_intent_files(intent_dir: Path) -> list[Path]:
+    return sorted(p for p in intent_dir.rglob("*") if p.is_file())
+
+
 @app.command()
 def init(
     name: Optional[str] = typer.Argument(
         None, help="Project name (defaults to the current directory name)."
+    ),
+    no_interactive: bool = typer.Option(
+        False,
+        "--no-interactive",
+        help="Skip the agent dialog and generate a minimal skeleton.",
+    ),
+    prompt: Optional[str] = typer.Option(
+        None,
+        "-P",
+        "--prompt",
+        help="Project description for one-shot (non-interactive) init.",
     ),
 ) -> None:
     """Create a new intentc project in the current directory."""
@@ -115,22 +130,59 @@ def init(
         out.print_error(f"{project_ic} already exists; refusing to overwrite an existing project.")
         raise typer.Exit(code=2)
 
-    project = blank_project(name or cwd.name)
+    if no_interactive and prompt:
+        out.print_error("--no-interactive and --prompt/-P are mutually exclusive.")
+        raise typer.Exit(code=2)
+
+    project_name = name or cwd.name
+    project = blank_project(project_name)
     write_project(project, intent_dir)
+
+    if no_interactive:
+        config_path = save_config(Config(), cwd)
+        created = _collect_intent_files(intent_dir)
+        created.append(config_path)
+        out.render_init_summary(created)
+        return
+
+    console = Console()
+    agent_profile = Config().default_profile
+    agent_profile = agent_profile.model_copy(
+        update={
+            "sandbox_write_paths": [str(intent_dir)],
+            "sandbox_read_paths": [str(intent_dir)],
+        }
+    )
+    agent = create_from_profile(agent_profile, log=out.timestamped_log(console))
+
+    try:
+        agent.init(project_name, str(intent_dir), prompt=prompt)
+    except AgentError as exc:
+        out.print_error(f"Agent error: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        built_project = load_project(intent_dir)
+    except ParseErrors as exc:
+        console_err = Console(stderr=True, soft_wrap=True)
+        console_err.print(f"{len(exc.errors)} problem(s) in intent/:")
+        for error in exc.errors:
+            console_err.print(str(error))
+        raise typer.Exit(code=1) from exc
+
+    issues = check_project(built_project)
+    out.render_check_results(issues, total_features=len(built_project.features))
+    errors = [issue for issue in issues if issue.level == "error"]
+    if errors:
+        raise typer.Exit(code=1)
+
     config_path = save_config(Config(), cwd)
-
-    created: list[Path] = [intent_dir / "project.ic"]
-    for implementation in project.implementations.values():
-        created.append(intent_dir / "implementations" / f"{implementation.name}.ic")
-    for feature_path, node in project.features.items():
-        for intent in node.intents:
-            created.append(intent_dir / feature_path / f"{intent.name}.ic")
-        for index, _vf in enumerate(node.validations):
-            filename = "validation.icv" if index == 0 else f"validation_{index}.icv"
-            created.append(intent_dir / feature_path / filename)
+    created = _collect_intent_files(intent_dir)
     created.append(config_path)
+    out.render_init_summary(created, console=console)
 
-    out.render_init_summary(created)
+    if prompt is None:
+        console.print("Next steps: intentc check, then intentc build")
 
 
 # ---------------------------------------------------------------------------

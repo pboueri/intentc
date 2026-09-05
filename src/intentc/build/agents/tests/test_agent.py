@@ -25,6 +25,7 @@ from intentc.build.agents import (
     create_from_profile,
     load_default_prompts,
     render_differencing_prompt,
+    render_init_prompt,
     render_prompt,
 )
 from intentc.core import (
@@ -180,6 +181,19 @@ def test_render_prompt_never_raises_on_undocumented_placeholder():
     assert rendered == " and "
 
 
+def test_render_init_prompt_fills_variables():
+    template = "{project_name}|{specifications}|{user_prompt}"
+    rendered = render_init_prompt(template, "calculator", user_prompt="a calculator app")
+    assert rendered.startswith("calculator|")
+    assert "depends_on" in rendered
+    assert rendered.endswith("|a calculator app")
+
+
+def test_render_init_prompt_user_prompt_defaults_empty():
+    rendered = render_init_prompt("[{user_prompt}]", "myproj")
+    assert rendered == "[]"
+
+
 def test_render_differencing_prompt():
     ctx = make_differencing_context()
     rendered = render_differencing_prompt("{output_dir_a}|{output_dir_b}|{project}|{response_file}", ctx)
@@ -205,6 +219,13 @@ def test_load_default_prompts_reads_bundled_files():
 def test_load_default_prompts_missing_difference_prompt_is_empty():
     templates = load_default_prompts()
     assert templates.difference == ""
+
+
+def test_load_default_prompts_reads_bundled_init_prompt():
+    templates = load_default_prompts()
+    assert "{project_name}" in templates.init
+    assert "{specifications}" in templates.init
+    assert "{user_prompt}" in templates.init
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +324,27 @@ def test_cli_agent_plan_does_not_require_response_file(monkeypatch):
     ctx = make_build_context(seed_prompt="help me plan this")
     agent.plan(ctx)
     assert len(calls) == 1
+
+
+def test_cli_agent_init_invokes_command_with_rendered_prompt(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **k: calls.append(command) or subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
+    )
+    profile = AgentProfile(
+        name="test-cli",
+        provider="cli",
+        command="mytool",
+        prompt_templates=PromptTemplates(init="{project_name}::{user_prompt}"),
+    )
+    agent = CLIAgent(profile)
+
+    agent.init("myproj", "/tmp/intent", prompt="a calculator app")
+
+    assert len(calls) == 1
+    assert calls[0][-1] == "myproj::a calculator app"
 
 
 # ---------------------------------------------------------------------------
@@ -509,9 +551,90 @@ def test_claude_agent_plan_uses_interactive_flags(monkeypatch):
     assert "auto" in command
 
 
+def test_claude_agent_init_interactive_uses_repl(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    profile = AgentProfile(
+        name="claude-default",
+        provider="claude",
+        prompt_templates=PromptTemplates(init="init {project_name}"),
+    )
+    agent = ClaudeAgent(profile)
+
+    agent.init("myproj", "/tmp/intent")
+
+    command = captured["command"]
+    assert command[0] == "claude"
+    assert "-p" not in command
+    assert "--permission-prompts" not in command
+    assert command[-1] == "init myproj"
+    assert FakePopen.instances == []
+
+
+def test_claude_agent_init_one_shot_uses_noninteractive(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    profile = AgentProfile(
+        name="claude-default",
+        provider="claude",
+        prompt_templates=PromptTemplates(init="init {project_name}: {user_prompt}"),
+    )
+    agent = ClaudeAgent(profile)
+
+    agent.init("myproj", "/tmp/intent", prompt="a calculator app")
+
+    assert len(FakePopen.instances) == 1
+    command = FakePopen.instances[0].command
+    assert command[0] == "claude"
+    assert "-p" in command
+    prompt_index = command.index("-p") + 1
+    assert command[prompt_index] == "init myproj: a calculator app"
+
+
+def test_claude_agent_init_one_shot_uses_sandbox_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.chdir(tmp_path)
+    intent_dir = tmp_path / "intent"
+    profile = AgentProfile(
+        name="claude-sandboxed",
+        provider="claude",
+        sandbox_write_paths=[str(intent_dir)],
+        sandbox_read_paths=[str(intent_dir)],
+    )
+    agent = ClaudeAgent(profile)
+    settings_path = tmp_path / ".claude" / "settings.local.json"
+    seen_during_run = {}
+    original_wait = FakePopen.wait
+
+    def wait_and_check(self, timeout=None):
+        seen_during_run["exists"] = settings_path.exists()
+        return original_wait(self, timeout=timeout)
+
+    monkeypatch.setattr(FakePopen, "wait", wait_and_check)
+
+    agent.init("myproj", str(intent_dir), prompt="a calculator app")
+
+    assert seen_during_run["exists"] is True
+    assert not settings_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # MockAgent
 # ---------------------------------------------------------------------------
+
+
+def test_mock_agent_init_records_calls():
+    agent = MockAgent()
+    agent.init("myproj", "/tmp/intent", prompt="a calculator app")
+    agent.init("other", "/tmp/intent2")
+    assert agent.init_calls == [
+        ("myproj", "/tmp/intent", "a calculator app"),
+        ("other", "/tmp/intent2", None),
+    ]
 
 
 def test_mock_agent_records_calls_and_returns_configured_responses():
