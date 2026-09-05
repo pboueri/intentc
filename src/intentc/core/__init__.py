@@ -19,6 +19,15 @@ from intentc.core.parser import (
     write_intent_file,
     write_validation_file,
 )
+from intentc.core.project import (
+    FeatureNode,
+    Project,
+    ProjectIssue,
+    blank_project,
+    check_project,
+    load_project,
+    write_project,
+)
 
 __all__ = [
     "IntentFile",
@@ -36,4 +45,11 @@ __all__ = [
     "write_intent_file",
     "write_validation_file",
     "content_hash",
+    "FeatureNode",
+    "Project",
+    "ProjectIssue",
+    "load_project",
+    "write_project",
+    "blank_project",
+    "check_project",
 ]
