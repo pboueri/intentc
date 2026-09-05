@@ -22,6 +22,15 @@ from intentc.build.state import (
     VersionControl,
 )
 from intentc.build.storage import SQLiteBackend, StorageBackend
+from intentc.build.validations import (
+    AgentValidationRunner,
+    CommandValidationRunner,
+    FileExistsRunner,
+    ValidationContext,
+    ValidationRunner,
+    ValidationSuite,
+    ValidationSuiteResult,
+)
 
 __all__ = [
     "Agent",
@@ -43,4 +52,11 @@ __all__ = [
     "VersionControl",
     "StorageBackend",
     "SQLiteBackend",
+    "AgentValidationRunner",
+    "CommandValidationRunner",
+    "FileExistsRunner",
+    "ValidationContext",
+    "ValidationRunner",
+    "ValidationSuite",
+    "ValidationSuiteResult",
 ]
