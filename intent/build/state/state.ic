@@ -70,7 +70,7 @@ An abstract interface for checkpointing file changes. Implementations produce a 
 
 ### GitVersionControl
 
-Concrete implementation backed by git (`subprocess`, command passed as an argument list). The checkpoint ID is the git SHA. `checkpoint` stages everything (`git add -A`) and commits with `--allow-empty` so a target that legitimately produced no file change still gets a checkpoint. `diff` of `<sha>~1..<sha>` on a root commit returns the diff against the empty tree instead of raising. `restore(commit_id)` runs `git checkout <commit_id> -- .`. Git errors are raised as `RuntimeError` with the git stderr included, never as raw `CalledProcessError` tracebacks.
+Concrete implementation backed by git (`subprocess`, command passed as an argument list). The checkpoint ID is the git SHA. `checkpoint` stages everything (`git add -A`) and commits with `--allow-empty` so a target that legitimately produced no file change still gets a checkpoint. `diff` of `<sha>~1..<sha>` on a root commit returns the diff against the empty tree instead of raising. `GitVersionControl(repo_dir, output_dir=None)` — when `output_dir` is given, `restore` and `has_changes` are scoped to that directory so a clean never touches the user's intent files or other uncommitted work. `restore(commit_id)` runs `git restore --source=<commit_id> --staged --worktree -- <output_dir or .>` followed by `git clean -fdq -- <pathspec>` so files that did not exist at that commit are removed too; `<sha>~1` of a root commit resolves to the empty tree. Git errors are raised as `RuntimeError` with the git stderr included, never as raw `CalledProcessError` tracebacks.
 
 ## Testing
 

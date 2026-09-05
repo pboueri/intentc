@@ -1,5 +1,5 @@
 ---
-name: core
+name: specifications
 version: 1
 tags: [foundation]
 ---
@@ -18,7 +18,7 @@ The metadata fields contain the following:
 - `tags` (optional list of strings) - Categorization tags.
 - `authors` (optional list of strings) -- who the authors of the intent are
 
-The text after the front matter is stored in a field named **`body`** (NOT `content`). It can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like ../../design_system/* that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build.
+The text after the front matter is stored in a field named **`body`** (NOT `content`). It can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like `../../design_system/*` that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build.
 
 ### In-memory representation
 

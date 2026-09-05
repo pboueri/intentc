@@ -1,5 +1,5 @@
 ---
-name: dag
+name: project
 version: 1
 depends_on: [core/specifications]
 ---
@@ -99,7 +99,7 @@ function write_project(project: Project, dest_dir: Path) -> Path:
     # Write a project to a new directory. Returns the dest_dir path.
 
 function blank_project(name: string) -> Project:
-    # Create a minimal starter project with project.ic, implementations/default.ic and one
+    # Create a minimal starter project with project.ic, a default implementation and one
     # starter feature (`starter/starter.ic` + `starter/validation.icv` with one file_exists
     # validation as a worked example). The bodies are short guides telling the user what
     # to fill in and pointing at `intentc check` and `intentc build`.

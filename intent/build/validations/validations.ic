@@ -95,8 +95,15 @@ class ValidationSuite:
         runner_registry: map of string to ValidationRunner or null = null,
         val_response_dir: Path or null = null,
         storage_backend: StorageBackend or null = null,
+        log: callable or null = null,
+        implementation: Implementation or null = null,   # override the project's default implementation
+        build_result_id: integer or null = null,         # link persisted results to a build
+        generation_id: string or null = null,            # reuse the build's generation instead of creating a val-* one
+        create_agent: callable(AgentProfile) -> Agent or null = null,  # agent factory, default create_from_profile
     )
 ```
+
+`create_agent` exists so the builder can thread its own factory (and tests their mocks) into validation runs; the suite creates its agent lazily, only when an `agent_validation` entry actually runs.
 
 - `project` — the loaded Project
 - `agent_profile` — default validation profile

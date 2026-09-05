@@ -251,7 +251,7 @@ abstract class StorageBackend:
 - `get_build_result(target: string) -> BuildResult or null` — Get the latest build result for a target (via `target_state`), with steps, source_hash, attempts and file lists populated.
 - `get_build_history(target: string, limit: integer = 50) -> list of BuildResult` — All build results for a target, newest first.
 - `get_build_diff(target: string) -> string or null` — The stored `git_diff` for the latest build result.
-- `get_validation_results(target: string, build_result_id: integer or null = null) -> list of map` — Validation rows for a target (latest build when id is null), newest first. Each map has `name`, `type`, `severity`, `status`, `reason`, `timestamp`.
+- `get_validation_results(target: string, build_result_id: integer or null = null) -> list of map` — Validation rows for a target, newest first. When `build_result_id` is null, rows for the latest build are returned: those linked by `build_result_id` OR sharing the latest build's `generation_id` (validations run during a build are recorded before the build result row exists, so they are linked by generation). Each map has `name`, `type`, `severity`, `status`, `reason`, `timestamp`.
 
 ### Build Step Methods
 - `save_build_step(build_result_id: integer, step: BuildStep, log: string, step_order: integer) -> void` — Insert a build step with its log output.
@@ -278,6 +278,7 @@ Concrete implementation of `StorageBackend` using the implementation's SQLite li
 - WAL mode enabled for concurrent read access: `PRAGMA journal_mode=WAL`.
 - Foreign keys enforced: `PRAGMA foreign_keys=ON`.
 - One connection per `SQLiteBackend` instance, opened on construction, closed explicitly or via context manager.
+- The connection is shared across threads (the validation suite runs agent validations in a thread pool), so every public method runs under a re-entrant lock. Without it SQLite raises `cannot start a transaction within a transaction` under concurrent writes.
 
 ### Migration
 - On construction, if `state.json` exists alongside the database, migrate existing state into the database and rename `state.json` to `state.json.migrated`.

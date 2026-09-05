@@ -126,7 +126,7 @@ The builder maintains a `previous_errors` list across retry attempts for each ta
 Reverts a target's generated code and resets its state. This is not a destructive rollback — it creates a new revert commit in the linear version control history.
 
 1. Look up the target's last `BuildResult` via the state manager. If none exists, return early.
-2. If the result has a `commit_id`, call `version_control.restore(commit_id)` to revert the files. Do NOT call `checkpoint()` — the restored files are left unstaged.
+2. If the result has a `commit_id`, call `version_control.restore("{commit_id}~1")` — the tree as it was *before* the target's checkpoint — so the target's generated files are reverted in the working tree. Do NOT call `checkpoint()` — the restored files are left unstaged for the user to inspect and commit (this keeps history linear: the revert becomes a normal commit rather than a rewrite).
 3. Reset the target's state to `pending` via `state_manager.reset(target)`.
 4. Mark all descendants of the target as `outdated` via `state_manager.mark_dependents_outdated(target, project)`.
 

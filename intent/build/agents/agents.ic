@@ -1,5 +1,5 @@
 ---
-name: agent
+name: agents
 version: 1
 depends_on:
     - core/*

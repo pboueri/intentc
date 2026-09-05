@@ -45,7 +45,7 @@ Dependencies are created at the call site and passed down. No globals, no single
 
 ### Testing
 
-Tests use temporary directories and mock agents. Never touch the project's own state or git repository. Deterministic checks (file, folder, command) are preferred over LLM judges where possible. Tests run with `uv run pytest` from the project root; `pyproject.toml` sets `testpaths = ["src"]` and `pythonpath = ["src"]`, and lists `pytest` in the `dev` dependency group. Tests must not depend on the `claude` binary being installed.
+Tests use temporary directories and mock agents. Never touch the project's own state or git repository. Deterministic checks (file, folder, command) are preferred over LLM judges where possible. Tests run with `uv run pytest` from the project root; `pyproject.toml` sets `testpaths = ["src"]`, `pythonpath = ["src"]`, and overrides `norecursedirs` so that it does NOT contain `build` (pytest's default skips any directory named `build`, which would silently drop every test under `intentc/build/`), and lists `pytest` in the `dev` dependency group. Tests must not depend on the `claude` binary being installed.
 
 ### CLI Output Discipline
 
