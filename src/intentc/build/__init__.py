@@ -13,6 +13,7 @@ from intentc.build.agents import (
     ValidationResponse,
     create_from_profile,
 )
+from intentc.build.builder.builder import Builder, BuildOptions
 from intentc.build.state import (
     BuildResult,
     BuildStep,
@@ -44,6 +45,8 @@ __all__ = [
     "PromptTemplates",
     "ValidationResponse",
     "create_from_profile",
+    "Builder",
+    "BuildOptions",
     "BuildResult",
     "BuildStep",
     "GitVersionControl",
