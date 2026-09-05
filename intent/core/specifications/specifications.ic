@@ -35,11 +35,55 @@ Type IntentFile:
 
 `ProjectIntent` and `Implementation` follow the same structure with `body: string = ""` as the content field. `ProjectIntent` has no `depends_on` field.
 
+```
+Type Validation:
+    name: string
+    type: string = "agent_validation"    # plain string, see ValidationType for the built-in catalogue
+    severity: Severity = Severity.ERROR
+    args: map of string to any = {}
+
+Type ValidationFile:
+    target: string = ""
+    version: integer = 1
+    agent_profile: string or null = null
+    validations: list of Validation = []
+    source_path: path or null = null
+```
+
+### Parse-time validation of `.ic` files
+
+- A missing or empty `name` is a parse error (`field: name`).
+- `depends_on`, `tags`, and `authors`, when present, must be lists of strings; anything else is a parse error naming the field.
+- Frontmatter that is not a YAML mapping (or malformed YAML) is a parse error that includes the YAML error text.
+- A `project.ic` that declares `depends_on` is a parse error (the project intent cannot depend on features).
+
+### content_hash
+
+```
+function content_hash(paths: list of path) -> string
+    # Stable SHA-256 hex digest over the sorted list of files: for each path in sorted order,
+    # hash the path's file name followed by its bytes. Missing files contribute their name only.
+```
+
+This is used by the build system to detect when a target's source files changed since it was last built, independent of file modification times (which git checkouts disturb).
+
 ### ValidationType Enum
+
+`ValidationType` is a string-valued enum that catalogues the **built-in** validation types. It is NOT an exhaustive list — the `type` field on a `Validation` is stored as a plain string so that custom runners can be registered without changing the core models.
 
 ```
 Enum ValidationType (string-valued):
-    AGENT_VALIDATION = "agent_validation"
+    AGENT_VALIDATION = "agent_validation"      # an LLM agent judges a natural-language rubric
+    COMMAND_VALIDATION = "command_validation"  # a shell command must exit 0
+    FILE_EXISTS = "file_exists"                # a set of paths/globs must exist in the output directory
+```
+
+### Severity Enum
+
+```
+Enum Severity (string-valued):
+    ERROR = "error"      # a failure blocks the build
+    WARNING = "warning"  # a failure is advisory only
 ```
 
 ## Validation Files
@@ -47,15 +91,44 @@ Enum ValidationType (string-valued):
 Validation files are `.icv` files written in **pure YAML** (no frontmatter delimiters — unlike `.ic` files which use `---`-delimited YAML frontmatter followed by markdown). They can be anywhere in the project and validate a feature after it is built. The outcome of the validation either passes or fails. The parser reads `.icv` files using a YAML parser directly (e.g. `yaml.safe_load`), not the frontmatter splitter used for `.ic` files. An empty `.icv` file (where `yaml.safe_load` returns `None`) is valid and should be treated as having no validations — return a `ValidationFile` with an empty target and empty validations list rather than raising a parse error.
 
 ### Top Level
-- `target` (string) — feature this validates, using its path like `module/feature`
+- `target` (string) — feature this validates, using its path like `module/feature`. Project-level assertions use `target: project`.
+- `version` (integer, optional) — schema version of the file. Default 1.
 - `agent_profile` (string, optional) — agent profile to use for evaluating this file's validations
 - `validations` (list of Validation) — the validation entries
 
 ### Validation Level
-- `name` (string) — unique identifier for the validation within this file
-- `type` (string) — selects the runner that evaluates this validation. Defaults to `agent_validation`. Extensible via a runner registry.
+- `name` (string, required) — unique identifier for the validation within this file
+- `type` (string) — selects the runner that evaluates this validation. Defaults to `agent_validation`. Stored as a plain string; extensible via a runner registry.
 - `severity` (enum: `error`, `warning`) — `error` blocks the build, `warning` is advisory. Default: `error`.
-- `args` (map) — arguments passed to the runner for this type. For `agent_validation`, the key arg is `rubric` (a natural language description of what to verify).
+- `args` (map) — arguments passed to the runner for this type.
+
+Arguments by built-in type:
+
+| type | required args | optional args |
+|------|---------------|---------------|
+| `agent_validation` | `rubric` (string) — natural language description of what to verify | `context_files` (list of globs relative to the output directory) |
+| `command_validation` | `command` (string) — shell command that must exit 0 | `cwd` (string, default: the output directory; `.` means the project root), `timeout` (seconds, default 600), `expect_output` (substring that must appear in stdout+stderr) |
+| `file_exists` | `paths` (list of strings) — paths or globs relative to the output directory, every entry must match at least one file | |
+
+Both `command` and `expect_output` for `command_validation` and every entry in `paths` for `file_exists` may contain the placeholder `{output_dir}`, which is substituted with the output directory path at run time.
+
+### Parse-time validation of `.icv` files
+
+The parser rejects malformed validation files with a `ParseError` per problem (accumulated, not first-only). Each error names the file and, where applicable, the validation entry (`field` is set to `validations[<index>].<field>`):
+
+- `validations` present but not a list → error
+- an entry that is not a mapping → error
+- an entry missing `name`, or with an empty name → error
+- two entries in the same file with the same `name` → error on the second
+- an unknown `severity` value → error (the parser does NOT silently default it)
+- `type: agent_validation` (or omitted type) without `args.rubric` → error
+- `type: command_validation` without `args.command` → error
+- `type: file_exists` without a non-empty `args.paths` list → error
+- `args` present but not a mapping → error
+
+An unknown `type` string is NOT a parse error — it is accepted verbatim so that custom runners work. Whether a runner exists for it is decided by the validation suite at run time.
+
+Empty `.icv` files remain valid (see above).
 
 The full validation lifecycle and extensibility model are defined in [build/validations](../../build/validations/validations.ic).
 
@@ -75,7 +148,7 @@ The selected implementation is injected in every build and validation run. When 
 
 This feature produces the following modules:
 - Package init module — should be empty or minimal.
-- Core package init module — should re-export the public API from the data models and parser modules. The public API includes: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`, `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`.
+- Core package init module — should re-export the public API from the data models and parser modules. The public API includes: `IntentFile`, `ProjectIntent`, `Implementation`, `ValidationFile`, `Validation`, `ValidationType`, `Severity`, `extract_file_references`, `ParseError`, `ParseErrors`, `parse_intent_file`, `parse_validation_file`, `write_intent_file`, `write_validation_file`, `content_hash`.
 - Core data models module — defines all types described in this spec.
 - File I/O module — parse and write `.ic`/`.icv` files.
 - Tests module — tests for parsing, writing, and round-tripping.

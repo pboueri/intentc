@@ -12,10 +12,43 @@ Persistent storage for all build state, results, logs, and agent responses. The 
 ## Module Layout
 
 This feature generates:
-- A package init module — re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`
-- A backend module — `StorageBackend` abstract class and `GenerationStatus` enum
+- A package init module — re-exports: `StorageBackend`, `SQLiteBackend`, `GenerationStatus`, `TargetStatus`, `BuildStep`, `BuildResult`
+- A backend module — `StorageBackend` abstract class, the `GenerationStatus` and `TargetStatus` enums, and the `BuildStep` / `BuildResult` record types
 - A SQLite implementation module — SQLite implementation
 - A test module — Tests
+
+### Record types live here
+
+`TargetStatus`, `BuildStep` and `BuildResult` are *defined* in the storage backend module because storage is upstream of state in the DAG and the backend interface must reference them. The state module (see [build/state](../state/state.ic)) re-exports them unchanged so that consumers can import them from either place. Their shapes are:
+
+```
+Enum TargetStatus (string-valued):
+    PENDING = "pending"
+    BUILT = "built"
+    FAILED = "failed"
+    OUTDATED = "outdated"
+
+Type BuildStep:
+    phase: string                 # "resolve_deps", "build", "validate", "checkpoint"
+    status: string                # "success" or "failure"
+    duration_secs: float = 0.0
+    summary: string = ""
+
+Type BuildResult:
+    target: string
+    generation_id: string = ""
+    status: TargetStatus = TargetStatus.BUILT   # accepts the plain string value too
+    steps: list of BuildStep = []
+    commit_id: string = ""
+    total_duration_secs: float = 0.0
+    timestamp: string = ""        # ISO 8601, local time, no timezone
+    source_hash: string = ""      # content hash of the target's .ic/.icv files at build time
+    files_created: list of string = []
+    files_modified: list of string = []
+    attempts: integer = 1         # how many build attempts it took
+```
+
+Both record types are pydantic models so they serialize with `model_dump()`.
 
 ## Design Principles
 
@@ -93,7 +126,7 @@ generation_logs (
 
 ### build_results
 
-One row per target per build. Links to generation and intent file version. `files_created` and `files_modified` are JSON arrays.
+One row per target per build. Links to generation and intent file version. `files_created` and `files_modified` are JSON arrays. `source_hash` is the combined content hash of the target's `.ic`/`.icv` files at build time (see `content_hash` in core/specifications) and is what staleness detection compares against.
 
 ```sql
 build_results (
@@ -107,9 +140,15 @@ build_results (
     timestamp          TEXT NOT NULL,
     git_diff           TEXT,
     files_created      TEXT,
-    files_modified     TEXT
+    files_modified     TEXT,
+    source_hash        TEXT NOT NULL DEFAULT '',
+    attempts           INTEGER NOT NULL DEFAULT 1
 )
 ```
+
+#### Schema upgrades
+
+Because `CREATE TABLE IF NOT EXISTS` does not add columns to existing tables, the backend runs a small upgrade step on connection: for each column in the list of *added* columns (`build_results.source_hash`, `build_results.attempts`), check `PRAGMA table_info` and `ALTER TABLE ... ADD COLUMN` when missing. Databases created by earlier versions keep working.
 
 ### build_steps
 
@@ -208,9 +247,11 @@ abstract class StorageBackend:
 - `record_validation_version(target: string, source_path: string, content_hash: string) -> integer` — Same for validation files.
 
 ### Build Result Methods
-- `save_build_result(target: string, result: BuildResult, intent_version_id: integer or null, git_diff: string or null, files_created: list of string or null, files_modified: list of string or null) -> integer` — Insert build result and its steps. Returns the build_result ID.
-- `get_build_result(target: string) -> BuildResult or null` — Get the latest build result for a target (via `target_state`).
+- `save_build_result(target: string, result: BuildResult, intent_version_id: integer or null = null, git_diff: string or null = null, files_created: list of string or null = null, files_modified: list of string or null = null) -> integer` — Insert build result and its steps, persist `source_hash` and `attempts`, and point `target_state` at the new row with the result's status. When `files_created`/`files_modified` are null, the lists on the `BuildResult` are used. Returns the build_result ID.
+- `get_build_result(target: string) -> BuildResult or null` — Get the latest build result for a target (via `target_state`), with steps, source_hash, attempts and file lists populated.
 - `get_build_history(target: string, limit: integer = 50) -> list of BuildResult` — All build results for a target, newest first.
+- `get_build_diff(target: string) -> string or null` — The stored `git_diff` for the latest build result.
+- `get_validation_results(target: string, build_result_id: integer or null = null) -> list of map` — Validation rows for a target (latest build when id is null), newest first. Each map has `name`, `type`, `severity`, `status`, `reason`, `timestamp`.
 
 ### Build Step Methods
 - `save_build_step(build_result_id: integer, step: BuildStep, log: string, step_order: integer) -> void` — Insert a build step with its log output.

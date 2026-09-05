@@ -20,7 +20,8 @@ data_modeling: pydantic
 yaml_library: PyYAML
 serialization: JSON (stdlib), YAML (PyYAML)
 storage: sqlite3 (stdlib) — pluggable via StorageBackend ABC; SQLite is the first backend, more can follow
-version_control: git (required, shells out via subprocess)
+version_control: git (required, shells out via subprocess with argument lists)
+hashing: hashlib sha256 (stdlib) for content hashes
 ```
 
 ## Conventions
@@ -44,7 +45,11 @@ Dependencies are created at the call site and passed down. No globals, no single
 
 ### Testing
 
-Tests use temporary directories and mock agents. Never touch the project's own state or git repository. Deterministic checks (file, folder, command) are preferred over LLM judges where possible.
+Tests use temporary directories and mock agents. Never touch the project's own state or git repository. Deterministic checks (file, folder, command) are preferred over LLM judges where possible. Tests run with `uv run pytest` from the project root; `pyproject.toml` sets `testpaths = ["src"]` and `pythonpath = ["src"]`, and lists `pytest` in the `dev` dependency group. Tests must not depend on the `claude` binary being installed.
+
+### CLI Output Discipline
+
+The CLI is the product surface, so its output is designed, not incidental: one timestamped log line per meaningful event during long operations, tables for results, a one-line summary at the end of every command, and a concrete "what to do next" hint whenever the user has an obvious next step or something failed. Errors name the file and the fix. No tracebacks for expected failures.
 
 ## Interfaces are thin wrappers
 

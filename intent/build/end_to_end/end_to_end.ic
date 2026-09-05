@@ -32,7 +32,7 @@ Each test operates in a fresh temporary directory (provided by the implementatio
      - `intent/store/store.ic` — `depends_on: [models]`
      - `intent/api/api.ic` — `depends_on: [store]`
    - At least one feature should have a `.icv` validation file with an `agent_validation` entry
-3. **Create `.intentc/config.yaml`** with a default profile pointing to `cli` provider
+3. **Create `.intentc/config.yaml`** with a default profile pointing to `cli` provider (the mock agent is injected, so this is only exercised for loading)
 4. **Load the project** via `load_project({tmp_dir} / "intent")` to get a real `Project` object with a real DAG
 5. **Wire up the Builder** with:
    - A real `StateManager` pointed at the temporary directory
@@ -97,6 +97,21 @@ Use a `MockAgent` whose `build` raises `AgentError` when building `store`. Asser
 - `api` is never attempted (not in results)
 - Error is returned (second tuple element is not None)
 - `StateManager.get_status("store")` returns `FAILED`
+
+### test_edited_intent_triggers_rebuild
+
+After a successful full build, append text to `intent/store/store.ic` and reload the project. Run `builder.build()` again with the same options (no force). Assert:
+
+- `store` and `api` are rebuilt (2 results), `models` is not
+- Before the build, `StateManager.get_status("store")` was `BUILT`; after `refresh_outdated()` it is `OUTDATED`
+
+### test_deterministic_validation_failure_retries_then_fails
+
+Give `store` a `.icv` with a `command_validation` whose command is `exit 1` and set `retries=2` on the profile. Assert:
+
+- `store` ends `FAILED` with `attempts == 2`
+- The mock agent's second build call for `store` has a non-empty `previous_errors` containing the exit code
+- `api` is never attempted
 
 ## Important Implementation Notes
 

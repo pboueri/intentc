@@ -1,6 +1,20 @@
 target: differencing
 version: 1
 validations:
+  - name: differencing-tests-pass-deterministic
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/differencing -q"
+
+  - name: difference-prompt-bundled
+    type: file_exists
+    severity: error
+    args:
+      paths:
+        - "intentc/differencing/prompts/difference.prompt"
+
   - name: agent-difference-method
     type: agent_validation
     severity: error
@@ -54,7 +68,7 @@ validations:
         2. The template mechanism supports the variables {project}, {implementation}, {output_dir_a}, {output_dir_b}, and {response_file}
         3. The rendering function substitutes all template variables from DifferencingContext
         4. The rendered prompt contains the actual values passed in, not raw template variable placeholders
-        5. The prompt loading mechanism resolves prompt file paths relative to the current working directory's intent/ folder -- NOT relative to the module's source file location
+        5. The prompt is loaded from the installed package via importlib.resources (intentc/differencing/prompts/difference.prompt), NOT from the current working directory
 
   - name: differencing-tests-pass
     type: agent_validation

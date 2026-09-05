@@ -75,8 +75,9 @@ Timestamps use the current timestamp (no timezone). Durations are computed as th
 
 Returns a tuple of (results, error). Error is non-null if any target failed. The error is NOT raised — it is returned as the second element of the tuple. The caller decides how to handle it.
 
-1. **Determine build set** — If `opts.target` is specified, collect it and its ancestors (via `project.ancestors()`), then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending`, `outdated`, or `failed` — or all if `force`. Always in topological order. If the build set is empty, return `([], null)` early.
-2. **Dry run check** — If `dryRun`, return the build set with their current statuses. No side effects.
+0. **Refresh staleness** — Call `refresh_outdated()` (see Invalidation) so that targets whose intent files changed since they were built, and everything downstream of them, are marked `outdated` before the build set is computed. Editing an intent file therefore automatically schedules a rebuild; the user never has to remember `--force`. Each newly-outdated target is logged (`"  Marked 'x' outdated: intent changed"` / `"... dependency 'y' changed"`).
+1. **Determine build set** — If `opts.target` is specified, it must be a known feature: an unknown target raises `KeyError` (from `project.ancestors()`) which the caller turns into a usage error. Collect the target and its ancestors, then filter to those with status `pending`, `outdated`, or `failed` (or all if `force`). If no target specified, collect all targets with status `pending`, `outdated`, or `failed` — or all if `force`. Always in topological order. If the build set is empty, log `"Nothing to build — all targets are up to date."` and return `([], null)` early.
+2. **Dry run check** — If `dry_run`, return one `BuildResult` per target in the build set carrying the target's *current* status (so the caller can render the plan) and no steps. No side effects: no generation record, no agent, no state change.
 3. **Resolve implementation** — If `opts.implementation` is set, resolve it via `project.resolve_implementation(opts.implementation)` and use the result for all targets in this build. Otherwise, use the project's default implementation (via `project.resolve_implementation(null)`). The resolved implementation is passed to every `BuildContext` during this build.
 4. **Generate generation ID** — A single UUID for this entire build invocation. Create a generation record via `storage.create_generation(generation_id, output_dir, profile_name, opts_dict)` with status `running`.
 5. **Resolve output directory** — Use `opts.outputDir`. Create if it doesn't exist.
@@ -85,6 +86,7 @@ Returns a tuple of (results, error). Error is non-null if any target failed. The
 For each target in the build set:
 
    - **Skip check** — If the target is already `built` and `force` is false, skip it.
+   - **Record source hash** — Compute `content_hash(project.source_files(target))` and record each intent/validation file version via `storage.record_intent_version` / `storage.record_validation_version`. The combined hash is stored on the `BuildResult.source_hash`.
    - **Resolve agent profile** — Priority: `opts.profile_override` > builder's `agent_profile`.
    - **Apply sandbox paths** — The builder scopes agent filesystem access based on the project DAG. **All sandbox paths must be absolute** (resolved via `Path.resolve()`) because the agent's cwd is the output directory — relative paths would resolve incorrectly from the agent's perspective. Write access is granted to the output directory, the build response directory, and the validation response directory. Read access is granted to the output directory plus the intent files for the target and all its ancestors, the project intent file, and the implementations directory. A legacy `implementation.ic` file is also included in read access if it exists. The method returns a copy of the profile with updated sandbox paths.
 
@@ -96,9 +98,10 @@ For each target in the build set:
      3. `validate` — If the target has validations defined, construct a `ValidationSuite` with the project, the resolved agent profile, the output dir, the storage backend, and the `val_response_dir` from the state manager. The `val_response_dir` MUST be passed to the ValidationSuite so that validation response files are staged in the correct directory. Call `suite.validate_feature(target)`. If the suite result has `passed == false`, this step fails. If no validations are defined, skip this step.
      4. `checkpoint` — Call `version_control.checkpoint()` with a message identifying the target and generation ID. Record the returned commit ID on the `BuildResult`. Capture the git diff via `version_control.diff("{commit_id}~1", commit_id)` and store it on the build result.
 
-   - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), and timestamp. If all steps succeeded, status is `built`. If any step failed, status is `failed`.
-   - **Save** — `state_manager.save_build_result(target, result)`. The storage backend records the build result, all build steps (with their `log` output), the git diff, and the file manifest (files_created, files_modified from the `BuildResponse`). The build agent response file is read, stored via `storage.save_agent_response(...)`, then deleted from disk.
+   - **Collect results** — Gather all steps into a `BuildResult` with the target, generation ID, total duration (sum of step durations), timestamp, `source_hash`, `attempts` (number of build attempts made), and `files_created`/`files_modified` from the final `BuildResponse`. If all steps succeeded, status is `built`. If any step failed, status is `failed`. When a target fails, the steps recorded are those of the **last** attempt.
+   - **Save** — `state_manager.save_build_result(target, result, git_diff)`. The storage backend records the build result, all build steps, the git diff, and the file manifest. The build agent response file is read, stored via `storage.save_agent_response(build_result_id, ...)` linked to the saved build result, then deleted from disk.
    - **On failure** — If the target's status is `failed`, stop the DAG walk immediately. Log the failure via `storage.log_generation_event(...)`. Return `(results, RuntimeError("Build failed for target '...': {last_step_summary}"))`. Do **not** roll back files — the failed output remains on disk. The error is a `RuntimeError`, not `AgentError`.
+   - **Log completion** — `"  ✓ '<target>' built in <total>s (<n> attempt(s))"`.
 
 6. **Complete generation** — After the build loop (whether all targets succeeded or one failed), call `storage.complete_generation(generation_id, status)` where status is `completed` or `failed`.
 
@@ -111,6 +114,10 @@ The checkpoint happens only after both build and validation succeed. This means 
 Retries apply to both `AgentError` exceptions (crashes, timeouts, malformed response files) and validation failures. `retries=3` means 3 total attempts, not 3 retries after the first attempt. If a target builds successfully but fails validation, the builder retries from the `build` step (not just validation), giving the agent a fresh attempt to produce code that passes. Only after all retry attempts are exhausted is the target marked `failed`.
 
 The builder maintains a `previous_errors` list across retry attempts for each target. On each build or validation failure, the error summary is appended to this list. The list is passed into `BuildContext.previous_errors` on the next attempt, and the prompt template renders it as a `{previous_errors}` section so the agent can see what went wrong and adjust. This creates a feedback loop: the agent sees the specific failures from prior attempts and can fix them rather than repeating the same mistakes.
+
+### Next steps
+
+`next_targets() -> list of string` returns `project.buildable_after(built)` where `built` is the set of targets whose status is `built` — i.e. the features the user can build next. The CLI prints this after every build.
 
 ## Clean
 
@@ -141,8 +148,12 @@ Runs validations independently of the build pipeline. Useful for checking a targ
 
 ## Invalidation
 
-When a user modifies a `.ic` or `.icv` file for a target that was previously built, that target and its descendants are stale. The builder detects this by comparing the target's `BuildResult.timestamp` against the modification time of its intent and validation files. If any source file is newer than the last build, the target is `outdated`.
+When a user modifies a `.ic` or `.icv` file for a target that was previously built, that target and its descendants are stale. Staleness is detected by **content hash**, not modification time: the builder compares `content_hash(project.source_files(target))` against the `source_hash` recorded on the target's last `BuildResult`. Content hashing survives git checkouts, clones and `touch`; mtime does not. If the recorded `source_hash` is empty (a build from before hashes were recorded), the builder falls back to comparing the build timestamp with the files' modification times.
 
 `detect_outdated() -> list of string`:
 
-Walks all targets tracked by the state manager. For each target with status `built`, checks if any of its `.ic` or `.icv` files have been modified since the build timestamp. Returns the list of targets that are outdated. Does **not** automatically update state — the caller decides whether to mark them (via `stateManager.SetStatus`) or rebuild.
+Walks all targets tracked by the state manager. For each target with status `built`, checks whether its source hash changed (or, in the fallback, whether any source file is newer than the build timestamp). Returns the list of directly-stale targets in topological order. Does **not** update state.
+
+`refresh_outdated() -> list of string`:
+
+Calls `detect_outdated()`, then for every stale target sets its status to `outdated` and calls `state_manager.mark_dependents_outdated(target, project)` so its descendants are `outdated` too (descendants with status `pending` or `failed` are left alone — they will be rebuilt anyway). Returns the full list of targets whose status changed. Called at the start of every `build()` and by `intentc status`.

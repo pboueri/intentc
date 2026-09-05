@@ -19,7 +19,21 @@ Built with a CLI framework and terminal formatting library as specified in the i
 
 ### Error Handling
 
-All commands that load a project use a `_load_project_or_exit(intent_dir) -> Project` helper function. This helper wraps `load_project()` in a try/catch for `ParseErrors` and prints a friendly error message to stderr (via `print_error()`) before exiting with code 2. Never show raw tracebacks to users — always catch known exceptions and produce actionable error messages with file paths and descriptions.
+All commands that load a project use a `_load_project_or_exit(intent_dir) -> Project` helper function. This helper:
+
+1. If `intent_dir` does not exist, prints `"No intent/ directory found in <cwd>. Run 'intentc init' to start a project."` and exits with code 2.
+2. Wraps `load_project()` in a try/catch for `ParseErrors` and prints each `ParseError` (one per line, via `str(err)`) to stderr under a heading `"<n> problem(s) in intent/:"` before exiting with code 2.
+
+Never show raw tracebacks to users — always catch known exceptions and produce actionable error messages with file paths and descriptions. Specifically:
+
+- A `KeyError` from an unknown feature target (build/validate/clean/diff) is printed as `"Unknown feature '<target>'. Available: a, b, c"` and exits with code 2. Use `_require_target(project, target)` before wiring the builder so the error appears before any agent or state work.
+- A `KeyError`/`ValueError` from `resolve_implementation()` is printed with the available implementation names and exits with code 2.
+- `AgentError` (e.g. the `claude` binary is missing) is printed as `"Agent error: <message>"` and exits with code 1.
+- `RuntimeError` from git (no repository, nothing committed) is printed with a hint (`"intentc build checkpoints into git — run 'git init' and commit once first"`) and exits with code 2.
+
+### Log output
+
+Every command creates ONE timestamped log callback (`HH:MM:SS` in `[dim]`) and threads it through the builder, suite, and agents. Build logs are the primary "what is happening" channel during long agent runs, so they should read as a narrative: build plan, per-target header with index (`[2/5] build/state`), step lines indented by two spaces, agent lines indented by four.
 
 ## Module Layout
 
@@ -45,9 +59,9 @@ default_profile:
 default_output_dir: src
 ```
 
-If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually.
+If the config file is missing, the CLI uses hardcoded sensible defaults. The config file is created by `intentc init` and can be edited manually. Any `AgentProfile` field (`model_id`, `effort`, `command`, `cli_args`, ...) may be set under `default_profile`.
 
-`load_config(project_root) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config ignores extra/unknown fields.
+`load_config(project_root) -> Config` reads the config. `Config` holds `default_profile` (AgentProfile) and `default_output_dir` (string, default "src"). Only these two fields. Config ignores extra/unknown fields. If the file exists but is malformed (invalid YAML, or `default_profile` is not a mapping / fails validation), `load_config` raises `ConfigError` (a `ValueError` subclass) whose message names the file and the problem; commands print it and exit with code 2. Silent fallback to defaults on a broken config is NOT acceptable — it would build with the wrong agent without telling the user.
 
 `save_config(config, project_root) -> path` writes the config. Parameter order: config FIRST, project_root SECOND.
 
@@ -68,19 +82,39 @@ Create a new intentc project in the current directory.
 **Arguments:**
 - `name` (positional, default: current directory name) — project name.
 
+### `intentc check`
+
+Lint the intent project without building anything. This is the fast feedback loop for authoring intents — it runs in milliseconds and never calls an agent.
+
+1. Load the project via `_load_project_or_exit()` (parse errors, unknown dependencies and cycles are reported here with exit code 2).
+2. Call `check_project(project)` and render the issues via `render_check_results()`: errors first, then warnings, each with its file path and message; then a one-line summary `"<n> error(s), <m> warning(s) across <k> features"`.
+3. Also print the dependency DAG as an indented tree (`render_dag()`): each feature in topological order with its direct dependencies, so the author can see the structure they wrote.
+4. Exit with code 1 if there are any errors, 0 otherwise (warnings do not fail). `--strict` makes warnings fail too.
+
+`intentc build` runs the same checks first and refuses to start when there are errors (exit 2), so a broken project is never handed to an agent.
+
+**Options:**
+- `--strict` — treat warnings as errors.
+
 ### `intentc build [target]`
 
 Build features using the configured agent.
 
-1. Load the project via `_load_project_or_exit()` (a helper that catches `ParseErrors` and prints a friendly error message to stderr before exiting with code 2 — never show raw tracebacks to users).
+1. Load the project via `_load_project_or_exit()`; run `check_project()` and abort with the errors (exit 2) if any. Warnings are printed but do not block.
 2. Load config via `load_config()`.
-3. Resolve agent profile: `--profile` flag > config default.
-4. Construct `StateManager`, `GitVersionControl`, and `Builder`.
-5. Wire the `--implementation` flag into `BuildOptions(implementation=implementation)` so it is passed through to the builder. The builder resolves the implementation via `project.resolve_implementation()`.
-6. Call `builder.build(opts)`.
-7. Wire a timestamped log callback (prepending `HH:MM:SS` via `datetime.now().strftime("%H:%M:%S")` and Rich `[dim]` markup) on the builder so that each build step is logged in real time (e.g., target start/complete, dependency resolution, validation pass/fail, checkpoint commit IDs).
-8. Print results: for each target, show status, duration, and step summaries.
-9. Exit with code 1 if any target failed.
+3. Validate `target` with `_require_target()` if given.
+4. Resolve agent profile: `--profile` flag > config default.
+5. Construct `StateManager`, `GitVersionControl`, and `Builder`.
+6. Wire the `--implementation` flag into `BuildOptions(implementation=implementation)` so it is passed through to the builder. The builder resolves the implementation via `project.resolve_implementation()`.
+7. Call `builder.build(opts)`.
+8. Wire the timestamped log callback on the builder so that each build step is logged in real time (target start/complete, dependency resolution, validation pass/fail, checkpoint commit IDs).
+9. Print results:
+   - For a dry run: `render_build_plan(results)` — a numbered list `"1. models  (pending)"` under the heading `"Build plan (dry run) — <n> target(s):"`. No "Build Results" table.
+   - Otherwise `render_build_results(results)`: a table with target, status, attempts, duration, and the summary of the last step; followed by a summary line `"<built> built, <failed> failed in <total>s"`.
+   - On failure, print the failing step's phase and summary in full (validation failures include the per-validation reasons) and the hint `"Fix the intent or the output, then run: intentc build <target>"`.
+   - On success, print `"Next you can build: a, b"` from `builder.next_targets()`, or `"All targets built."` when nothing remains.
+   - When the build set was empty, print `"Nothing to build — all targets are up to date. Use --force to rebuild."`.
+10. Exit with code 1 if any target failed.
 
 **Arguments:**
 - `target` (positional, optional) — specific feature path to build. If omitted, builds all pending/outdated targets.
@@ -100,10 +134,11 @@ Run validations independently of the build pipeline.
 2. Load config and resolve agent profile.
 3. If `--implementation` is specified, resolve it via `project.resolve_implementation(name)` so the correct implementation context is used during validation.
 4. Construct the `Builder` and wire `console.print` as the `log` callback so that each validation step is logged in real time (e.g., which validation is running, pass/fail per entry).
-5. Call `builder.validate(target, output_dir)`.
-6. Print results: for each validation, show name, status, and reason.
-6. Print a summary line (e.g., "5/6 passed, 1 error, 0 warnings").
-6. Exit with code 1 if any error-severity validation failed.
+5. Validate `target` with `_require_target()` if given (the literal `project` is also accepted and runs only the project-level assertions).
+6. Call `builder.validate(target, output_dir)`.
+7. Print results: for each validation, show `✓`/`✗`/`!` (pass / error failure / warning failure), name, type, duration, and reason. Warnings render in yellow and are clearly labeled `warning`.
+8. Print a summary line using the suite result counts: `"<passed>/<total> passed, <errors> error(s), <warnings> warning(s)"`.
+9. Exit with code 1 if any error-severity validation failed. Warnings alone exit 0.
 
 **Arguments:**
 - `target` (positional, optional) — specific feature to validate. If omitted, validates the entire project.
@@ -159,30 +194,43 @@ Enter interactive planning mode with the agent for a specific feature.
 Show the build state for all tracked targets.
 
 1. Load the project via `_load_project_or_exit()`.
-2. Load config and construct a `StateManager` for the output directory.
-3. Call `list_targets()` to get targets with build state from the database.
-4. **Merge with project features:** combine the database targets with all features from `project.features`. Features that exist in the project graph but have no build state yet are shown as `PENDING`. The merged list is sorted by target name.
-5. Display a table with columns: target, status, last build timestamp, generation ID.
-6. If `--outdated` is passed, also run `builder.detect_outdated()` and annotate stale targets.
+2. Load config and construct a `StateManager` for the output directory, plus a `Builder` (no agent is created — the builder only creates agents lazily inside `build()`).
+3. Call `builder.refresh_outdated()` so stale targets are marked `outdated` (staleness is by content hash, so this is cheap and always on).
+4. Call `list_targets()` to get targets with build state from the database.
+5. **Merge with project features:** combine the database targets with all features from `project.features`. Features that exist in the project graph but have no build state yet are shown as `PENDING`. Targets tracked in the database but no longer in the project are shown with a `(removed from intent/)` note. The merged list is in topological order (so it reads top-down like the DAG), not alphabetical.
+6. Display a table with columns: target, status, depends on, validations (count of entries), last build (timestamp), attempts, generation ID (first 8 chars).
+7. Below the table print `"Next you can build: ..."` (from `builder.next_targets()`), or `"All targets built."`, or `"Nothing built yet — run: intentc build"`.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
-- `--outdated` — check for targets whose source files have changed since last build.
+- `--outdated` — show only targets whose status is `outdated`.
 
 ### `intentc diff <target>`
 
 Show the diff of what was generated for a target.
 
 1. Load config and state manager.
-2. Look up the target's last `BuildResult` to get the `commit_id`. If no build result exists, print an error and exit with code 2 (usage error, not runtime failure).
+2. Look up the target's last `BuildResult` to get the `commit_id`. If no build result exists, print `"No build recorded for '<target>' in <output_dir>. Run: intentc build <target>"` and exit with code 2 (usage error, not runtime failure).
 3. Use `GitVersionControl.diff()` to produce the diff from `{commit_id}~1` to `commit_id`.
-4. Print the diff with syntax highlighting.
+4. Print a header line (`target`, commit, timestamp, files created/modified counts) then the diff with syntax highlighting. `--stat` prints only the header and the file lists.
 
 **Arguments:**
 - `target` (positional, required) — feature path.
 
 **Options:**
 - `--output-dir / -o` — override the output directory.
+- `--stat` — file list only, no patch.
+
+### `intentc log <target>`
+
+Show the build history of a target: one row per build result (newest first) with generation ID, status, attempts, duration, timestamp and commit; and for the latest build, its steps (phase, status, duration, summary) and its recorded validation results. This is the place to look when a build failed and the terminal scrolled away. Exit 2 if the target has never been built.
+
+**Arguments:**
+- `target` (positional, required) — feature path.
+
+**Options:**
+- `--output-dir / -o` — override the output directory.
+- `--limit / -n` — number of history rows (default 10).
 
 ### `intentc compare <dir_a> <dir_b>`
 
@@ -200,7 +248,7 @@ Exit code 0 if equivalent, 1 if divergent.
 
 ## Output Formatting
 
-The output module uses a terminal formatting library for rich output. It provides rendering functions for build results, validation results, status tables, diffs, init summaries, compare results, and error messages. Errors are printed to stderr with file paths and actionable descriptions per the implementation conventions.
+The output module uses a terminal formatting library for rich output. It provides rendering functions for build results (`render_build_results`), build plans (`render_build_plan`), validation results (`render_validation_results`), check results (`render_check_results`, `render_dag`), status tables (`render_status_table`), diffs (`render_diff`), build history (`render_build_log`), init summaries (`render_init_summary`), compare results (`render_compare_results`), and error/warning messages (`print_error`, `print_warning`). Errors go to stderr with file paths and actionable descriptions per the implementation conventions. Status words are color-coded consistently everywhere: built/pass = green, failed/fail = red, outdated/warning = yellow, pending = dim.
 
 ## Exit Codes
 

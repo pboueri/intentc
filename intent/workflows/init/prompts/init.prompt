@@ -24,7 +24,7 @@ If no user prompt was provided, guide the user through an interactive conversati
 3. **Propose a project structure.** Present a clear file tree showing:
    - Module and feature directory layout under `intent/`
    - Each `.ic` file with its `name`, a brief description as the body, and `depends_on` relationships
-   - `.icv` validation stubs for each feature with at least one meaningful validation per feature
+   - `.icv` validation stubs for each feature with at least one meaningful validation per feature. Prefer deterministic types where possible: `file_exists` (paths that must exist) and `command_validation` (a command that must exit 0, e.g. running the tests); use `agent_validation` rubrics for judgement calls
    - An `implementations/default.ic` with the target language, framework, and conventions
    - A populated `intent/project.ic` with the project description from step 1
 
@@ -50,7 +50,7 @@ If no user prompt was provided, guide the user through an interactive conversati
    - `.icv` files are pure YAML (no frontmatter delimiters)
    - Feature names in frontmatter match their directory path
 
-6. **Validate the project.** After writing all files, run `intentc validate` to confirm the project parses and loads correctly. If validation fails, fix the issues and re-validate until it passes. Do not consider init complete until validation succeeds.
+6. **Check the project.** After writing all files, run `intentc check` to confirm the project parses, every dependency resolves, and the lint passes. If it reports errors, fix them and re-check until it passes. Do not consider init complete until `intentc check` succeeds.
 
 ### Guidelines
 

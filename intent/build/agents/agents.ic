@@ -28,7 +28,7 @@ All methods follow the naming conventions specified in the implementation file:
 ```
 Interface Agent:
     build(ctx: BuildContext) -> BuildResponse
-    validate(ctx: BuildContext, validation: Validation) -> ValidationResponse
+    validate(ctx: BuildContext, validation: Validation) -> ValidationResponse   # `validation` is a single Validation entry; `{validation}` in the template renders only it
     difference(ctx: DifferencingContext) -> DifferencingResponse
     plan(ctx: BuildContext) -> void
     get_name() -> string
@@ -56,7 +56,7 @@ Plan is the exception to permissionless execution. When the agent supports it, P
 
 The system needs structured data back from agents after builds and validations. Since agents are CLI tools that may not support structured output natively, the canonical mechanism is a **response file**: a known path the system provides to the agent via the BuildContext and the prompt template. The agent writes structured JSON to this path before exiting. The system reads the file after the agent process terminates.
 
-If the response file contains invalid JSON, the invocation is treated as a failure with a generic error message. 
+If the response file contains invalid JSON, the invocation is treated as a failure (`AgentError`) whose message includes the file path and the JSON error. If the file is missing after a **build**, the ClaudeAgent synthesizes a success `BuildResponse` from the files present in the output directory (Claude Code sometimes finishes without writing the file) and logs that it did so; for validation and differencing a missing file is an `AgentError`. Response models ignore unknown keys.
 
 For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
 
@@ -89,6 +89,7 @@ The validation system is defined in [build/validations](../validations/validatio
 - `name` (string) — the validation name
 - `status` (string) — `"pass"` or `"fail"`
 - `reason` (string) — explanation of the result
+- `severity` (string, default `"error"`), `type` (string, default `"agent_validation"`), `duration_secs` (float, default 0.0) — not written by the agent; stamped by the validation suite after the fact. Unknown extra keys in the agent's JSON are ignored rather than rejected.
 
 ### DifferencingResponse
 
@@ -127,6 +128,7 @@ Type BuildContext:
     response_file_path: string                     # where to write the structured response
     previous_errors: list of string                # errors from prior attempts in this retry cycle, default empty
     seed_prompt: string                            # user-provided seed prompt for planning mode, default empty
+    feature_path: string                           # the target's feature path (e.g. "build/agents"), default empty
 ```
 
 ## CLIAgent
@@ -229,12 +231,15 @@ The prompt files are stored in the package at:
 
 The canonical source for prompt templates is `intent/build/agents/prompts/` and `intent/differencing/prompts/` in the intentc repository. During a build, these are copied into the package source tree so they are included in the installed package.
 
-Templates reference variables from BuildContext or DifferencingContext:
-- `{project}` — the project-level intent
-- `{implementation}` — the implementation-level intent
-- `{feature}` — the target feature intent (build, validate, plan)
-- `{validations}` — all validation text for the target (build and plan)
-- `{validation}` — the single validation being evaluated (validate)
+Templates reference variables from BuildContext or DifferencingContext. Rendering uses `str.format` on the template, so literal braces in templates are doubled (`{{`/`}}`). Every variable below is always supplied (empty string when not applicable) so a template never fails to render because of a missing key:
+- `{project}` — the project-level intent body
+- `{implementation}` — the implementation-level intent body
+- `{feature}` — the target feature intent body (build, validate, plan)
+- `{feature_name}` — the target feature path (e.g. `build/agents`)
+- `{output_dir}` — the output directory the agent must write into (build, validate, plan)
+- `{dependencies}` — bulleted list of the target's dependency feature paths, or `(none)`
+- `{validations}` — all validation text for the target (build and plan), rendered as readable YAML-like text: one block per validation with its name, type, severity and args (rubric / command / paths), NOT raw JSON
+- `{validation}` — the single validation being evaluated (validate), rendered the same way
 - `{output_dir_a}` — reference output directory (difference)
 - `{output_dir_b}` — candidate output directory (difference)
 - `{response_file}` — path to the response file the agent must write to
