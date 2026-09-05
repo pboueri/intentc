@@ -76,6 +76,7 @@ def save_config(config: Config, project_root: Path) -> Path:
         "timeout": profile.timeout,
         "retries": profile.retries,
     }
+    profile_data["permission_mode"] = profile.permission_mode
     for key in ("command", "model_id", "effort"):
         value = getattr(profile, key)
         if value:

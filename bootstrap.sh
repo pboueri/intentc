@@ -13,6 +13,9 @@
 #   --target <t>    Build a single target instead of the full DAG
 #   --no-force      Respect existing build state (default is --force)
 #   --skip-compare  Skip the comparison step
+#   --accept        Non-interactive: replay the build commits onto the branch
+#   --inspect       Non-interactive: keep the worktree, decide later
+#   --yes           Skip the "uncommitted intent changes" confirmation
 #   -h, --help      Show this help message
 #
 set -euo pipefail
@@ -23,6 +26,8 @@ set -euo pipefail
 TARGET=""
 FORCE="--force"
 SKIP_COMPARE=false
+CHOICE=""
+ASSUME_YES=false
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -32,6 +37,9 @@ while [[ $# -gt 0 ]]; do
         --target)       TARGET="$2"; shift 2 ;;
         --no-force)     FORCE=""; shift ;;
         --skip-compare) SKIP_COMPARE=true; shift ;;
+        --accept)       CHOICE="a"; shift ;;
+        --inspect)      CHOICE="i"; shift ;;
+        --yes)          ASSUME_YES=true; shift ;;
         -h|--help)
             sed -n '2,/^$/{ s/^# \?//; p }' "$0"
             exit 0
@@ -69,8 +77,12 @@ if ! git -C "${REPO_ROOT}" diff --quiet -- intent/ || \
    ! git -C "${REPO_ROOT}" diff --cached --quiet -- intent/; then
     echo "Warning: you have uncommitted changes in intent/."
     echo "The worktree will be based on HEAD, so those changes won't be included."
-    read -rp "Continue anyway? [y/N] " answer
-    [[ "${answer}" =~ ^[Yy]$ ]] || exit 0
+    if [[ "${ASSUME_YES}" == "true" ]]; then
+        echo "Continuing (--yes)."
+    else
+        read -rp "Continue anyway? [y/N] " answer
+        [[ "${answer}" =~ ^[Yy]$ ]] || exit 0
+    fi
 fi
 
 echo "=== Bootstrap: Self-Compilation ==="
@@ -198,7 +210,12 @@ echo "  [a] Accept — replay ${PATCH_COUNT} build commit(s) onto ${CURRENT_BRAN
 echo "  [d] Abort  — delete the worktree, no changes to ${CURRENT_BRANCH}"
 echo "  [i] Inspect — keep the worktree open, decide later"
 echo ""
-read -rp "Choice [a/d/i]: " choice
+if [[ -n "${CHOICE}" ]]; then
+    choice="${CHOICE}"
+    echo "Choice [a/d/i]: ${choice} (from flag)"
+else
+    read -rp "Choice [a/d/i]: " choice
+fi
 
 case "${choice}" in
     a|A)

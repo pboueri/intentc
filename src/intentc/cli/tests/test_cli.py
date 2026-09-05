@@ -84,6 +84,7 @@ class TestConfig:
         assert path == tmp_path / ".intentc" / "config.yaml"
         loaded = load_config(tmp_path)
         assert loaded.default_profile.model_id == "haiku" and loaded.default_profile.effort == "low"
+        assert loaded.default_profile.permission_mode == "auto" and "permission_mode: auto" in path.read_text()
         assert loaded.default_profile.timeout == 60 and loaded.default_output_dir == "out"
 
     def test_ignores_unknown_and_partial(self, tmp_path: Path) -> None:

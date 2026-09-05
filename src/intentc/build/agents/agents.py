@@ -36,6 +36,9 @@ class AgentError(Exception):
     """Raised when an agent invocation fails."""
 
 
+PERMISSION_MODES = ("auto", "acceptEdits", "dontAsk", "plan", "bypassPermissions")
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -224,6 +227,7 @@ class AgentProfile(BaseModel):
     retries: int = 3
     model_id: str | None = None
     effort: str | None = None
+    permission_mode: str = "auto"
     prompt_templates: PromptTemplates | None = None
     sandbox_write_paths: list[str] = Field(default_factory=list)
     sandbox_read_paths: list[str] = Field(default_factory=list)
@@ -484,8 +488,22 @@ class ClaudeAgent(Agent):
 
     # -- command construction ------------------------------------------------
 
+    def permission_flags(self, interactive: bool = False) -> list[str]:
+        mode = self._profile.permission_mode or "auto"
+        if mode not in PERMISSION_MODES:
+            raise AgentError(
+                f"Unknown permission_mode '{mode}' in profile '{self._profile.name}'. "
+                f"Choose one of: {', '.join(PERMISSION_MODES)}"
+            )
+        if mode == "bypassPermissions":
+            return ["--dangerously-skip-permissions"]
+        flags = ["--permission-mode", mode]
+        if not interactive:
+            flags += ["--permission-prompts", "none"]
+        return flags
+
     def build_command(self, prompt: str) -> list[str]:
-        cmd = ["claude", "-p", prompt, "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"]
+        cmd = ["claude", "-p", prompt, "--verbose", "--output-format", "stream-json", *self.permission_flags()]
         if self._profile.model_id:
             cmd += ["--model", self._profile.model_id]
         if self._profile.effort:
@@ -494,7 +512,7 @@ class ClaudeAgent(Agent):
         return cmd
 
     def interactive_command(self, prompt: str) -> list[str]:
-        cmd = ["claude"]
+        cmd = ["claude", *self.permission_flags(interactive=True)]
         if self._profile.model_id:
             cmd += ["--model", self._profile.model_id]
         if self._profile.effort:

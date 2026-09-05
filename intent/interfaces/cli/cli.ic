@@ -56,6 +56,7 @@ default_profile:
   provider: claude
   timeout: 3600
   retries: 3
+  permission_mode: auto     # claude permission mode; bypassPermissions opts into skipping all checks
 default_output_dir: src
 ```
 

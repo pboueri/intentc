@@ -302,17 +302,33 @@ def test_cli_agent_timeout(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_claude_command_flags() -> None:
+def test_claude_command_flags_default_auto_mode() -> None:
     agent = ClaudeAgent(AgentProfile(name="c", provider="claude", model_id="opus", effort="high", cli_args=["--foo"]))
     cmd = agent.build_command("PROMPT")
     assert cmd[:3] == ["claude", "-p", "PROMPT"]
-    for flag in ["--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions", "--model", "opus", "--effort", "high", "--foo"]:
+    for flag in ["--verbose", "--output-format", "stream-json", "--model", "opus", "--effort", "high", "--foo"]:
         assert flag in cmd
+    assert "--dangerously-skip-permissions" not in cmd
+    assert cmd[cmd.index("--permission-mode") + 1] == "auto"
+    assert cmd[cmd.index("--permission-prompts") + 1] == "none"
     assert cmd[cmd.index("--model") + 1] == "opus"
     interactive = agent.interactive_command("PROMPT")
     assert interactive[0] == "claude" and "-p" not in interactive and interactive[-1] == "PROMPT"
+    assert "--permission-mode" in interactive and "--permission-prompts" not in interactive
     assert "--model" in interactive and "--foo" in interactive
     assert agent.get_type() == "claude"
+
+
+def test_claude_permission_modes() -> None:
+    bypass = ClaudeAgent(AgentProfile(name="c", provider="claude", permission_mode="bypassPermissions"))
+    assert "--dangerously-skip-permissions" in bypass.build_command("P")
+    assert "--permission-mode" not in bypass.build_command("P")
+    accept = ClaudeAgent(AgentProfile(name="c", provider="claude", permission_mode="acceptEdits"))
+    assert accept.build_command("P")[accept.build_command("P").index("--permission-mode") + 1] == "acceptEdits"
+    bad = ClaudeAgent(AgentProfile(name="c", provider="claude", permission_mode="yolo"))
+    with pytest.raises(AgentError, match="Unknown permission_mode 'yolo'"):
+        bad.build_command("P")
+    assert AgentProfile(name="c", provider="claude").permission_mode == "auto"
 
 
 def test_claude_sandbox_settings(tmp_path: Path) -> None:

@@ -35,7 +35,7 @@ validations:
         2. BuildContext type with all specified fields including response_file_path, previous_errors and feature_path
         3. DifferencingContext type with fields: output_dir_a, output_dir_b, project_intent, implementation, response_file_path
         4. CLIAgent base implementation that constructs prompts and reads response files
-        5. ClaudeAgent with Claude-specific flags (-p, --output-format stream-json, --dangerously-skip-permissions, --model)
+        5. ClaudeAgent with Claude-specific flags (-p, --output-format stream-json, --permission-mode auto --permission-prompts none by default, --dangerously-skip-permissions only when permission_mode is bypassPermissions, --model)
         6. create_from_profile factory function
         7. MockAgent for testing (records all calls including Difference, returns configurable responses)
         8. BuildResponse, ValidationResponse, DimensionResult, and DifferencingResponse types
