@@ -1,0 +1,75 @@
+target: constraints/artifacts
+version: 1
+validations:
+  - name: artifacts-core-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/core -q"
+
+  - name: artifacts-build-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/build -q"
+
+  - name: artifacts-self-check-still-passes
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc check"
+
+  - name: artifacts-prompts-carry-section
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "grep -l '{artifacts}' {output_dir}/intentc/build/agents/prompts/build.prompt {output_dir}/intentc/build/agents/prompts/validate.prompt {output_dir}/intentc/build/agents/prompts/plan.prompt | wc -l | grep -qx 3"
+
+  - name: artifacts-parsed-and-resolved
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the core models define an Artifact type (path, kind, note, owner,
+        resolved_paths) and that IntentFile, ProjectIntent and Implementation carry an
+        `artifacts` list. Verify tests show: (1) a frontmatter `artifacts` list with a
+        mapping entry and a string-shorthand entry parses, and inline body references
+        are appended as kind "reference"; (2) `artifacts` that is not a list, an entry
+        without `path`, and a non-string `kind` each produce a ParseError naming the
+        `artifacts` field; (3) load_project expands globs into resolved_paths relative
+        to the declaring file and rejects a path that escapes intent/; (4)
+        Project.artifacts_for returns target, ancestor, project and implementation
+        artifacts in that order, deduplicated; (5) write_project copies artifact files
+        and load_project on the copy returns equal artifacts.
+
+  - name: artifacts-drive-staleness-and-sandbox
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify builder tests show that after a successful build of a feature that
+        declares an artifact, editing only the artifact file (not the .ic or .icv)
+        makes detect_outdated() report the feature and the next build() rebuilds it
+        without force. Verify that the sandbox read paths handed to the agent profile
+        include the absolute resolved path of every artifact returned by
+        artifacts_for(target), including a project-level artifact, and that the
+        BuildContext passed to the mock agent carries the same artifacts.
+
+  - name: artifacts-rendered-in-prompts
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify render_prompt supplies an `{artifacts}` variable that renders "(none)"
+        for an empty list, and otherwise one block per artifact containing the
+        relative path, kind, owner, note, absolute path and — for a UTF-8 text file
+        of at most 16 KB — the file content in a fenced block whose language tag is
+        the file extension; a larger or binary file must show the path and
+        "(read this file)" instead of content. Verify check_project reports a
+        declared artifact that matches no file as an error whose message names the
+        path, while a missing inline reference remains a warning. Verify
+        command_validation substitutes `{intent_dir}` in command and expect_output.
