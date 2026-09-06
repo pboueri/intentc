@@ -140,7 +140,7 @@ String representation: `"<level>: <path>: <message>"` (path omitted when null).
 - warning: a feature with an empty body (nothing for the agent to build)
 - warning: a feature with no validations at all (the agent has nothing to be checked against)
 - warning: an `agent_validation` rubric shorter than 40 characters (too vague to judge)
-- warning: a referenced local file (from `file_references`) that does not exist relative to the intent file
+- warning: a referenced local file (from `file_references`) that does not exist relative to the intent file. References whose first path segment is `intent` or `.intentc` are skipped — intents routinely describe the project layout (`intent/project.ic`, `.intentc/config.yaml`) and those are descriptions, not supporting files
 - warning: `implementations/` is empty or missing (builds will have no implementation guidance)
 
 Every message says what to do about it (e.g. "add a validations.icv next to store.ic", "rename to `target: store`").

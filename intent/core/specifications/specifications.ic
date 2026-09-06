@@ -18,7 +18,17 @@ The metadata fields contain the following:
 - `tags` (optional list of strings) - Categorization tags.
 - `authors` (optional list of strings) -- who the authors of the intent are
 
-The text after the front matter is stored in a field named **`body`** (NOT `content`). It can be used for the agent, including local file references which are also parsed out for example imagine a reference to an image like ui_design.png that exists next to the feature or a reference to a shared design system like `../../design_system/*` that can be used for the agent to reference. These files references are parsed out as well so that the build system knows which files are required for a successful build.
+The text after the front matter is stored in a field named **`body`** (NOT `content`). It can be used for the agent, including local file references which are also parsed out — for example a reference to an image that exists next to the feature (written as `./` followed by its file name), or a reference to a shared design system like `../../design_system/*`. These file references are parsed out as well so that the build system knows which files are required for a successful build.
+
+### File reference rules
+
+`extract_file_references(body) -> list of string` returns the referenced paths, deduplicated, in order of first appearance. A candidate token is a markdown link *target* (`[text](target)` — the link text is ignored), the content of an inline code span, or a bare whitespace-delimited word. A candidate is a file reference only when **all** of the following hold:
+
+1. it contains no whitespace and is not a URL (`scheme://...`);
+2. it contains a `/` path separator, or starts with `./` or `../` — a bare filename such as `mockup.png` is **not** a reference (it is indistinguishable from prose like `e.g.`, `project.ic`, `args.rubric`, `0.0`); prefix a sibling file with `./` to reference it;
+3. its last path segment has a file extension of 1–6 alphanumeric characters, or ends with `*` (a glob).
+
+Trailing punctuation (`.`, `,`, `;`, `:`, `)`) is stripped from bare words before the test. Everything else in the body is prose.
 
 ### In-memory representation
 
