@@ -44,6 +44,24 @@ class BuildStep(BaseModel):
     summary: str = ""
 
 
+class RefinementSession(BaseModel):
+    """An interactive refinement session: its journal, snapshot, and bake outcome."""
+
+    session_id: str
+    target: str
+    output_dir: str
+    status: str  # recording | baking | baked | failed | abandoned
+    base_commit: str
+    snapshot_id: Optional[str] = None
+    seed_prompt: str = ""
+    journal: str = ""
+    bake_attempts: int = 0
+    bake_generation_id: Optional[str] = None
+    bake_response_json: Optional[str] = None
+    started_at: str = ""
+    ended_at: Optional[str] = None
+
+
 class BuildResult(BaseModel):
     """The outcome of building one target."""
 
@@ -155,6 +173,23 @@ class StorageBackend(ABC):
         response_type: str,
         response_json: dict[str, Any],
     ) -> None: ...
+
+    # -- Refinement session methods -------------------------------------------
+
+    @abstractmethod
+    def create_refinement_session(self, session: RefinementSession) -> None: ...
+
+    @abstractmethod
+    def update_refinement_session(self, session_id: str, **fields: Any) -> None: ...
+
+    @abstractmethod
+    def get_refinement_session(self, session_id: str) -> Optional[RefinementSession]: ...
+
+    @abstractmethod
+    def get_open_refinement_session(self, target: Optional[str] = None) -> Optional[RefinementSession]: ...
+
+    @abstractmethod
+    def list_refinement_sessions(self, target: str, limit: int = 10) -> list[RefinementSession]: ...
 
     # -- Target state methods -------------------------------------------------
 

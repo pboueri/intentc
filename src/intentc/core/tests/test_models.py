@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from intentc.core import ParseError, ParseErrors, Severity, ValidationType
+from intentc.core import Artifact, ParseError, ParseErrors, Severity, ValidationType
+
+
+def test_artifact_defaults():
+    artifact = Artifact(path="task.schema.json")
+    assert artifact.kind == "reference"
+    assert artifact.note == ""
+    assert artifact.owner == ""
+    assert artifact.resolved_paths == []
 
 
 def test_validation_type_values():

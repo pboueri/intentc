@@ -16,6 +16,7 @@ from intentc.build.validations import (
     ValidationSuiteResult,
 )
 from intentc.core import (
+    Artifact,
     FeatureNode,
     Implementation,
     IntentFile,
@@ -315,6 +316,70 @@ def test_agent_validation_per_entry_profile_override(tmp_path: Path) -> None:
     assert captured[0].timeout == 120
     assert captured[0].provider == "claude"
     assert captured[0].name == "base"
+
+
+def test_agent_validation_passes_artifacts_into_build_context(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    project = make_project(tmp_path, {"feat": []})
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text("{}", encoding="utf-8")
+    artifact = Artifact(
+        path="schema.json", kind="schema", note="constrains it", owner="feat", resolved_paths=[schema_path]
+    )
+    project.features["feat"].intents[0].artifacts = [artifact]
+
+    mock_agent = MockAgent(validation_response=ValidationResponse(name="agent-check", status="pass"))
+    suite = make_suite(project, output_dir, create_agent=lambda profile: mock_agent)
+
+    entry = Validation(name="agent-check", type="agent_validation", args={"rubric": "y" * 50})
+    suite.validate_entries("feat", [entry])
+
+    build_ctx, _ = mock_agent.validate_calls[0]
+    assert build_ctx.artifacts == [artifact]
+
+
+def test_command_validation_substitutes_intent_dir(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    project = make_project(tmp_path, {"feat": []})
+    (tmp_path / "intent" / "marker.txt").write_text("hi", encoding="utf-8")
+    suite = make_suite(project, output_dir)
+
+    entry = Validation(
+        name="check-intent-dir",
+        type="command_validation",
+        args={"command": "test -f {intent_dir}/marker.txt"},
+    )
+    result = suite.validate_entries("feat", [entry])
+    assert result.results[0].status == "pass"
+
+
+def test_command_validation_substitutes_intent_dir_in_expect_output(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    project = make_project(tmp_path, {"feat": []})
+    suite = make_suite(project, output_dir)
+
+    entry = Validation(
+        name="check-expect-output",
+        type="command_validation",
+        args={"command": "echo {intent_dir}", "expect_output": "{intent_dir}"},
+    )
+    result = suite.validate_entries("feat", [entry])
+    assert result.results[0].status == "pass"
+
+
+def test_file_exists_substitutes_intent_dir(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    project = make_project(tmp_path, {"feat": []})
+    (tmp_path / "intent" / "schema.json").write_text("{}", encoding="utf-8")
+    suite = make_suite(project, output_dir)
+
+    entry = Validation(name="files", type="file_exists", args={"paths": ["{intent_dir}/schema.json"]})
+    result = suite.validate_entries("feat", [entry])
+    assert result.results[0].status == "pass"
 
 
 def test_feature_intent_resolution(tmp_path: Path) -> None:

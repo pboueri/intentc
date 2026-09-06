@@ -16,6 +16,7 @@ from rich.console import Console
 from intentc.build.agents import AgentError, BuildContext, create_from_profile
 from intentc.build.builder.builder import Builder, BuildOptions
 from intentc.build.state import GitVersionControl, StateManager
+from intentc.build.storage import RefinementSession
 from intentc.build.validations import ValidationSuite, ValidationSuiteResult
 from intentc.cli import output as out
 from intentc.cli.config import Config, ConfigError, load_config, save_config
@@ -30,6 +31,7 @@ from intentc.core import (
     write_intent_file,
     write_project,
 )
+from intentc.refine import RefineOutcome, RefineUsageError, abandon_refinement, bake_refinement, run_refine
 
 app = typer.Typer(
     name="intentc",
@@ -81,6 +83,36 @@ def _load_config_or_exit(project_root: Path) -> Config:
 
 def _implementation_error_hint(project: Project) -> str:
     return ", ".join(sorted(project.implementations)) if project.implementations else "(none)"
+
+
+def _open_session_blocking(
+    backend, project: Project, target: Optional[str]
+) -> Optional[RefinementSession]:
+    """The open refinement session (if any) that overlaps `target`'s build/clean
+    set. `target=None` means the whole project / --all."""
+    session = backend.get_open_refinement_session(None)
+    if session is None:
+        return None
+    if target is None or session.target == target:
+        return session
+    if session.target not in project.features or target not in project.features:
+        return None
+    related = project.ancestors(target) | project.descendants(target) | {target}
+    return session if session.target in related else None
+
+
+def _print_bake_outcome(outcome: RefineOutcome, target: str, output_dir: str, console: Console) -> None:
+    if outcome == RefineOutcome.BAKED:
+        console.print(
+            f"Intent updated: intent/{target}/ — review and commit it. "
+            "Downstream targets are outdated: intentc build"
+        )
+    else:
+        console.print(
+            f"Refined code restored to {output_dir} (uncommitted). "
+            f"Draft intent left in intent/{target}/. Edit it and run: intentc build {target} -f   "
+            f"or retry: intentc refine {target} --bake"
+        )
 
 
 def _resolve_implementation_or_exit(project: Project, name: Optional[str]):
@@ -247,6 +279,14 @@ def build(
     resolved_output_dir = output_dir or config.default_output_dir
     state_manager = StateManager(base_dir=cwd, output_dir=resolved_output_dir)
     version_control = GitVersionControl(cwd, output_dir=resolved_output_dir)
+
+    blocking_session = _open_session_blocking(state_manager.backend, project, target)
+    if blocking_session is not None:
+        out.print_error(
+            f"'{blocking_session.target}' has an open refinement session. "
+            "Bake or abandon it before building."
+        )
+        raise typer.Exit(code=2)
 
     console = Console()
     builder = Builder(
@@ -427,6 +467,14 @@ def clean(
     state_manager = StateManager(base_dir=cwd, output_dir=resolved_output_dir)
     version_control = GitVersionControl(cwd, output_dir=resolved_output_dir)
 
+    blocking_session = _open_session_blocking(state_manager.backend, project, None if all_targets else target)
+    if blocking_session is not None:
+        out.print_error(
+            f"'{blocking_session.target}' has an open refinement session. "
+            "Bake or abandon it before cleaning."
+        )
+        raise typer.Exit(code=2)
+
     console = Console()
     builder = Builder(
         project=project,
@@ -508,6 +556,127 @@ def plan(
 
 
 # ---------------------------------------------------------------------------
+# refine
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def refine(
+    target: str = typer.Argument(..., help="Feature path to refine."),
+    prompt: Optional[str] = typer.Argument(
+        None, help="Seed prompt describing what to change, seeded into the session."
+    ),
+    no_bake: bool = typer.Option(
+        False, "--no-bake", help="Record the session but do not bake when it ends."
+    ),
+    bake: bool = typer.Option(
+        False, "--bake", help="Do not open a session; bake the currently open session for this target."
+    ),
+    abandon: bool = typer.Option(
+        False, "--abandon", help="Discard the open session for this target."
+    ),
+    no_compare: bool = typer.Option(
+        False, "--no-compare", help="Skip the functional-equivalence check after the rebuild."
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output-dir", "-o", help="Override the output directory."
+    ),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Agent profile override."),
+    implementation: Optional[str] = typer.Option(
+        None, "--implementation", "-i", help="Implementation name to use."
+    ),
+) -> None:
+    """Interactively refine a built feature, then bake the session into intent."""
+    if bake and abandon:
+        out.print_error("--bake and --abandon are mutually exclusive.")
+        raise typer.Exit(code=2)
+
+    cwd = Path.cwd()
+    project = _load_project_or_exit(cwd / "intent")
+    config = _load_config_or_exit(cwd)
+    _require_target(project, target)
+
+    agent_profile = config.default_profile
+    if profile:
+        agent_profile = agent_profile.model_copy(update={"name": profile})
+    implementation_obj = _resolve_implementation_or_exit(project, implementation)
+
+    resolved_output_dir = output_dir or config.default_output_dir
+    state_manager = StateManager(base_dir=cwd, output_dir=resolved_output_dir)
+    version_control = GitVersionControl(cwd, output_dir=resolved_output_dir)
+    backend = state_manager.backend
+
+    console = Console()
+    builder = Builder(
+        project=project,
+        state_manager=state_manager,
+        version_control=version_control,
+        agent_profile=agent_profile,
+        log=out.timestamped_log(console),
+    )
+
+    if abandon:
+        open_session = backend.get_open_refinement_session(target)
+        if open_session is None:
+            out.print_error(f"No open refinement session for '{target}' in {resolved_output_dir}.")
+            raise typer.Exit(code=2)
+        abandon_refinement(state_manager, version_control, open_session, log=console.print)
+        console.print(f"Session {open_session.session_id[:8]} abandoned.")
+        raise typer.Exit(code=0)
+
+    if bake:
+        open_session = backend.get_open_refinement_session(target)
+        if open_session is None:
+            out.print_error(f"No open refinement session for '{target}' in {resolved_output_dir}.")
+            raise typer.Exit(code=2)
+        outcome, session_after, response = bake_refinement(
+            project=project,
+            profile=agent_profile,
+            implementation=implementation_obj,
+            state_manager=state_manager,
+            version_control=version_control,
+            builder=builder,
+            session=open_session,
+            output_dir=resolved_output_dir,
+            no_compare=no_compare,
+            log=out.timestamped_log(console),
+        )
+        out.render_refine_summary(session_after, response, console=console)
+        _print_bake_outcome(outcome, target, resolved_output_dir, console)
+        raise typer.Exit(code=0 if outcome == RefineOutcome.BAKED else 1)
+
+    try:
+        outcome, session_after, response = run_refine(
+            project=project,
+            profile=agent_profile,
+            implementation=implementation_obj,
+            state_manager=state_manager,
+            version_control=version_control,
+            builder=builder,
+            target=target,
+            output_dir=resolved_output_dir,
+            seed_prompt=prompt or "",
+            no_bake=no_bake,
+            no_compare=no_compare,
+            log=out.timestamped_log(console),
+        )
+    except RefineUsageError as exc:
+        out.print_error(str(exc))
+        raise typer.Exit(code=2) from exc
+
+    if outcome == RefineOutcome.RECORDED:
+        console.print(
+            f"Session left open. Resume: intentc refine {target}   "
+            f"Bake: intentc refine {target} --bake   Discard: intentc refine {target} --abandon"
+        )
+        raise typer.Exit(code=0)
+
+    out.render_refine_summary(session_after, response, console=console)
+    _print_bake_outcome(outcome, target, resolved_output_dir, console)
+    raise typer.Exit(code=0 if outcome == RefineOutcome.BAKED else 1)
+
+
+# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 
@@ -539,19 +708,27 @@ def status(
 
     db_targets = dict(state_manager.list_targets())
     rows: list[out.StatusRow] = []
+    open_sessions_by_target = {}
+    open_session = state_manager.backend.get_open_refinement_session(None)
+    if open_session is not None:
+        open_sessions_by_target[open_session.target] = open_session
+
+    def _status_cell(feature: str, base_status: str) -> str:
+        session = open_sessions_by_target.get(feature)
+        return f"refining {session.session_id[:8]}" if session is not None else base_status
 
     for feature in project.topological_order():
         node = project.features[feature]
         db_status = db_targets.pop(feature, None)
         validations_count = sum(len(vf.validations) for vf in node.validations)
         if db_status is None:
-            rows.append((feature, "pending", node.depends_on, validations_count, "", 0, ""))
+            rows.append((feature, _status_cell(feature, "pending"), node.depends_on, validations_count, "", 0, ""))
             continue
         result = state_manager.get_build_result(feature)
         rows.append(
             (
                 feature,
-                db_status.value,
+                _status_cell(feature, db_status.value),
                 node.depends_on,
                 validations_count,
                 result.timestamp if result else "",
@@ -576,6 +753,11 @@ def status(
         console.print("Nothing built yet — run: intentc build")
     else:
         console.print("All targets built.")
+
+    if open_session is not None:
+        console.print(
+            f"1 refinement session open: intentc refine {open_session.target} --bake"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +813,9 @@ def log_command(
         None, "--output-dir", "-o", help="Override the output directory."
     ),
     limit: int = typer.Option(10, "--limit", "-n", help="Number of history rows."),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="Print this refinement session's journal in full."
+    ),
 ) -> None:
     """Show the build history of a target."""
     cwd = Path.cwd()
@@ -638,6 +823,15 @@ def log_command(
 
     resolved_output_dir = output_dir or config.default_output_dir
     state_manager = StateManager(base_dir=cwd, output_dir=resolved_output_dir)
+    console = Console()
+
+    if session is not None:
+        refinement_session = state_manager.backend.get_refinement_session(session)
+        if refinement_session is None:
+            out.print_error(f"No refinement session '{session}' for '{target}' in {resolved_output_dir}.")
+            raise typer.Exit(code=2)
+        console.print(refinement_session.journal)
+        return
 
     history = state_manager.get_build_history(target, limit=limit)
     if not history:
@@ -648,6 +842,10 @@ def log_command(
 
     validation_results = state_manager.backend.get_validation_results(target)
     out.render_build_log(target, history, validation_results)
+
+    refinement_sessions = state_manager.backend.list_refinement_sessions(target)
+    if refinement_sessions:
+        out.render_refinement_log(refinement_sessions, console=console)
 
 
 # ---------------------------------------------------------------------------

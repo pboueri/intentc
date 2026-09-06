@@ -12,6 +12,12 @@ The following feature (`{feature_name}`) has been implemented in the output dire
 
 {feature}
 
+### Artifacts
+
+The following artifacts constrain the solution. Conform to them exactly. Where the prose and an artifact disagree, the artifact wins — say so in your summary so the author can fix the prose.
+
+{artifacts}
+
 ### Validation
 Evaluate the following single validation against the implementation:
 

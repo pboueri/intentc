@@ -1,0 +1,106 @@
+target: workflows/refine
+version: 1
+validations:
+  - name: refine-modules-exist
+    type: file_exists
+    severity: error
+    args:
+      paths:
+        - "intentc/refine/__init__.py"
+        - "intentc/refine/workflow.py"
+        - "intentc/refine/tests/test_*.py"
+        - "intentc/build/agents/prompts/refine.prompt"
+        - "intentc/build/agents/prompts/refine_bake.prompt"
+
+  - name: refine-prompts-match-artifacts
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "cmp {intent_dir}/workflows/refine/prompts/refine.prompt {output_dir}/intentc/build/agents/prompts/refine.prompt && cmp {intent_dir}/workflows/refine/prompts/refine_bake.prompt {output_dir}/intentc/build/agents/prompts/refine_bake.prompt"
+
+  - name: refine-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/refine {output_dir}/intentc/build {output_dir}/intentc/cli -q"
+
+  - name: refine-help-runs
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc refine --help"
+      expect_output: "--bake"
+
+  - name: refine-unknown-target-is-usage-error
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc refine does/not/exist; test $? -eq 2"
+      expect_output: "Unknown feature"
+
+  - name: refine-unbuilt-target-is-usage-error
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc refine workflows/refine -o never_built_output_dir; test $? -eq 2"
+      expect_output: "has not been built"
+
+  - name: refine-session-lifecycle
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify the refine workflow tests (MockAgent, MockVersionControl, real
+        SQLiteBackend, temporary directories, no claude binary) demonstrate:
+        (1) starting a session on an output directory with uncommitted changes, or on
+        a target that is pending/failed, is refused before any agent is created;
+        (2) a session persists a RefinementSession row with status "recording", the
+        base commit, and the journal text the mock agent wrote to journal_path;
+        (3) resuming appends to the same journal and passes the prior journal text in
+        RefineContext.journal; (4) a session's RefineContext carries the target's
+        artifacts and the agent's write paths cover only the output directory and
+        the session directory; (5) abandon restores base_commit in the output
+        directory and marks the session "abandoned"; (6) intentc build refuses with
+        exit 2 while a session is open for a target in its build set.
+
+  - name: refine-bake-loop
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests show the bake: snapshots the refined tree via
+        version_control.snapshot without moving HEAD; calls agent.refine_bake once
+        with a RefineContext whose diff, files_by_owner, journal and snapshot_dir are
+        populated; then runs builder.clean, builder.build with force for the target,
+        and run_differencing in that order; a "divergent" DifferencingResponse causes
+        a second refine_bake call whose previous_errors contain the failing
+        dimension's name and rationale; a failed rebuild feeds the failing step
+        summary the same way; after profile.retries attempts the snapshot is restored
+        into the output directory, the target status is "outdated", the session is
+        "failed" and the draft .ic/.icv edits remain on disk; on success the session
+        is "baked" with bake_generation_id set and the journal file deleted; with
+        --no-compare run_differencing is never called. Verify that refine_bake with a
+        missing response file raises AgentError rather than synthesising a response.
+
+  - name: refine-prompts-encode-the-contract
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Read the bundled refine.prompt and refine_bake.prompt. Verify refine.prompt
+        tells the agent to append a journal entry per ask with Asked / Decided /
+        Rule / Changed / Check fields, forbids editing anything under intent/, and
+        renders {journal}, {journal_path}, {artifacts} and {seed_prompt}. Verify
+        refine_bake.prompt instructs the agent to fold rules into the existing
+        intent structure rather than appending a refinements section, to turn every
+        Check into a deterministic validation where possible, never to weaken
+        existing requirements unless the journal reverses them, to save pasted
+        schemas/mocks as declared artifacts, to restrict edits to the target's .ic,
+        .icv and feature directory, and to write a RefineBakeResponse JSON with
+        status, summary, files_modified, artifacts_added, generalizations and
+        open_questions to {response_file}.

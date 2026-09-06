@@ -30,7 +30,7 @@ from intentc.build.agents import (
     create_from_profile,
 )
 from intentc.build.storage import StorageBackend
-from intentc.core import Implementation, IntentFile, Project, ProjectIntent, Severity, Validation
+from intentc.core import Artifact, Implementation, IntentFile, Project, ProjectIntent, Severity, Validation
 
 LogFn = Callable[[str], None]
 
@@ -72,6 +72,8 @@ class ValidationContext(BaseModel):
     output_dir: str
     response_file_path: str
     project_root: str = ""
+    artifacts: list[Artifact] = Field(default_factory=list)
+    intent_dir: str = ""
 
 
 class ValidationSuiteResult(BaseModel):
@@ -112,12 +114,20 @@ class CommandValidationRunner(ValidationRunner):
 
     def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
         args = validation.args
-        command = str(args.get("command", "")).replace("{output_dir}", ctx.output_dir)
+        command = (
+            str(args.get("command", ""))
+            .replace("{output_dir}", ctx.output_dir)
+            .replace("{intent_dir}", ctx.intent_dir)
+        )
         cwd = self._resolve_cwd(ctx, args.get("cwd"))
         timeout = args.get("timeout", 600)
         expect_output = args.get("expect_output")
         if expect_output:
-            expect_output = str(expect_output).replace("{output_dir}", ctx.output_dir)
+            expect_output = (
+                str(expect_output)
+                .replace("{output_dir}", ctx.output_dir)
+                .replace("{intent_dir}", ctx.intent_dir)
+            )
 
         try:
             result = subprocess.run(
@@ -175,7 +185,8 @@ class FileExistsRunner(ValidationRunner):
         paths = validation.args.get("paths", [])
         unmatched: list[str] = []
         for entry in paths:
-            resolved = _resolve_output_path(str(entry), ctx.output_dir)
+            substituted = str(entry).replace("{intent_dir}", ctx.intent_dir)
+            resolved = _resolve_output_path(substituted, ctx.output_dir)
             if not glob.glob(resolved):
                 unmatched.append(entry)
         if unmatched:
@@ -206,6 +217,7 @@ class AgentValidationRunner(ValidationRunner):
             project_intent=ctx.project_intent,
             implementation=ctx.implementation,
             response_file_path=ctx.response_file_path,
+            artifacts=ctx.artifacts,
         )
         try:
             return self.agent.validate(build_ctx, validation)
@@ -398,6 +410,14 @@ class ValidationSuite:
             return str(Path(self.project.intent_dir).parent)
         return str(Path.cwd())
 
+    def _artifacts_for(self, target: str) -> list[Artifact]:
+        if target in self.project.features:
+            return self.project.artifacts_for(target, self.implementation)
+        artifacts = list(self.project.project_intent.artifacts)
+        if self.implementation is not None:
+            artifacts += self.implementation.artifacts
+        return artifacts
+
     def _make_context(self, target: str, validation_name: str) -> ValidationContext:
         response_dir = Path(self.val_response_dir) if self.val_response_dir is not None else Path(self.output_dir)
         response_dir.mkdir(parents=True, exist_ok=True)
@@ -409,6 +429,8 @@ class ValidationSuite:
             output_dir=self.output_dir,
             response_file_path=response_file_path,
             project_root=self._project_root(),
+            artifacts=self._artifacts_for(target),
+            intent_dir=str(self.project.intent_dir) if self.project.intent_dir is not None else "",
         )
 
     def _persist(self, target: str, generation_id: str, entry: Validation, response: ValidationResponse) -> None:

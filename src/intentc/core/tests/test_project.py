@@ -390,6 +390,336 @@ def _impl(name: str):
     return Implementation(name=name, body="body")
 
 
+# ---------------------------------------------------------------------------
+# Artifacts
+# ---------------------------------------------------------------------------
+
+
+def test_load_project_resolves_declared_artifact_paths(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "store" / "store.ic",
+        """---
+name: store
+artifacts:
+  - path: task.schema.json
+    kind: schema
+    note: Every Task must validate against this schema.
+---
+Persist tasks.
+""",
+    )
+    _write(tmp_path / "store" / "task.schema.json", "{}")
+    _write(
+        tmp_path / "store" / "validation.icv",
+        "target: store\nvalidations:\n  - name: store-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n",
+    )
+
+    project = load_project(tmp_path)
+    intent = project.features["store"].intents[0]
+    artifact = next(a for a in intent.artifacts if a.path == "task.schema.json")
+    assert artifact.owner == "store"
+    assert artifact.resolved_paths == [(tmp_path / "store" / "task.schema.json").resolve()]
+
+
+def test_load_project_rejects_artifact_that_escapes_intent_dir(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "store" / "store.ic",
+        """---
+name: store
+artifacts:
+  - path: ../../outside.txt
+---
+Persist tasks.
+""",
+    )
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("nope", encoding="utf-8")
+    _write(
+        tmp_path / "store" / "validation.icv",
+        "target: store\nvalidations:\n  - name: store-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n",
+    )
+
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+    assert any("resolves outside intent/" in str(e) for e in exc_info.value.errors)
+
+
+def test_artifacts_for_orders_target_ancestors_project_and_implementation(tmp_path):
+    _write_project_ic(tmp_path)
+    _write(
+        tmp_path / "project.ic",
+        """---
+name: demo
+artifacts:
+  - path: shared.md
+    kind: design
+---
+A demo project.
+""",
+    )
+    _write(tmp_path / "shared.md", "shared")
+    _write(
+        tmp_path / "implementations" / "default.ic",
+        """---
+name: default
+artifacts:
+  - path: style.md
+---
+Python 3.11, uv, pydantic.
+""",
+    )
+    _write(tmp_path / "implementations" / "style.md", "style")
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: a.schema.json
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "a.schema.json", "{}")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+    _write(
+        tmp_path / "b" / "b.ic",
+        """---
+name: b
+depends_on:
+  - a
+artifacts:
+  - path: b.schema.json
+---
+Build B.
+""",
+    )
+    _write(tmp_path / "b" / "b.schema.json", "{}")
+    _write(tmp_path / "b" / "validation.icv", "target: b\nvalidations:\n  - name: b-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    impl = project.resolve_implementation()
+    artifacts = project.artifacts_for("b", impl)
+    paths = [a.path for a in artifacts]
+    assert paths.index("b.schema.json") < paths.index("a.schema.json")
+    assert paths.index("a.schema.json") < paths.index("shared.md")
+    assert paths.index("shared.md") < paths.index("style.md")
+
+
+def test_artifacts_for_deduplicates_by_resolved_path(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "project.ic",
+        """---
+name: demo
+artifacts:
+  - path: a/a.schema.json
+---
+A demo project.
+""",
+    )
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: a.schema.json
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "a.schema.json", "{}")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    artifacts = project.artifacts_for("a")
+    matching = [a for a in artifacts if a.resolved_paths and a.resolved_paths[0].name == "a.schema.json"]
+    assert len(matching) == 1
+    assert matching[0].owner == "a"
+
+
+def test_source_files_includes_targets_own_artifact_but_not_ancestor_artifacts(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: a.schema.json
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "a.schema.json", "{}")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+    _write(
+        tmp_path / "b" / "b.ic",
+        """---
+name: b
+depends_on:
+  - a
+---
+Build B.
+""",
+    )
+    _write(tmp_path / "b" / "validation.icv", "target: b\nvalidations:\n  - name: b-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    a_sources = project.source_files("a")
+    assert (tmp_path / "a" / "a.schema.json").resolve() in a_sources
+
+    b_sources = project.source_files("b")
+    assert not any(p.name == "a.schema.json" for p in b_sources)
+
+
+def test_check_project_flags_declared_artifact_matching_no_file(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: missing.schema.json
+    kind: schema
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "error" and "missing.schema.json" in issue.message for issue in issues
+    )
+
+
+def test_check_project_missing_inline_reference_stays_warning(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+---
+See `./missing.png` for the mockup.
+""",
+    )
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning" and "./missing.png" in issue.message for issue in issues
+    )
+    assert not any("./missing.png" in issue.message and issue.level == "error" for issue in issues)
+
+
+def test_check_project_flags_large_artifact_as_warning(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: big.csv
+    kind: fixture
+---
+Build A.
+""",
+    )
+    (tmp_path / "a" / "big.csv").write_bytes(b"0" * (1024 * 1024 + 1))
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning" and "big.csv" in issue.message and "1 MB" in issue.message
+        for issue in issues
+    )
+
+
+def test_check_project_flags_conflicting_notes_across_features(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "shared" / "schema.json",
+        "{}",
+    )
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: ../shared/schema.json
+    kind: schema
+    note: Note from A.
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+    _write(
+        tmp_path / "b" / "b.ic",
+        """---
+name: b
+artifacts:
+  - path: ../shared/schema.json
+    kind: schema
+    note: Note from B, which disagrees.
+---
+Build B.
+""",
+    )
+    _write(tmp_path / "b" / "validation.icv", "target: b\nvalidations:\n  - name: b-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning" and "schema.json" in issue.message and "different notes" in issue.message
+        for issue in issues
+    )
+
+
+def test_write_project_copies_artifacts_and_load_project_roundtrips(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: a.schema.json
+    kind: schema
+    note: Must validate.
+---
+Build A.
+""",
+    )
+    _write(tmp_path / "a" / "a.schema.json", '{"type": "object"}')
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    dest = tmp_path.parent / "written_out" / "intent"
+    write_project(project, dest)
+
+    assert (dest / "a" / "a.schema.json").read_text() == '{"type": "object"}'
+
+    reloaded = load_project(dest)
+    reloaded_artifact = next(a for a in reloaded.features["a"].intents[0].artifacts if a.path == "a.schema.json")
+    original_artifact = next(a for a in project.features["a"].intents[0].artifacts if a.path == "a.schema.json")
+    assert reloaded_artifact.kind == original_artifact.kind
+    assert reloaded_artifact.note == original_artifact.note
+    assert reloaded_artifact.resolved_paths[0].read_text() == '{"type": "object"}'
+
+
 def test_check_project_skips_layout_descriptions(tmp_path):
     intent_dir = tmp_path / "intent"
     _write(intent_dir / "project.ic", "---\nname: p\n---\n\nProject.\n")

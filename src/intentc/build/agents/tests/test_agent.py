@@ -21,14 +21,18 @@ from intentc.build.agents import (
     DimensionResult,
     MockAgent,
     PromptTemplates,
+    RefineBakeResponse,
+    RefineContext,
     ValidationResponse,
     create_from_profile,
     load_default_prompts,
     render_differencing_prompt,
     render_init_prompt,
     render_prompt,
+    render_refine_prompt,
 )
 from intentc.core import (
+    Artifact,
     Implementation,
     IntentFile,
     ProjectIntent,
@@ -69,6 +73,44 @@ def make_build_context(**overrides) -> BuildContext:
     )
     defaults.update(overrides)
     return BuildContext(**defaults)
+
+
+def make_refine_context(**overrides) -> RefineContext:
+    defaults = dict(
+        session_id="sess-1",
+        feature_path="build/agents",
+        intent=IntentFile(name="build/agents", body="Build the agent module.", depends_on=["core/*"]),
+        validations=[
+            ValidationFile(
+                target="build/agents",
+                validations=[
+                    Validation(
+                        name="agents-tests-pass",
+                        type="command_validation",
+                        args={"command": "pytest", "cwd": "."},
+                    )
+                ],
+            )
+        ],
+        artifacts=[],
+        project_intent=ProjectIntent(name="intentc", body="A compiler of intent."),
+        implementation=Implementation(name="python", body="Python 3.11+ with uv."),
+        output_dir="out",
+        journal_path="/tmp/journal.md",
+        journal="## 1. First ask\n",
+        seed_prompt="make the buttons bigger",
+        base_commit="deadbeef",
+        snapshot_dir="",
+        diff="",
+        files_by_owner={},
+        previous_errors=[],
+        response_file_path="response.json",
+        intent_path="intent/build/agents/agents.ic",
+        validation_path="intent/build/agents/validation.icv",
+        feature_dir="intent/build/agents",
+    )
+    defaults.update(overrides)
+    return RefineContext(**defaults)
 
 
 def make_differencing_context(**overrides) -> DifferencingContext:
@@ -181,6 +223,54 @@ def test_render_prompt_never_raises_on_undocumented_placeholder():
     assert rendered == " and "
 
 
+def test_render_prompt_artifacts_none_when_empty():
+    ctx = make_build_context(artifacts=[])
+    rendered = render_prompt("{artifacts}", ctx)
+    assert rendered == "(none)"
+
+
+def test_render_prompt_artifacts_inlines_small_utf8_text_file(tmp_path):
+    schema_path = tmp_path / "task.schema.json"
+    schema_path.write_text('{"type": "object"}', encoding="utf-8")
+    artifact = Artifact(
+        path="task.schema.json",
+        kind="schema",
+        note="Every Task must validate against this schema.",
+        owner="store",
+        resolved_paths=[schema_path],
+    )
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "task.schema.json" in rendered
+    assert "(schema, from store)" in rendered
+    assert "Every Task must validate against this schema." in rendered
+    assert str(schema_path) in rendered
+    assert "```json" in rendered
+    assert '{"type": "object"}' in rendered
+
+
+def test_render_prompt_artifacts_large_file_says_read_this_file(tmp_path):
+    big_path = tmp_path / "big.csv"
+    big_path.write_text("x" * (16 * 1024 + 1), encoding="utf-8")
+    artifact = Artifact(path="big.csv", kind="fixture", owner="store", resolved_paths=[big_path])
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "(read this file)" in rendered
+    assert "x" * 100 not in rendered
+
+
+def test_render_prompt_artifacts_binary_file_says_read_this_file(tmp_path):
+    bin_path = tmp_path / "mockup.png"
+    bin_path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    artifact = Artifact(path="mockup.png", kind="design", owner="store", resolved_paths=[bin_path])
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "(read this file)" in rendered
+
+
 def test_render_init_prompt_fills_variables():
     template = "{project_name}|{specifications}|{user_prompt}"
     rendered = render_init_prompt(template, "calculator", user_prompt="a calculator app")
@@ -192,6 +282,58 @@ def test_render_init_prompt_fills_variables():
 def test_render_init_prompt_user_prompt_defaults_empty():
     rendered = render_init_prompt("[{user_prompt}]", "myproj")
     assert rendered == "[]"
+
+
+def test_render_refine_prompt_fills_all_documented_variables():
+    ctx = make_refine_context()
+    template = (
+        "{project}|{implementation}|{feature}|{feature_name}|{validations}|{artifacts}|"
+        "{output_dir}|{journal_path}|{journal}|{seed_prompt}|{snapshot_dir}|{diff}|"
+        "{files_by_owner}|{previous_errors}|{response_file}|{intent_path}|"
+        "{validation_path}|{feature_dir}"
+    )
+    rendered = render_refine_prompt(template, ctx)
+    assert "A compiler of intent." in rendered
+    assert "Python 3.11+ with uv." in rendered
+    assert "Build the agent module." in rendered
+    assert "build/agents" in rendered
+    assert "agents-tests-pass" in rendered
+    assert "out" in rendered
+    assert "/tmp/journal.md" in rendered
+    assert "## 1. First ask" in rendered
+    assert "make the buttons bigger" in rendered
+    assert "response.json" in rendered
+    assert "intent/build/agents/agents.ic" in rendered
+    assert "intent/build/agents/validation.icv" in rendered
+    assert "intent/build/agents" in rendered
+
+
+def test_render_refine_prompt_files_by_owner_none_when_empty():
+    ctx = make_refine_context(files_by_owner={})
+    rendered = render_refine_prompt("{files_by_owner}", ctx)
+    assert rendered == "(none)"
+
+
+def test_render_refine_prompt_files_by_owner_bulleted_by_feature():
+    ctx = make_refine_context(files_by_owner={"store": ["a.py", "b.py"], "api": ["c.py"]})
+    rendered = render_refine_prompt("{files_by_owner}", ctx)
+    assert "- store: a.py, b.py" in rendered
+    assert "- api: c.py" in rendered
+
+
+def test_render_refine_prompt_previous_errors_bulleted():
+    ctx = make_refine_context(previous_errors=["divergent: runtime_behavior — output differs"])
+    rendered = render_refine_prompt("{previous_errors}", ctx)
+    assert "- divergent: runtime_behavior — output differs" in rendered
+
+
+def test_load_default_prompts_reads_bundled_refine_prompts():
+    templates = load_default_prompts()
+    assert "{journal}" in templates.refine
+    assert "{journal_path}" in templates.refine
+    assert "{seed_prompt}" in templates.refine
+    assert "{diff}" in templates.refine_bake
+    assert "{response_file}" in templates.refine_bake
 
 
 def test_render_differencing_prompt():
@@ -214,6 +356,13 @@ def test_load_default_prompts_reads_bundled_files():
     assert "{feature_name}" in templates.build
     assert "{validation}" in templates.validate_template
     assert "{seed_prompt}" in templates.plan
+
+
+def test_load_default_prompts_build_validate_plan_carry_artifacts_placeholder():
+    templates = load_default_prompts()
+    assert "{artifacts}" in templates.build
+    assert "{artifacts}" in templates.validate_template
+    assert "{artifacts}" in templates.plan
 
 
 def test_load_default_prompts_reads_bundled_init_prompt():
@@ -340,6 +489,57 @@ def test_cli_agent_init_invokes_command_with_rendered_prompt(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0][-1] == "myproj::a calculator app"
+
+
+def test_cli_agent_refine_does_not_require_response_file(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **k: calls.append(command) or subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
+    )
+    profile = AgentProfile(name="test-cli", provider="cli", command="mytool")
+    agent = CLIAgent(profile)
+    ctx = make_refine_context(seed_prompt="make the buttons bigger")
+    agent.refine(ctx)
+    assert len(calls) == 1
+
+
+def test_cli_agent_refine_bake_invokes_command_and_reads_response(monkeypatch, tmp_path):
+    response_file = tmp_path / "bake_response.json"
+    response_file.write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "summary": "folded the rule into store.ic",
+                "files_modified": ["intent/store/store.ic"],
+                "artifacts_added": [],
+                "generalizations": ["controls have a 44px hit area"],
+                "open_questions": [],
+            }
+        )
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0] if a else [], 0, stdout="", stderr=""))
+    profile = AgentProfile(name="test-cli", provider="cli", command="mytool")
+    agent = CLIAgent(profile)
+    ctx = make_refine_context(response_file_path=str(response_file))
+
+    result = agent.refine_bake(ctx)
+
+    assert isinstance(result, RefineBakeResponse)
+    assert result.status == "success"
+    assert result.generalizations == ["controls have a 44px hit area"]
+    assert not response_file.exists()
+
+
+def test_cli_agent_refine_bake_missing_response_file_raises_no_synthesis(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0] if a else [], 0, stdout="", stderr=""))
+    profile = AgentProfile(name="test-cli", provider="cli", command="mytool")
+    agent = CLIAgent(profile)
+    ctx = make_refine_context(response_file_path=str(tmp_path / "missing.json"))
+
+    with pytest.raises(AgentError):
+        agent.refine_bake(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +746,75 @@ def test_claude_agent_plan_uses_interactive_flags(monkeypatch):
     assert "auto" in command
 
 
+def test_claude_agent_refine_uses_interactive_flags(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    profile = AgentProfile(name="claude-default", provider="claude")
+    agent = ClaudeAgent(profile)
+    ctx = make_refine_context(seed_prompt="make the buttons bigger")
+
+    agent.refine(ctx)
+
+    command = captured["command"]
+    assert "-p" not in command
+    assert "--permission-prompts" not in command
+    assert "--permission-mode" in command
+    assert "auto" in command
+
+
+def test_claude_agent_refine_writes_and_cleans_up_sandbox_settings(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    profile = AgentProfile(
+        name="claude-sandboxed",
+        provider="claude",
+        sandbox_write_paths=[str(tmp_path / "out")],
+        sandbox_read_paths=["intent/"],
+    )
+    agent = ClaudeAgent(profile)
+    ctx = make_refine_context()
+
+    agent.refine(ctx)
+
+    assert not (tmp_path / ".claude" / "settings.local.json").exists()
+
+
+def test_claude_agent_refine_bake_missing_response_file_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    ctx = make_refine_context(response_file_path=str(tmp_path / "missing.json"))
+    profile = AgentProfile(name="claude-default", provider="claude")
+    agent = ClaudeAgent(profile)
+
+    with pytest.raises(AgentError):
+        agent.refine_bake(ctx)
+
+
+def test_claude_agent_refine_bake_reads_response_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    response_file = tmp_path / "bake_response.json"
+    response_file.write_text(
+        json.dumps({"status": "success", "summary": "done", "generalizations": ["a rule"]})
+    )
+    ctx = make_refine_context(response_file_path=str(response_file))
+    profile = AgentProfile(name="claude-default", provider="claude")
+    agent = ClaudeAgent(profile)
+
+    result = agent.refine_bake(ctx)
+
+    assert isinstance(result, RefineBakeResponse)
+    assert result.status == "success"
+    assert result.generalizations == ["a rule"]
+
+
 def test_claude_agent_init_interactive_uses_repl(monkeypatch):
     captured = {}
 
@@ -630,6 +899,38 @@ def test_mock_agent_init_records_calls():
         ("myproj", "/tmp/intent", "a calculator app"),
         ("other", "/tmp/intent2", None),
     ]
+
+
+def test_mock_agent_refine_records_calls_and_supports_side_effect():
+    written: list[str] = []
+
+    def write_journal(ctx: RefineContext) -> None:
+        written.append(ctx.journal_path)
+
+    agent = MockAgent(refine_side_effect=write_journal)
+    ctx = make_refine_context()
+
+    agent.refine(ctx)
+
+    assert agent.refine_calls == [ctx]
+    assert written == ["/tmp/journal.md"]
+
+
+def test_mock_agent_refine_bake_returns_configured_response():
+    bake_response = RefineBakeResponse(status="success", summary="folded", generalizations=["a rule"])
+    agent = MockAgent(refine_bake_response=bake_response)
+    ctx = make_refine_context()
+
+    result = agent.refine_bake(ctx)
+
+    assert result is bake_response
+    assert agent.refine_bake_calls == [ctx]
+
+
+def test_mock_agent_refine_bake_default_response():
+    agent = MockAgent()
+    result = agent.refine_bake(make_refine_context())
+    assert result.status == "success"
 
 
 def test_mock_agent_records_calls_and_returns_configured_responses():

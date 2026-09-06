@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from intentc.core import (
+    Artifact,
     Implementation,
     IntentFile,
     ParseErrors,
@@ -181,6 +182,128 @@ def test_parse_intent_file_non_mapping_frontmatter_is_error(tmp_path):
     path = _write(tmp_path / "bad.ic", "---\n- one\n- two\n---\nBody\n")
     with pytest.raises(ParseErrors):
         parse_intent_file(path)
+
+
+# ---------------------------------------------------------------------------
+# artifacts
+# ---------------------------------------------------------------------------
+
+
+def test_parse_intent_file_artifacts_mapping_and_string_shorthand(tmp_path):
+    path = _write(
+        tmp_path / "feature.ic",
+        """---
+name: core/feature
+artifacts:
+  - path: task.schema.json
+    kind: schema
+    note: Every Task must validate against this schema.
+  - mockup.png
+---
+Body text.
+""",
+    )
+    intent = parse_intent_file(path)
+    by_path = {a.path: a for a in intent.artifacts}
+    assert by_path["task.schema.json"].kind == "schema"
+    assert by_path["task.schema.json"].note == "Every Task must validate against this schema."
+    assert by_path["mockup.png"].kind == "reference"
+    assert by_path["mockup.png"].note == ""
+
+
+def test_parse_intent_file_inline_references_become_reference_artifacts(tmp_path):
+    path = _write(
+        tmp_path / "feature.ic",
+        """---
+name: core/feature
+---
+See `./design.png` for details.
+""",
+    )
+    intent = parse_intent_file(path)
+    assert intent.file_references == ["./design.png"]
+    artifact = next(a for a in intent.artifacts if a.path == "./design.png")
+    assert artifact.kind == "reference"
+    assert artifact.note == ""
+
+
+def test_parse_intent_file_artifacts_declared_before_inline_and_deduped(tmp_path):
+    path = _write(
+        tmp_path / "feature.ic",
+        """---
+name: core/feature
+artifacts:
+  - path: ./design.png
+    kind: design
+    note: The canonical mockup.
+---
+See `./design.png` again in prose.
+""",
+    )
+    intent = parse_intent_file(path)
+    matching = [a for a in intent.artifacts if a.path == "./design.png"]
+    assert len(matching) == 1
+    assert matching[0].kind == "design"
+    assert matching[0].note == "The canonical mockup."
+
+
+def test_parse_intent_file_artifacts_not_a_list_is_error(tmp_path):
+    path = _write(tmp_path / "bad.ic", "---\nname: core/feature\nartifacts: nope\n---\nBody\n")
+    with pytest.raises(ParseErrors) as exc_info:
+        parse_intent_file(path)
+    assert any(e.field == "artifacts" for e in exc_info.value.errors)
+
+
+def test_parse_intent_file_artifact_entry_without_path_is_error(tmp_path):
+    path = _write(
+        tmp_path / "bad.ic",
+        "---\nname: core/feature\nartifacts:\n  - kind: schema\n---\nBody\n",
+    )
+    with pytest.raises(ParseErrors) as exc_info:
+        parse_intent_file(path)
+    assert any(e.field == "artifacts[0].path" for e in exc_info.value.errors)
+
+
+def test_parse_intent_file_artifact_bad_kind_type_is_error(tmp_path):
+    path = _write(
+        tmp_path / "bad.ic",
+        "---\nname: core/feature\nartifacts:\n  - path: a.json\n    kind: 5\n---\nBody\n",
+    )
+    with pytest.raises(ParseErrors) as exc_info:
+        parse_intent_file(path)
+    assert any(e.field == "artifacts[0].kind" for e in exc_info.value.errors)
+
+
+def test_parse_intent_file_artifact_entry_neither_string_nor_mapping_is_error(tmp_path):
+    path = _write(
+        tmp_path / "bad.ic",
+        "---\nname: core/feature\nartifacts:\n  - 5\n---\nBody\n",
+    )
+    with pytest.raises(ParseErrors) as exc_info:
+        parse_intent_file(path)
+    assert any(e.field == "artifacts[0]" for e in exc_info.value.errors)
+
+
+def test_write_intent_file_writes_declared_artifacts_only(tmp_path):
+    path = tmp_path / "feature.ic"
+    intent = IntentFile(
+        name="core/feature",
+        body="See `./design.png` in prose.",
+        file_references=["./design.png"],
+        artifacts=[
+            Artifact(path="task.schema.json", kind="schema", note="Must validate."),
+            Artifact(path="./design.png", kind="reference", note=""),
+        ],
+    )
+    write_intent_file(intent, path)
+    text = path.read_text(encoding="utf-8")
+    assert "task.schema.json" in text
+    assert "schema" in text
+    reparsed = parse_intent_file(path)
+    declared = [a for a in reparsed.artifacts if a.path == "task.schema.json"]
+    assert len(declared) == 1
+    assert declared[0].kind == "schema"
+    assert declared[0].note == "Must validate."
 
 
 # ---------------------------------------------------------------------------

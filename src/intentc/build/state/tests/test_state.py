@@ -405,3 +405,90 @@ def test_git_errors_are_raised_as_runtime_error_not_raw_subprocess_error(tmp_pat
 
     with pytest.raises(RuntimeError):
         vc.restore("not-a-real-commit-sha")
+
+
+# ---------------------------------------------------------------------------
+# Snapshot / materialize
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_does_not_move_head_or_branch(tmp_path):
+    _init_repo(tmp_path)
+    output_dir = "out"
+    (tmp_path / output_dir).mkdir()
+    (tmp_path / output_dir / "a.py").write_text("value = 1\n", encoding="utf-8")
+    vc = GitVersionControl(tmp_path, output_dir=output_dir)
+    base_commit = vc.checkpoint("base build")
+
+    (tmp_path / output_dir / "a.py").write_text("value = 2\n", encoding="utf-8")
+    snapshot_id = vc.snapshot("refined by hand", "refs/intentc/refinements/sess-1")
+
+    assert snapshot_id != base_commit
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert head_after == base_commit
+
+    branch_log = subprocess.run(
+        ["git", "log", "--format=%H"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert snapshot_id not in branch_log
+
+    ref_value = subprocess.run(
+        ["git", "rev-parse", "refs/intentc/refinements/sess-1"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert ref_value == snapshot_id
+
+
+def test_snapshot_leaves_the_real_index_untouched(tmp_path):
+    _init_repo(tmp_path)
+    output_dir = "out"
+    (tmp_path / output_dir).mkdir()
+    (tmp_path / output_dir / "a.py").write_text("value = 1\n", encoding="utf-8")
+    vc = GitVersionControl(tmp_path, output_dir=output_dir)
+    vc.checkpoint("base build")
+
+    (tmp_path / "staged_by_user.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "staged_by_user.py"], cwd=tmp_path, check=True)
+
+    (tmp_path / output_dir / "a.py").write_text("value = 2\n", encoding="utf-8")
+    vc.snapshot("refined by hand", "refs/intentc/refinements/sess-2")
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout
+    assert "A  staged_by_user.py" in status
+
+
+def test_snapshot_then_materialize_extracts_output_dir_content(tmp_path):
+    _init_repo(tmp_path)
+    output_dir = "out"
+    (tmp_path / output_dir).mkdir()
+    (tmp_path / output_dir / "a.py").write_text("value = 1\n", encoding="utf-8")
+    vc = GitVersionControl(tmp_path, output_dir=output_dir)
+    vc.checkpoint("base build")
+
+    (tmp_path / output_dir / "a.py").write_text("value = 2\n", encoding="utf-8")
+    (tmp_path / output_dir / "b.py").write_text("value = 3\n", encoding="utf-8")
+    snapshot_id = vc.snapshot("refined by hand", "refs/intentc/refinements/sess-3")
+
+    dest = tmp_path / "materialized"
+    vc.materialize(snapshot_id, dest)
+
+    assert (dest / output_dir / "a.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert (dest / output_dir / "b.py").read_text(encoding="utf-8") == "value = 3\n"
+
+
+def test_materialize_of_unknown_commit_raises_runtime_error(tmp_path):
+    _init_repo(tmp_path)
+    output_dir = "out"
+    (tmp_path / output_dir).mkdir()
+    vc = GitVersionControl(tmp_path, output_dir=output_dir)
+    vc.checkpoint("base build")
+
+    with pytest.raises(RuntimeError):
+        vc.materialize("not-a-real-commit-sha", tmp_path / "materialized")

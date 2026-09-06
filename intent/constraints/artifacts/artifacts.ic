@@ -1,0 +1,134 @@
+---
+name: artifacts
+version: 1
+depends_on:
+  - core/*
+  - build/agents
+  - build/validations
+  - build/builder
+tags: [constraints, foundation]
+---
+
+# Artifacts — constraining the solution space beyond prose
+
+Intent files describe *what* in prose, and prose is a loose constraint. A JSON schema, a design mockup, an OpenAPI contract, a fixture dataset, a colour palette or a prompt template says more precisely what generated code must conform to, and says it the same way on every rebuild. This feature makes such files first-class **artifacts** of a feature: declared in the intent, hashed into staleness detection, readable by the agent inside the sandbox, surfaced in the prompt, checked by the linter, and copied with the project.
+
+Today inline file references (see core/specifications, "File reference rules") are parsed and copied by `write_project`, and `intentc check` warns when one is missing. They are **not** part of the source hash, **not** in the sandbox read paths, and **not** shown to the agent. This feature closes those gaps and adds an explicit, typed declaration.
+
+This is a patch feature in the style of workflows/init: it modifies the modules owned by core/specifications, core/project, build/agents, build/validations and build/builder, and adds tests next to them. It creates no new package.
+
+## Declaring artifacts
+
+Two forms, both resolved to the same in-memory type:
+
+1. **Explicit declaration** in `.ic` frontmatter — preferred, because it carries a kind and a note:
+
+   ```yaml
+   artifacts:
+     - path: task.schema.json            # relative to this intent file
+       kind: schema
+       note: Every Task the store persists must validate against this schema.
+     - path: palette.md                  # a parent-relative path (`..`) reaches shared files, e.g. a design system directory under intent/
+       kind: design
+     - path: "*.csv"                     # globs are allowed
+       kind: fixture
+     - mockup.png                        # string shorthand for {path: mockup.png}
+   ```
+
+   Because the declaration is explicit, a bare filename is fine here (in the body a bare filename is prose, not a reference — see the file reference rules).
+
+2. **Inline references** in the body (existing behaviour). These become artifacts with `kind: reference` and an empty note.
+
+Entry fields:
+
+- `path` (string, required) — relative to the intent file that declares it; globs allowed; must resolve to a location under the `intent/` directory (an artifact outside the intent tree is not versioned with the intent and would not travel with `write_project`).
+- `kind` (string, optional, default `reference`) — free string. Suggested vocabulary: `schema`, `design`, `contract`, `fixture`, `prompt`, `example`, `reference`.
+- `note` (string, optional) — one or two sentences telling the agent *how* the artifact constrains the build.
+
+`project.ic` and `implementations/*.ic` accept the same field. Project-level artifacts apply to every build (a design system, a shared schema); implementation-level artifacts apply to builds that use that implementation (a style guide, a lint configuration).
+
+Parse-time errors (added to core/specifications' list, `field: artifacts` or `artifacts[<i>].<field>`): `artifacts` present but not a list; an entry that is neither a string nor a mapping; a mapping without `path`; `path`, `kind` or `note` not a string.
+
+## In-memory representation
+
+```
+Type Artifact:
+    path: string                        # as written in the intent (relative)
+    kind: string = "reference"
+    note: string = ""
+    owner: string = ""                  # feature path, "project", or "implementation:<name>"
+    resolved_paths: list of path = []   # absolute files after glob expansion; filled by load_project
+
+IntentFile, ProjectIntent, Implementation gain:
+    artifacts: list of Artifact = []    # declared entries first, then inline references; deduplicated by path
+```
+
+`file_references` is kept unchanged — it remains the raw list of inline references and is the source of the `kind: reference` entries. `write_intent_file` writes the `artifacts` field back out (declared entries only; inline references are already in the body).
+
+## Project (core/project)
+
+- `load_project()` resolves every artifact against the directory of the intent file that declares it, expands globs, and fills `resolved_paths` and `owner`. A path that resolves outside `intent/` is a load-time `ParseError` with `field: artifacts`.
+- `Project.artifacts_for(feature_path: string, implementation: Implementation or null = null) -> list of Artifact` — the target's own artifacts, then its ancestors' in topological order, then the project's, then the implementation's. Deduplicated by resolved path, first occurrence wins.
+- `Project.source_files(target: string) -> list of path` — the target's `.ic` and `.icv` files **plus the resolved paths of the target's own artifacts**. This is the list the builder hashes, so editing a schema marks the feature outdated exactly like editing its intent. Ancestor, project and implementation artifacts are deliberately *not* included: editing a project-wide design file does not silently schedule a rebuild of every target (the user runs `intentc build --force` for that).
+- `write_project()` copies resolved artifacts next to the copied intents, preserving their relative layout. This replaces the current copying of inline references.
+- `check_project()` gains:
+  - error: a *declared* artifact whose path or glob matches no file — `"artifact 'task.schema.json' matches no file — add it or remove the entry"`. (An inline reference that does not exist stays a warning, as today.)
+  - warning: an artifact larger than 1 MB — it will not be inlined in the prompt and is unlikely to be useful to an agent as a whole.
+  - warning: an artifact declared by two features with different `note`s (the agent gets both; the notes should agree).
+
+## Agent context (build/agents)
+
+`BuildContext` gains `artifacts: list of Artifact = []`. `render_prompt` always supplies a new variable, `{artifacts}`, to the build, validate and plan templates (and to the refine templates defined in workflows/refine). It renders as `(none)` when the list is empty, otherwise one block per artifact in `artifacts_for` order:
+
+```
+- task.schema.json  (schema, from store)
+  Every Task the store persists must validate against this schema.
+  path: <absolute path of the file under intent/>
+  ```json
+  { ...file content... }
+  ```
+```
+
+Content is inlined only for text files of at most 16 KB that decode as UTF-8; anything larger or binary lists the path followed by `(read this file)` so the agent opens it itself. The fenced block's language tag is the file extension.
+
+The bundled build, validate and plan templates gain an `### Artifacts` section, placed after `### INTENT` and before `### Validation`, reading:
+
+> The following artifacts constrain the solution. Conform to them exactly. Where the prose and an artifact disagree, the artifact wins — say so in your summary so the author can fix the prose.
+>
+> {artifacts}
+
+A template that lacks the placeholder still renders (every variable is always supplied).
+
+## Validations (build/validations)
+
+- `ValidationContext` gains `artifacts: list of Artifact` (from `project.artifacts_for(target, implementation)`) and `intent_dir: path` (from `project.intent_dir`). `AgentValidationRunner` passes the artifacts into the `BuildContext` it builds so rubrics can inspect them.
+- `command_validation` gains the `{intent_dir}` placeholder in `command` and `expect_output`, substituted with the absolute path of the `intent/` directory, so a deterministic check can point at an artifact:
+
+  ```yaml
+  - name: tasks-match-schema
+    type: command_validation
+    args:
+      cwd: "."
+      command: "uv run check-jsonschema --schemafile {intent_dir}/store/task.schema.json {output_dir}/fixtures/*.json"
+  ```
+
+- `file_exists` accepts `{intent_dir}` in `paths` for the same reason.
+
+## Builder (build/builder)
+
+- Sandbox read paths include every resolved path of `project.artifacts_for(target, implementation)`, absolute.
+- The `source_hash` recorded on a `BuildResult` is `content_hash(project.source_files(target))`, which now covers the target's own artifacts. Intent and validation file versions are recorded as before; artifacts contribute to the combined hash only.
+- `refresh_outdated()` keeps its current messages. (Attributing staleness to a specific artifact would need a per-file manifest; deferred.)
+- The `BuildContext` for every build and validation carries `artifacts_for(target, implementation)`.
+
+## First users
+
+intentc's own prompt templates are artifacts: `intent/build/agents/prompts/*.prompt`, `intent/differencing/prompts/*.prompt`, `intent/workflows/init/prompts/*.prompt` and `intent/workflows/refine/prompts/*.prompt` are the exact text the built package must ship. The refine feature declares its prompts with `kind: prompt`; the older features keep their markdown links (inline references) until their intents are next touched, and behave identically because inline references become `kind: reference` artifacts.
+
+## Requirements
+
+1. Declaring an artifact and then editing it marks the feature outdated and rebuilds it without `--force`.
+2. Inside the sandbox the agent can read every artifact of the target, its ancestors, the project and the selected implementation, and the prompt tells it they exist, what they are for, and (for small text files) what they contain.
+3. A missing declared artifact fails `intentc check`, not a build an hour later.
+4. `write_project` followed by `load_project` on the copy yields the same artifacts with the same content.
+5. Nothing changes for a project that declares no artifacts: prompts render `(none)`, hashes cover the same files as before, and existing databases keep working.

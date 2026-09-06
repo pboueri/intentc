@@ -8,12 +8,14 @@ unchanged.
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import subprocess
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from intentc.build.storage import (
     BuildResult,
@@ -122,6 +124,12 @@ class VersionControl(ABC):
     @abstractmethod
     def has_changes(self) -> bool: ...
 
+    @abstractmethod
+    def snapshot(self, message: str, ref_name: str) -> str: ...
+
+    @abstractmethod
+    def materialize(self, commit_id: str, dest_dir: "str | Path") -> None: ...
+
 
 class GitVersionControl(VersionControl):
     """`VersionControl` backed by git. Shells out via `subprocess` with argument
@@ -131,19 +139,26 @@ class GitVersionControl(VersionControl):
         self.repo_dir = Path(repo_dir)
         self.output_dir = output_dir
 
-    def _run(self, args: list[str]) -> str:
+    def _run(self, args: list[str], env: Optional[dict[str, str]] = None) -> str:
         try:
             result = subprocess.run(
                 ["git", *args],
                 cwd=self.repo_dir,
                 capture_output=True,
                 text=True,
+                env=env,
             )
         except OSError as exc:
             raise RuntimeError(f"failed to run git {' '.join(args)}: {exc}") from exc
         if result.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout
+
+    def _resolve_head(self) -> Optional[str]:
+        try:
+            return self._run(["rev-parse", "HEAD"]).strip()
+        except RuntimeError:
+            return None
 
     def _resolves(self, ref: str) -> bool:
         result = subprocess.run(
@@ -186,3 +201,49 @@ class GitVersionControl(VersionControl):
     def has_changes(self) -> bool:
         status = self._run(["status", "--porcelain", "--", self._pathspec()])
         return bool(status.strip())
+
+    def snapshot(self, message: str, ref_name: str) -> str:
+        """Commit the current working tree to a side ref without moving HEAD
+        or the branch. Stages into a temporary index so the user's real index
+        is never disturbed."""
+        pathspec = self._pathspec()
+        parent = self._resolve_head()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            index_path = Path(tmp_dir) / "index"
+            env = dict(os.environ)
+            env["GIT_INDEX_FILE"] = str(index_path)
+            if parent is not None:
+                self._run(["read-tree", parent], env=env)
+            self._run(["add", "-A", "--", pathspec], env=env)
+            tree = self._run(["write-tree"], env=env).strip()
+        commit_args = ["commit-tree", tree, "-m", message]
+        if parent is not None:
+            commit_args += ["-p", parent]
+        commit_id = self._run(commit_args).strip()
+        self._run(["update-ref", ref_name, commit_id])
+        return commit_id
+
+    def materialize(self, commit_id: str, dest_dir: "str | Path") -> None:
+        """Extract `commit_id`'s output directory into `dest_dir` (as
+        `dest_dir/<output_dir>/...`) via `git archive | tar -x`."""
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        pathspec = self._pathspec()
+        try:
+            archive_proc = subprocess.Popen(
+                ["git", "archive", commit_id, "--", pathspec],
+                cwd=self.repo_dir,
+                stdout=subprocess.PIPE,
+            )
+            extract_proc = subprocess.Popen(
+                ["tar", "-x", "-C", str(dest)],
+                stdin=archive_proc.stdout,
+            )
+            if archive_proc.stdout is not None:
+                archive_proc.stdout.close()
+            extract_proc.communicate()
+            archive_proc.wait()
+        except OSError as exc:
+            raise RuntimeError(f"failed to materialize commit {commit_id}: {exc}") from exc
+        if archive_proc.returncode != 0 or extract_proc.returncode != 0:
+            raise RuntimeError(f"failed to materialize commit {commit_id} into {dest_dir}")

@@ -10,6 +10,8 @@ from intentc.build.agents import (
     ClaudeAgent,
     MockAgent,
     PromptTemplates,
+    RefineBakeResponse,
+    RefineContext,
     ValidationResponse,
     create_from_profile,
 )
@@ -22,7 +24,7 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
-from intentc.build.storage import SQLiteBackend, StorageBackend
+from intentc.build.storage import RefinementSession, SQLiteBackend, StorageBackend
 from intentc.build.validations import (
     AgentValidationRunner,
     CommandValidationRunner,
@@ -43,6 +45,8 @@ __all__ = [
     "ClaudeAgent",
     "MockAgent",
     "PromptTemplates",
+    "RefineBakeResponse",
+    "RefineContext",
     "ValidationResponse",
     "create_from_profile",
     "Builder",
@@ -54,6 +58,7 @@ __all__ = [
     "TargetStatus",
     "VersionControl",
     "StorageBackend",
+    "RefinementSession",
     "SQLiteBackend",
     "AgentValidationRunner",
     "CommandValidationRunner",

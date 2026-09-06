@@ -32,6 +32,7 @@ from intentc.core import (
     Validation,
     ValidationFile,
     ValidationType,
+    load_project,
     write_intent_file,
     write_validation_file,
 )
@@ -173,6 +174,12 @@ class ScriptedAgent(Agent):
 
     def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
         return None
+
+    def refine(self, ctx) -> None:
+        return None
+
+    def refine_bake(self, ctx):
+        raise NotImplementedError
 
     def get_name(self) -> str:
         return "scripted"
@@ -435,6 +442,48 @@ def test_profile_override_takes_priority_over_builder_profile(tmp_path):
     assert build_profile_calls, "expected the overridden profile name to be used"
 
 
+def test_sandbox_read_paths_and_build_context_include_artifacts(tmp_path):
+    intent_dir = tmp_path / "intent"
+    intent_dir.mkdir(parents=True)
+    (intent_dir / "project.ic").write_text(
+        "---\nname: demo\nartifacts:\n  - path: shared.md\n---\nA demo project.\n", encoding="utf-8"
+    )
+    (intent_dir / "shared.md").write_text("shared", encoding="utf-8")
+    (intent_dir / "implementations").mkdir(parents=True)
+    (intent_dir / "implementations" / "default.ic").write_text(
+        "---\nname: default\n---\nPython 3.11, uv, pydantic.\n", encoding="utf-8"
+    )
+    (intent_dir / "a").mkdir(parents=True)
+    (intent_dir / "a" / "a.ic").write_text(
+        "---\nname: a\nartifacts:\n  - path: a.schema.json\n---\nBuild A.\n", encoding="utf-8"
+    )
+    (intent_dir / "a" / "a.schema.json").write_text("{}", encoding="utf-8")
+    (intent_dir / "a" / "validation.icv").write_text(
+        "target: a\nversion: 1\nvalidations:\n  - name: a-check\n    type: agent_validation\n"
+        "    severity: error\n    args:\n      rubric: \"Check the feature was built correctly "
+        "and completely.\"\n",
+        encoding="utf-8",
+    )
+
+    project = load_project(intent_dir)
+    agent = ScriptedAgent()
+    factory = make_factory(agent)
+    builder, output_dir = make_builder(tmp_path, project, factory)
+
+    builder.build(BuildOptions(target="a", output_dir=str(output_dir)))
+
+    profile = factory.calls[0]
+    a_schema = str((intent_dir / "a" / "a.schema.json").resolve())
+    shared_md = str((intent_dir / "shared.md").resolve())
+    assert a_schema in profile.sandbox_read_paths
+    assert shared_md in profile.sandbox_read_paths
+
+    build_ctx = agent.build_calls[0]
+    artifact_paths = {a.path for a in build_ctx.artifacts}
+    assert "a.schema.json" in artifact_paths
+    assert "shared.md" in artifact_paths
+
+
 def test_sandbox_paths_are_absolute_and_scoped(tmp_path):
     project = make_project(tmp_path)
     agent = ScriptedAgent()
@@ -576,6 +625,52 @@ def test_editing_an_intent_file_marks_it_and_its_dependents_outdated_on_rebuild(
     assert any("Marked 'a' outdated: intent changed" in line for line in logs)
     assert any("Marked 'b' outdated: dependency 'a' changed" in line for line in logs)
     assert any("Marked 'c' outdated: dependency 'a' changed" in line for line in logs)
+
+
+def test_editing_only_a_declared_artifact_marks_feature_outdated_and_rebuilds(tmp_path):
+    intent_dir = tmp_path / "intent"
+    intent_dir.mkdir(parents=True)
+    write_intent_file(ProjectIntent(name="demo", body="A demo project."), intent_dir / "project.ic")
+    write_intent_file(
+        Implementation(name="default", body="Python 3.11, uv, pydantic."),
+        intent_dir / "implementations" / "default.ic",
+    )
+    (intent_dir / "a").mkdir(parents=True)
+    (intent_dir / "a" / "a.ic").write_text(
+        "---\nname: a\nartifacts:\n  - path: a.schema.json\n    kind: schema\n---\nBuild A.\n",
+        encoding="utf-8",
+    )
+    (intent_dir / "a" / "a.schema.json").write_text("{}", encoding="utf-8")
+    write_validation_file(
+        ValidationFile(
+            target="a",
+            validations=[
+                Validation(
+                    name="a-check",
+                    type=ValidationType.AGENT_VALIDATION.value,
+                    severity=Severity.ERROR,
+                    args={"rubric": "Check the feature was built correctly and completely."},
+                )
+            ],
+        ),
+        intent_dir / "a" / "validation.icv",
+    )
+
+    project = load_project(intent_dir)
+    agent = ScriptedAgent()
+    builder, output_dir = make_builder(tmp_path, project, make_factory(agent))
+
+    results, error = builder.build(BuildOptions(target="a", output_dir=str(output_dir)))
+    assert error is None
+    assert len(agent.build_calls) == 1
+
+    (intent_dir / "a" / "a.schema.json").write_text('{"changed": true}', encoding="utf-8")
+
+    assert builder.detect_outdated() == ["a"]
+
+    results2, error2 = builder.build(BuildOptions(target="a", output_dir=str(output_dir)))
+    assert error2 is None
+    assert len(agent.build_calls) == 2
 
 
 def test_refresh_outdated_leaves_pending_and_failed_descendants_alone(tmp_path):

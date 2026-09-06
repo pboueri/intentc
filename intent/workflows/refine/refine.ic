@@ -1,0 +1,209 @@
+---
+name: refine
+version: 1
+depends_on:
+  - interfaces/cli
+  - build/agents
+  - build/builder
+  - build/state
+  - build/storage
+  - differencing
+  - constraints/artifacts
+tags: [workflow, refinement]
+artifacts:
+  - path: ./prompts/refine.prompt
+    kind: prompt
+    note: The exact text of the interactive refinement session prompt. Ship it verbatim as the bundled default.
+  - path: ./prompts/refine_bake.prompt
+    kind: prompt
+    note: The exact text of the non-interactive bake prompt. Ship it verbatim as the bundled default.
+---
+
+# Interactive Refinement — conversational iteration, reproducible by construction
+
+Coding agents feel good because you talk to running code: "make the buttons bigger", "no, the other list", "that should be a 404". intentc feels slower because every change is a spec edit and a rebuild. `intentc refine` gives the conversational loop back **without giving up reproducibility**: the user iterates on a built feature with an agent, exactly like an ordinary coding session, while the agent keeps a journal of every ask and every decision. When the session ends, a second, non-interactive pass **bakes** the journal and the resulting code diff back into the feature's `.ic` and `.icv` files, generalising the ad-hoc requests into intent, then rebuilds the feature **from scratch** from the updated intent and checks that the rebuild is functionally equivalent to what the user refined by hand. If it is, the intent now captures the refinement and the hand-edited code is discarded. If it is not, the bake retries with the divergence as feedback, and finally hands the user back their refined code plus the draft intent.
+
+The property this protects: the intent files remain the source of truth. Code that only exists because someone said it in a chat never gets checkpointed.
+
+This feature adds a `refine` workflow package, a `refine` CLI command, two prompt templates, two agent methods, a version-control snapshot facility and a storage table. It patches interfaces/cli, build/agents, build/state and build/storage in the style of workflows/init.
+
+## Command
+
+```
+intentc refine <target> [prompt] [--no-bake] [--bake] [--abandon] [--no-compare] [-o DIR] [-p PROFILE] [-i IMPL]
+```
+
+- `target` — a feature whose status in the output directory is `built` (or `outdated` — the user may refine before rebuilding). `pending` or `failed` targets are a usage error: `"'<target>' has not been built in <output_dir>. Run: intentc build <target>"`, exit 2. An unknown target is the usual `"Unknown feature ..."`, exit 2.
+- `prompt` (optional) — what the user wants to change, seeded into the session so the agent starts working immediately.
+- `--no-bake` — record the session but do not bake when it ends; the session stays open for `intentc refine <target>` to resume or `--bake` to finish.
+- `--bake` — do not open a session; bake the currently open session for this target.
+- `--abandon` — discard the open session: restore the output directory to the session's base commit, mark the session `abandoned`, exit 0.
+- `--no-compare` — skip the functional-equivalence check after the rebuild (cheaper; the rebuild still has to pass its validations).
+
+Exit codes: `0` — baked, validated and equivalent (or recorded with `--no-bake`, or abandoned); `1` — the bake could not produce an equivalent, validated rebuild within the retry budget; `2` — usage error, including an open session for a *different* target in the same output directory (`"'<other>' has an open refinement session <id>. Bake or abandon it first."`).
+
+The command is a thin wrapper: it wires project, config, profile, implementation, storage, state manager, version control and builder, then calls `run_refine(...)`, `bake_refinement(...)` or `abandon_refinement(...)` from the refine workflow module. All logic lives in the workflow.
+
+## Session lifecycle
+
+### Start
+
+1. Refuse if `version_control.has_changes()` reports uncommitted changes in the output directory: `"<output_dir> has uncommitted changes. Commit or discard them before refining."`, exit 2. The session must start from a checkpointed tree so the bake has a clean baseline.
+2. Create a `RefinementSession` with a fresh UUID `session_id`, `status: recording`, `base_commit` = the current HEAD commit id, the target, output dir and seed prompt. Persist it via storage (see below).
+3. Create the journal file at `.intentc/state/<output_dir>/refinements/<session_id>/journal.md` containing only the heading `# Refinement journal — <target> — <session_id>`.
+4. Build a `RefineContext` (below) and call `agent.refine(ctx)`, which drops the user into an interactive session (see Agent changes). The user is present, so this is the second exception (after plan/init) to non-interactive execution; the agent runs in the profile's interactive permission mode, with write access to the output directory and the session directory, and read access to the same intent files and artifacts a build of this target gets. The agent must **not** edit anything under `intent/` during the session — that is the bake's job — and the refine prompt says so.
+5. When the interactive process exits, read the journal file, store its text on the session, and log `"Refinement session <id8> recorded: <n> journal entries"`.
+6. Unless `--no-bake` was given, ask `"Bake this refinement into the intent now? [Y/n]"` (the user is at the terminal). Yes → bake. No → leave the session `recording` and print `"Session left open. Resume: intentc refine <target>   Bake: intentc refine <target> --bake   Discard: intentc refine <target> --abandon"`.
+
+### Resume
+
+If a session with `status: recording` exists for this target and output directory, `intentc refine <target> [prompt]` resumes it instead of starting a new one: the same journal is appended to, the seed prompt (if any) is added as a new ask, and the agent is relaunched with the journal so far in its context (`RefineContext.journal`). The journal is the **only** memory the workflow relies on: no agent-specific conversation state, transcript or session identifier is assumed, so any agent that can read a prompt and edit files can run a refinement session. An agent implementation may additionally restore its own native conversation state if it has one, but nothing in the workflow depends on it.
+
+### Snapshot
+
+Immediately before baking, the refined working tree is preserved: `version_control.snapshot(message) -> snapshot_id` records the current state of the output directory as a commit object reachable from `refs/intentc/refinements/<session_id>` **without moving HEAD or the branch**, so the linear build history stays a sequence of intent-derived builds. `snapshot_id` is stored on the session. The snapshot is what the bake compares against and what the user gets back if the bake fails.
+
+`VersionControl` gains:
+
+```
+snapshot(message: string, ref_name: string) -> string        # commit the working tree to a side ref; return the commit id; HEAD unchanged
+materialize(commit_id: string, dest_dir: path) -> void       # extract that commit's output directory into dest_dir (git archive, or a detached worktree)
+```
+
+`GitVersionControl` implements them with `git write-tree` / `git commit-tree` / `git update-ref` (after `git add -A` of the output directory into a temporary index so the user's index is not disturbed) and `git archive <commit> <output_dir> | tar -x -C <dest>`. The `MockVersionControl` used in tests keeps snapshots in memory.
+
+### Bake
+
+`bake_refinement(session, ...)` runs, logging each step with the builder's timestamped logger:
+
+1. **Snapshot** the refined tree (above) and compute `diff = version_control.diff(base_commit, snapshot_id)` restricted to the output directory. Set `status: baking`.
+2. **Attribute** the diff: using each built target's `files_created`/`files_modified` manifests from storage, group changed files by owning feature. Files owned by an ancestor are still baked into *this* target's intent as an explicit patch instruction ("extend `store` with ..."), which the build prompt already permits; the bake prompt is told which files belong to whom so it can word this correctly.
+3. **Rewrite the intent** — call `agent.refine_bake(ctx)` non-interactively with the `refine_bake` template. The agent may edit only: the target's `.ic` file(s), its `.icv` file(s), and new files under the target's feature directory that it declares as artifacts (a schema the user pasted in chat, a fixture, a mockup). It writes a `RefineBakeResponse` to the response file. Sandbox: write access to the target's feature directory and the response directory; read access as for a build of the target plus the snapshot materialised into a temporary directory (so the agent can read the refined code, not just the diff).
+4. **Lint** — `load_project()` + `check_project()`. Parse errors or lint errors are bake failures whose messages become `previous_errors` for the next attempt.
+5. **Rebuild from scratch** — `builder.clean(target, output_dir)` (restores the tree to before this target's last checkpoint; descendants become `outdated`), then `builder.build(BuildOptions(target=target, force=true, output_dir=..., implementation=...))`. The builder's own retry loop and validations apply. A failed build is a bake failure; the failing step summary and validation reasons become `previous_errors`.
+6. **Compare** — unless `--no-compare`: materialise the snapshot into a temporary directory and call `run_differencing(output_dir_a=<snapshot dir>, output_dir_b=<output_dir>, project, profile, implementation)`. `divergent` is a bake failure; each failing dimension's `rationale` becomes a `previous_errors` entry prefixed with the dimension name.
+7. **Retry** — on any failure in steps 3–6, go back to step 3 with the accumulated `previous_errors`, up to `profile.retries` total bake attempts (`bake_attempts` is recorded on the session). Each attempt starts from the intent as the previous attempt left it — the agent refines its own edit, it does not start over.
+8. **Outcome**
+   - Success: the target is `built` and checkpointed from the updated intent; `status: baked`, `ended_at` set, `bake_generation_id` = the build's generation id, the bake response JSON stored on the session. The journal file is deleted (its text lives in the database). Print the bake summary, the list of generalisations the agent recorded, any `open_questions`, and the hint `"Intent updated: intent/<target>/... — review and commit it. Downstream targets are outdated: intentc build"`. Exit 0.
+   - Exhausted: restore the refined snapshot into the output directory (`version_control.restore(snapshot_id)` scoped to the output directory, left uncommitted — the user's hand-made work is never lost), set the target's status to `outdated` (its intent has changed since its last checkpoint), `status: failed`. The updated `.ic`/`.icv` stay on disk as a draft. Print what failed on the last attempt (validation reasons or divergent dimensions), and the hint `"Refined code restored to <output_dir> (uncommitted). Draft intent left in intent/<target>/. Edit it and run: intentc build <target> -f   or retry: intentc refine <target> --bake"`. Exit 1.
+
+Intent edits are never committed by the bake. Intent history is the user's (see the project philosophy: separate histories for intent changes and generated changes).
+
+### Abandon
+
+`abandon_refinement(session)` — `version_control.restore(base_commit)` scoped to the output directory, delete the journal file, `status: abandoned`, `ended_at` set. Nothing else changes.
+
+## The journal contract
+
+The journal is the reproducibility contract between the two phases. The refine prompt instructs the agent to append one entry per ask, in this exact shape, immediately after acting on it:
+
+```markdown
+## 3. Larger touch targets on the toolbar
+**Asked:** "the toolbar buttons are too small on my phone"
+**Decided:** Raised the buttons to a 44px minimum hit area; kept the icon size. Rejected making the toolbar itself taller because the user wants the canvas area unchanged.
+**Rule:** Interactive controls must have a minimum 44×44px hit area on touch devices.
+**Changed:** toolbar.css, toolbar.js
+**Check:** A layout test asserting every toolbar button's bounding box is at least 44×44 at the mobile breakpoint.
+```
+
+`Rule` and `Check` are the lines the bake lives on: the rule is the implementation-independent requirement the ask revealed; the check is how a deterministic validation could catch a regression. The agent is told to write the rule so that a different agent, in a different language, could satisfy it from the sentence alone, and to say "none" for `Check` rather than invent an untestable one.
+
+## Bake principles (encoded in the bake prompt)
+
+- Capture the *requirement*, not the *edit*: "controls have a 44px hit area" not "set padding to 12px in toolbar.css".
+- Fold rules into the existing structure of the intent — extend the section they belong to, keep the file's voice; do not append a "Refinements" section or mention the session, the journal or the chat.
+- Every rule with a `Check` becomes a validation. Prefer `command_validation` and `file_exists`; use `agent_validation` only for judgement calls, with a rubric specific enough to fail.
+- Never remove or weaken an existing requirement or validation unless a journal entry explicitly reverses it — then update it and say so in the summary.
+- Copy concrete values the user gave (a colour, a limit, an error message, a status code) verbatim into the intent: those are the spec. Do not copy code.
+- If the user pasted a schema, a mock, a fixture or an example that constrains the solution, save it under the feature directory and declare it in `artifacts:` with a note (see constraints/artifacts) instead of transcribing it into prose.
+- If an ask cannot be generalised (the journal contradicts itself, or the change was exploratory and reverted), leave the intent alone for that ask and list it under `open_questions`.
+- Where a change touched files owned by another feature, word it as an explicit patch instruction on that feature within this intent, naming the feature.
+
+## Agent changes (build/agents)
+
+`PromptTemplates` gains `refine: string` and `refine_bake: string`, loaded from `intentc/build/agents/prompts/refine.prompt` and `refine_bake.prompt` (bundled copies of the artifacts declared in this feature's frontmatter — the build copies them into the package, as it does for the other prompts).
+
+```
+Type RefineContext:
+    session_id: string
+    feature_path: string
+    intent: IntentFile
+    validations: list of ValidationFile
+    artifacts: list of Artifact
+    project_intent: ProjectIntent
+    implementation: Implementation or null
+    output_dir: string
+    journal_path: string                # absolute path of journal.md
+    journal: string                     # journal text so far (empty on a new session)
+    seed_prompt: string = ""
+    base_commit: string = ""
+    snapshot_dir: string = ""           # bake only: materialised refined tree
+    diff: string = ""                   # bake only: base_commit -> snapshot, output dir only
+    files_by_owner: map of string to list of string = {}   # bake only: feature -> changed files it owns
+    previous_errors: list of string = []                    # bake retries
+    response_file_path: string = ""     # bake only
+
+Type RefineBakeResponse:
+    status: string                      # "success" or "failure"
+    summary: string
+    files_modified: list of string      # intent-relative paths the agent edited
+    artifacts_added: list of string     # new artifact files it created and declared
+    generalizations: list of string     # one sentence per rule folded into the intent
+    open_questions: list of string      # asks it could not generalise, and why
+
+Interface Agent:
+    ...existing methods...
+    refine(ctx: RefineContext) -> void                      # interactive; falls back to single-shot like plan
+    refine_bake(ctx: RefineContext) -> RefineBakeResponse   # non-interactive; response file protocol as for build
+```
+
+Template variables, all always supplied: `{project}`, `{implementation}`, `{feature}`, `{feature_name}`, `{validations}`, `{artifacts}`, `{output_dir}`, `{journal_path}`, `{journal}`, `{seed_prompt}`, `{snapshot_dir}`, `{diff}`, `{files_by_owner}` (bulleted `feature: file, file`), `{previous_errors}`, `{response_file}`, `{intent_path}` (the `.ic` path), `{validation_path}` (the `.icv` path, or the path to create), `{feature_dir}`.
+
+`refine` is interactive in exactly the way `plan` is: `ClaudeAgent.refine` launches the REPL as `plan` does with the rendered refine prompt as the positional argument (a resumed session therefore opens with the journal so far and the new ask); `CLIAgent.refine` renders the same template and passes it to its command, and if that command is not interactive the session degenerates to a single-shot invocation, the same fallback `plan` has. `refine_bake` is non-interactive for every agent and uses the response-file protocol; a missing or malformed response file is an `AgentError` (no synthesis — the bake must be explicit). `MockAgent` records `refine_calls` and `refine_bake_calls` and returns a configurable `RefineBakeResponse`; its `refine` may be given a callable that writes journal text, so tests can simulate a session.
+
+## Storage (build/storage)
+
+A tenth table; created with `CREATE TABLE IF NOT EXISTS` like the others, so existing databases upgrade in place:
+
+```sql
+refinement_sessions (
+    session_id          TEXT PRIMARY KEY,
+    target              TEXT NOT NULL,
+    output_dir          TEXT NOT NULL,
+    status              TEXT NOT NULL,            -- recording | baking | baked | failed | abandoned
+    base_commit         TEXT NOT NULL,
+    snapshot_id         TEXT,
+    seed_prompt         TEXT NOT NULL DEFAULT '',
+    journal             TEXT NOT NULL DEFAULT '',
+    bake_attempts       INTEGER NOT NULL DEFAULT 0,
+    bake_generation_id  TEXT REFERENCES generations(generation_id),
+    bake_response_json  TEXT,
+    started_at          TEXT NOT NULL,
+    ended_at            TEXT
+)
+```
+
+`StorageBackend` gains: `create_refinement_session(session: RefinementSession) -> void`, `update_refinement_session(session_id, **fields) -> void`, `get_refinement_session(session_id) -> RefinementSession or null`, `get_open_refinement_session(target: string or null = null) -> RefinementSession or null` (any open session in this output directory when `target` is null), `list_refinement_sessions(target, limit=10) -> list of RefinementSession` newest first. `RefinementSession` is a pydantic model mirroring the columns, defined in the storage backend module and re-exported from the build package.
+
+## CLI integration (interfaces/cli)
+
+- `intentc status` — a target with an open (`recording` or `baking`) session shows `refining <id8>` in its status cell, in yellow, and the footer adds `"1 refinement session open: intentc refine <target> --bake"`.
+- `intentc log <target>` — after the build history, a `Refinements` table: session id (8 chars), status, started, attempts, bake generation, and the count of journal entries; `--session <id>` prints that session's journal in full.
+- `intentc build` — refuses with exit 2 when the requested build set contains a target with an open session: `"'<target>' has an open refinement session. Bake or abandon it before building."` Building unrelated targets is allowed.
+- `intentc clean <target>` — same refusal.
+- Output rendering: `render_refine_summary(session, response)` prints the bake summary, generalisations as a bulleted list and open questions in yellow; `render_refinement_log(sessions)` renders the table.
+
+## Module layout
+
+- `intentc/refine/__init__.py` — re-exports `run_refine`, `bake_refinement`, `abandon_refinement`, `RefineOutcome`.
+- `intentc/refine/workflow.py` — the three workflow functions plus helpers (journal I/O, diff attribution, snapshot materialisation). Signatures follow the wiring pattern of `run_differencing`: they take the loaded project, profile, implementation, state manager, version control, builder and a `log` callback; nothing is constructed inside except temporary directories and the agent (via the builder's `_create_agent` factory so tests inject mocks).
+- `intentc/refine/tests/test_refine.py` — tests with `MockAgent` and `MockVersionControl`, in temporary directories with a real `SQLiteBackend`, covering: start refuses on dirty tree and on unbuilt target; a recorded session persists its journal; resume appends; bake calls `refine_bake` once on success, then clean → build (force) → validate → compare in that order; a divergent compare feeds the dimension rationale into the next bake's `previous_errors`; exhaustion restores the snapshot, leaves the target `outdated` and the session `failed`; abandon restores `base_commit`; `build` refuses while a session is open for that target.
+- `intentc/build/agents/prompts/refine.prompt`, `refine_bake.prompt` — bundled copies of this feature's artifacts.
+
+## Constraints
+
+- The refine session never edits `intent/`; the bake never edits the output directory (the builder does, via a normal build).
+- The bake never commits intent files.
+- The linear build history contains only intent-derived checkpoints; refined trees live under `refs/intentc/refinements/`.
+- No test depends on the `claude` binary; interactive launches are exercised through `MockAgent`.
+- All of `run_refine`, `bake_refinement` and `abandon_refinement` emit timestamped build-step style log lines so the user can follow a long bake: `"[bake 1/3] rewriting intent"`, `"[bake 1/3] rebuilding <target> from scratch"`, `"[bake 1/3] comparing against refined snapshot"`, `"  ✗ divergent: runtime_behavior — ..."`.

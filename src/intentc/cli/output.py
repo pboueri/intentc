@@ -13,8 +13,10 @@ from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
-from intentc.build.agents import DifferencingResponse
-from intentc.build.storage import BuildResult
+import re
+
+from intentc.build.agents import DifferencingResponse, RefineBakeResponse
+from intentc.build.storage import BuildResult, RefinementSession
 from intentc.build.validations import ValidationSuiteResult
 from intentc.core import Project, ProjectIssue
 
@@ -25,13 +27,20 @@ _STATUS_STYLES = {
     "pass": "green",
     "success": "green",
     "equivalent": "green",
+    "baked": "green",
     "failed": "red",
     "fail": "red",
     "divergent": "red",
     "outdated": "yellow",
     "warning": "yellow",
+    "recording": "yellow",
+    "baking": "yellow",
+    "refining": "yellow",
     "pending": "dim",
+    "abandoned": "dim",
 }
+
+_JOURNAL_ENTRY_RE = re.compile(r"^## ", re.MULTILINE)
 
 
 def _status_value(status: Any) -> str:
@@ -39,7 +48,10 @@ def _status_value(status: Any) -> str:
 
 
 def _style_for(status: Any) -> str:
-    return _STATUS_STYLES.get(_status_value(status).lower(), "")
+    value = _status_value(status).lower()
+    if value.startswith("refining"):
+        return "yellow"
+    return _STATUS_STYLES.get(value, "")
 
 
 def _styled(status: Any) -> str:
@@ -299,3 +311,49 @@ def render_compare_results(response: DifferencingResponse, console: Optional[Con
         table.add_row(dimension.name, _styled(dimension.status), dimension.rationale)
     out.print(table)
     out.print(f"{_styled(response.status)}: {response.summary}")
+
+
+# ---------------------------------------------------------------------------
+# refine
+# ---------------------------------------------------------------------------
+
+
+def render_refine_summary(
+    session: RefinementSession,
+    response: Optional[RefineBakeResponse],
+    console: Optional[Console] = None,
+) -> None:
+    out = console or Console()
+    out.print(f"Session {session.session_id[:8]}: {_styled(session.status)}")
+    if response is None:
+        return
+    out.print(response.summary)
+    if response.generalizations:
+        out.print("Generalizations:")
+        for generalization in response.generalizations:
+            out.print(f"  - {generalization}")
+    if response.open_questions:
+        for question in response.open_questions:
+            print_warning(f"  ? {question}", console=out)
+
+
+def render_refinement_log(sessions: Sequence[RefinementSession], console: Optional[Console] = None) -> None:
+    out = console or Console()
+    table = Table(title="Refinements")
+    table.add_column("Session")
+    table.add_column("Status")
+    table.add_column("Started")
+    table.add_column("Attempts", justify="right")
+    table.add_column("Bake Generation")
+    table.add_column("Journal Entries", justify="right")
+    for session in sessions:
+        entry_count = len(_JOURNAL_ENTRY_RE.findall(session.journal))
+        table.add_row(
+            session.session_id[:8],
+            _styled(session.status),
+            session.started_at or "-",
+            str(session.bake_attempts),
+            (session.bake_generation_id or "-")[:8] if session.bake_generation_id else "-",
+            str(entry_count),
+        )
+    out.print(table)

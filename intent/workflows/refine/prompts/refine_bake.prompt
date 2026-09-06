@@ -1,0 +1,75 @@
+### Context
+You are working in the context of the following project:
+
+{project}
+
+with the following implementation approach:
+
+{implementation}
+
+### Task
+A user just finished an interactive refinement session on the feature `{feature_name}`. During that session an agent edited the generated code directly and kept a journal of every ask and decision. Your job is to **bake** that refinement back into the feature's intent and validations so that the feature can be rebuilt from scratch and come out functionally equivalent to the refined code. The refined code will then be discarded. Nothing you do not capture here survives.
+
+You may edit only:
+- the intent file: `{intent_path}`
+- the validation file: `{validation_path}` (create it if it does not exist)
+- new files you create under `{feature_dir}` that you declare as artifacts in the intent's frontmatter (`artifacts:` list with `path`, `kind`, `note`)
+
+Do not edit any file under `{output_dir}`, any other feature's files, `project.ic` or the implementations.
+
+### Current intent
+
+{feature}
+
+### Current validations
+
+{validations}
+
+### Artifacts already declared
+
+{artifacts}
+
+### The journal
+
+{journal}
+
+### The code diff (refined tree against the last checkpoint, `{output_dir}` only)
+
+```diff
+{diff}
+```
+
+Files in the diff, grouped by the feature that owns them (from the build manifests):
+
+{files_by_owner}
+
+The full refined tree is readable at `{snapshot_dir}` if the diff is not enough context.
+
+### Principles
+1. **Capture the requirement, not the edit.** Each journal **Rule** becomes intent text. "Controls have a 44×44px minimum hit area on touch devices", never "set padding to 12px in toolbar.css". Concrete values the user gave (a colour, a limit, an error message, a status code) go in verbatim — they are the spec. Code does not.
+2. **Fold rules into the existing structure.** Extend the section each rule belongs to, in the file's existing voice. Do not append a "Refinements" or "Changes" section. Do not mention the session, the journal, the chat or the user.
+3. **Every Check becomes a validation.** Prefer `command_validation` and `file_exists`; use `agent_validation` only for judgement calls, with a rubric specific enough that it could fail. Keep existing validations passing; a `Check` of "none" gets no validation.
+4. **Never weaken.** Do not remove or soften an existing requirement or validation unless a journal entry explicitly withdraws it — then update it and say so in `summary`.
+5. **Constraints become artifacts.** If the user supplied a schema, mock, fixture, palette, example payload or similar, save it under `{feature_dir}` and declare it under `artifacts:` with a `kind` and a one-sentence `note`, instead of transcribing it into prose.
+6. **Cross-feature changes become patch instructions.** Where the diff touched files owned by another feature, word the requirement in this intent as an explicit instruction naming that feature ("extend `store` so that ..."). Do not edit that feature's intent.
+7. **Say what you could not generalise.** A withdrawn ask, a reverted experiment, or a journal entry that contradicts another without resolution: leave the intent alone for it and list it under `open_questions` with one sentence of why.
+8. **Stay generic.** If two rules can be one principle without losing what the user asked for, write the principle. Do not over-specify layout, naming or file structure the user never mentioned.
+
+{previous_errors}
+
+If there are previous errors above, they come from rebuilding the feature from your last edit and comparing it with the refined code (validation failures, or divergent dimensions from the equivalence check). Fix the intent so the next rebuild passes: usually the rule was too vague, a value was missing, or a validation encodes the refined implementation rather than the requirement.
+
+### Finish
+1. Run `intentc check` from the project root and fix anything it reports about this feature.
+2. Write a JSON file to `{response_file}`:
+```json
+{{
+  "status": "success" or "failure",
+  "summary": "what changed in the intent and validations, and any requirement you updated or withdrew",
+  "files_modified": ["intent/<feature>/<file>.ic", "intent/<feature>/validations.icv"],
+  "artifacts_added": ["intent/<feature>/schema/example.json"],
+  "generalizations": ["one sentence per rule folded into the intent"],
+  "open_questions": ["one sentence per ask you could not generalise, and why"]
+}}
+```
+You MUST write this file before you finish, even if you could not complete the bake.

@@ -10,6 +10,7 @@ from typing import Any, Optional, Union
 import yaml
 
 from intentc.core.models import (
+    Artifact,
     Implementation,
     IntentFile,
     ParseError,
@@ -108,6 +109,57 @@ def _validate_str_list(
     return value
 
 
+def _parse_artifacts(
+    data: dict[str, Any], path: Path, errors: list[ParseError]
+) -> list[Artifact]:
+    raw = data.get("artifacts")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        errors.append(ParseError(path, "artifacts", "must be a list"))
+        return []
+
+    artifacts: list[Artifact] = []
+    for idx, entry in enumerate(raw):
+        prefix = f"artifacts[{idx}]"
+        if isinstance(entry, str):
+            artifacts.append(Artifact(path=entry))
+            continue
+        if not isinstance(entry, dict):
+            errors.append(ParseError(path, prefix, "must be a string or a mapping"))
+            continue
+
+        entry_path = entry.get("path")
+        if not entry_path or not isinstance(entry_path, str):
+            errors.append(ParseError(path, f"{prefix}.path", "missing or empty required field"))
+            continue
+
+        kind = entry.get("kind", "reference")
+        if not isinstance(kind, str):
+            errors.append(ParseError(path, f"{prefix}.kind", "must be a string"))
+            continue
+
+        note = entry.get("note", "")
+        if not isinstance(note, str):
+            errors.append(ParseError(path, f"{prefix}.note", "must be a string"))
+            continue
+
+        artifacts.append(Artifact(path=entry_path, kind=kind, note=note))
+
+    return artifacts
+
+
+def _dedup_artifacts_by_path(artifacts: list[Artifact]) -> list[Artifact]:
+    seen: set[str] = set()
+    result: list[Artifact] = []
+    for artifact in artifacts:
+        if artifact.path in seen:
+            continue
+        seen.add(artifact.path)
+        result.append(artifact)
+    return result
+
+
 def parse_intent_file(
     path: Union[str, Path],
     as_project: bool = False,
@@ -133,11 +185,14 @@ def parse_intent_file(
 
     tags = _validate_str_list(data, "tags", path, errors)
     authors = _validate_str_list(data, "authors", path, errors)
+    declared_artifacts = _parse_artifacts(data, path, errors)
 
     if errors:
         raise ParseErrors(errors)
 
     file_references = extract_file_references(body)
+    inline_artifacts = [Artifact(path=ref) for ref in file_references]
+    artifacts = _dedup_artifacts_by_path(declared_artifacts + inline_artifacts)
 
     common: dict[str, Any] = dict(
         name=name,
@@ -145,6 +200,7 @@ def parse_intent_file(
         authors=authors,
         body=body,
         file_references=file_references,
+        artifacts=artifacts,
         source_path=path,
     )
 
@@ -256,6 +312,15 @@ def parse_validation_file(path: Union[str, Path]) -> ValidationFile:
     )
 
 
+def _artifact_to_dict(artifact: Artifact) -> dict[str, Any]:
+    data: dict[str, Any] = {"path": artifact.path}
+    if artifact.kind != "reference":
+        data["kind"] = artifact.kind
+    if artifact.note:
+        data["note"] = artifact.note
+    return data
+
+
 def write_intent_file(
     intent: Union[IntentFile, ProjectIntent, Implementation],
     path: Optional[Union[str, Path]] = None,
@@ -270,6 +335,10 @@ def write_intent_file(
         data["depends_on"] = intent.depends_on
     data["tags"] = intent.tags
     data["authors"] = intent.authors
+
+    declared_artifacts = [a for a in intent.artifacts if a.path not in intent.file_references]
+    if declared_artifacts:
+        data["artifacts"] = [_artifact_to_dict(a) for a in declared_artifacts]
 
     frontmatter = yaml.safe_dump(data, sort_keys=False)
     text = f"---\n{frontmatter}---\n{intent.body}"
