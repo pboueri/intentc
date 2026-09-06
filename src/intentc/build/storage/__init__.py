@@ -5,6 +5,7 @@ from intentc.build.storage.backend import (
     BuildResult,
     BuildStep,
     GenerationStatus,
+    RefinementSession,
     StorageBackend,
     TargetStatus,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "BuildResult",
     "BuildStep",
     "GenerationStatus",
+    "RefinementSession",
     "SQLiteBackend",
     "StorageBackend",
     "TargetStatus",

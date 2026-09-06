@@ -122,6 +122,47 @@ class DifferencingContext(BaseModel):
     implementation: Optional[Implementation] = None
 
 
+class RefineContext(BaseModel):
+    """Everything an agent needs to run an interactive refinement session, or
+    to bake one back into intent (non-interactively)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: str
+    feature_path: str
+    intent: IntentFile
+    validations: list[ValidationFile] = Field(default_factory=list)
+    artifacts: list[Artifact] = Field(default_factory=list)
+    project_intent: ProjectIntent
+    implementation: Optional[Implementation] = None
+    output_dir: str
+    journal_path: str = ""
+    journal: str = ""
+    seed_prompt: str = ""
+    base_commit: str = ""
+    snapshot_dir: str = ""
+    diff: str = ""
+    files_by_owner: dict[str, list[str]] = Field(default_factory=dict)
+    previous_errors: list[str] = Field(default_factory=list)
+    response_file_path: str = ""
+    intent_path: str = ""
+    validation_path: str = ""
+    feature_dir: str = ""
+
+
+class RefineBakeResponse(BaseModel):
+    """Written by the agent after baking a refinement session into intent."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: str
+    summary: str = ""
+    files_modified: list[str] = Field(default_factory=list)
+    artifacts_added: list[str] = Field(default_factory=list)
+    generalizations: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -137,6 +178,8 @@ class PromptTemplates(BaseModel):
     plan: str = ""
     difference: str = ""
     init: str = ""
+    refine: str = ""
+    refine_bake: str = ""
 
 
 def _read_bundled_prompt(package: str, filename: str) -> str:
@@ -158,6 +201,8 @@ def load_default_prompts() -> PromptTemplates:
         plan=_read_bundled_prompt("intentc.build.agents", "plan.prompt"),
         difference=_read_bundled_prompt("intentc.differencing", "difference.prompt"),
         init=_read_bundled_prompt("intentc.build.agents", "init.prompt"),
+        refine=_read_bundled_prompt("intentc.build.agents", "refine.prompt"),
+        refine_bake=_read_bundled_prompt("intentc.build.agents", "refine_bake.prompt"),
     )
 
 
@@ -392,6 +437,37 @@ def render_differencing_prompt(template: str, ctx: DifferencingContext) -> str:
     return _safe_format(template, variables)
 
 
+def _render_files_by_owner(files_by_owner: dict[str, list[str]]) -> str:
+    if not files_by_owner:
+        return "(none)"
+    return "\n".join(f"- {owner}: {', '.join(files)}" for owner, files in files_by_owner.items())
+
+
+def render_refine_prompt(template: str, ctx: RefineContext) -> str:
+    """Render a refine/refine_bake prompt template against a RefineContext."""
+    variables = {
+        "project": ctx.project_intent.body,
+        "implementation": ctx.implementation.body if ctx.implementation else "",
+        "feature": ctx.intent.body,
+        "feature_name": ctx.feature_path or ctx.intent.name,
+        "validations": _render_validations(ctx.validations),
+        "artifacts": _render_artifacts(ctx.artifacts),
+        "output_dir": ctx.output_dir,
+        "journal_path": ctx.journal_path,
+        "journal": ctx.journal,
+        "seed_prompt": ctx.seed_prompt,
+        "snapshot_dir": ctx.snapshot_dir,
+        "diff": ctx.diff,
+        "files_by_owner": _render_files_by_owner(ctx.files_by_owner),
+        "previous_errors": _render_previous_errors(ctx.previous_errors),
+        "response_file": ctx.response_file_path,
+        "intent_path": ctx.intent_path,
+        "validation_path": ctx.validation_path,
+        "feature_dir": ctx.feature_dir,
+    }
+    return _safe_format(template, variables)
+
+
 def _read_response_file(path: str, model_cls: type[BaseModel]) -> Any:
     response_path = Path(path)
     try:
@@ -442,6 +518,12 @@ class Agent(ABC):
 
     @abstractmethod
     def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None: ...
+
+    @abstractmethod
+    def refine(self, ctx: RefineContext) -> None: ...
+
+    @abstractmethod
+    def refine_bake(self, ctx: RefineContext) -> RefineBakeResponse: ...
 
     @abstractmethod
     def get_name(self) -> str: ...
@@ -536,6 +618,15 @@ class CLIAgent(Agent):
     def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
         rendered = render_init_prompt(self.templates.init, project_name, user_prompt=prompt or "")
         self._invoke(rendered)
+
+    def refine(self, ctx: RefineContext) -> None:
+        prompt = render_refine_prompt(self.templates.refine, ctx)
+        self._invoke(prompt)
+
+    def refine_bake(self, ctx: RefineContext) -> RefineBakeResponse:
+        prompt = render_refine_prompt(self.templates.refine_bake, ctx)
+        self._invoke(prompt)
+        return _read_response_file(ctx.response_file_path, RefineBakeResponse)
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +785,24 @@ class ClaudeAgent(Agent):
             rendered = render_init_prompt(self.templates.init, project_name, user_prompt=prompt)
             self._run_noninteractive(rendered)
 
+    def refine(self, ctx: RefineContext) -> None:
+        prompt = render_refine_prompt(self.templates.refine, ctx)
+        command = self._build_command(prompt, interactive=True)
+        settings_path = self._write_sandbox_settings()
+        self.log("    agent: entering interactive refine session")
+        try:
+            try:
+                subprocess.run(command, check=False)
+            except OSError as exc:
+                raise AgentError(f"Failed to launch claude in interactive mode: {exc}") from exc
+        finally:
+            self._cleanup_sandbox_settings(settings_path)
+
+    def refine_bake(self, ctx: RefineContext) -> RefineBakeResponse:
+        prompt = render_refine_prompt(self.templates.refine_bake, ctx)
+        self._run_noninteractive(prompt)
+        return _read_response_file(ctx.response_file_path, RefineBakeResponse)
+
 
 # ---------------------------------------------------------------------------
 # MockAgent
@@ -709,6 +818,8 @@ class MockAgent(Agent):
         build_response: Optional[BuildResponse] = None,
         validation_response: Optional[ValidationResponse] = None,
         differencing_response: Optional[DifferencingResponse] = None,
+        refine_bake_response: Optional[RefineBakeResponse] = None,
+        refine_side_effect: Optional[Callable[[RefineContext], None]] = None,
     ) -> None:
         self.name = name
         self.build_calls: list[BuildContext] = []
@@ -716,6 +827,8 @@ class MockAgent(Agent):
         self.difference_calls: list[DifferencingContext] = []
         self.plan_calls: list[BuildContext] = []
         self.init_calls: list[tuple[str, str, Optional[str]]] = []
+        self.refine_calls: list[RefineContext] = []
+        self.refine_bake_calls: list[RefineContext] = []
         self.build_response = build_response or BuildResponse(
             status="success", summary="mock build", files_created=[], files_modified=[]
         )
@@ -725,6 +838,12 @@ class MockAgent(Agent):
         self.differencing_response = differencing_response or DifferencingResponse(
             status="equivalent", dimensions=[], summary="mock difference"
         )
+        self.refine_bake_response = refine_bake_response or RefineBakeResponse(
+            status="success", summary="mock bake"
+        )
+        # Optional callable invoked by `refine()`, e.g. to write journal text
+        # so tests can simulate an interactive session without a real REPL.
+        self.refine_side_effect = refine_side_effect
 
     def build(self, ctx: BuildContext) -> BuildResponse:
         self.build_calls.append(ctx)
@@ -743,6 +862,15 @@ class MockAgent(Agent):
 
     def init(self, project_name: str, intent_dir: str, prompt: Optional[str] = None) -> None:
         self.init_calls.append((project_name, intent_dir, prompt))
+
+    def refine(self, ctx: RefineContext) -> None:
+        self.refine_calls.append(ctx)
+        if self.refine_side_effect is not None:
+            self.refine_side_effect(ctx)
+
+    def refine_bake(self, ctx: RefineContext) -> RefineBakeResponse:
+        self.refine_bake_calls.append(ctx)
+        return self.refine_bake_response
 
     def get_name(self) -> str:
         return self.name

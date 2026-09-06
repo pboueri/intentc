@@ -15,10 +15,10 @@ from typing import Optional
 import pytest
 from typer.testing import CliRunner
 
-from intentc.build.agents import AgentError, AgentProfile, ValidationResponse
+from intentc.build.agents import AgentError, AgentProfile, RefineBakeResponse, ValidationResponse
 from intentc.build.builder.builder import BuildOptions
-from intentc.build.state import TargetStatus
-from intentc.build.storage import BuildResult, BuildStep
+from intentc.build.state import StateManager, TargetStatus
+from intentc.build.storage import BuildResult, BuildStep, RefinementSession
 from intentc.build.validations import ValidationSuiteResult
 from intentc.cli import main
 from intentc.core import (
@@ -32,6 +32,7 @@ from intentc.core import (
     write_intent_file,
     write_validation_file,
 )
+from intentc.refine import RefineOutcome
 
 runner = CliRunner()
 
@@ -354,6 +355,193 @@ class TestClean:
         result = runner.invoke(main.app, ["clean", "--all"])
         assert result.exit_code == 0
         assert fake.cleaned_all is True
+
+
+# ---------------------------------------------------------------------------
+# build/clean refuse while a refinement session is open
+# ---------------------------------------------------------------------------
+
+
+def _open_session(project_root: Path, target: str, output_dir: str = "src", session_id: str = "sess-1") -> None:
+    state_manager = StateManager(base_dir=project_root, output_dir=output_dir)
+    state_manager.backend.create_refinement_session(
+        RefinementSession(
+            session_id=session_id,
+            target=target,
+            output_dir=output_dir,
+            status="recording",
+            base_commit="deadbeef",
+            started_at="2026-09-06T10:00:00",
+        )
+    )
+    state_manager.backend.close()
+
+
+class TestOpenSessionRefusals:
+    def test_build_refuses_when_session_target_is_in_build_set(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models")
+        monkeypatch.setattr(main, "Builder", _RejectBuilder)
+
+        result = runner.invoke(main.app, ["build", "api"])  # api depends on models
+
+        assert result.exit_code == 2
+        assert "'models' has an open refinement session" in result.output
+
+    def test_build_allows_unrelated_target(self, tmp_path: Path, monkeypatch) -> None:
+        intent_dir = tmp_path / "intent"
+        write_intent_file(ProjectIntent(name="demo", body="A demo project."), intent_dir / "project.ic")
+        write_intent_file(Implementation(name="default", body="Python."), intent_dir / "implementations" / "default.ic")
+        write_intent_file(IntentFile(name="models", body="Models."), intent_dir / "models" / "models.ic")
+        write_intent_file(IntentFile(name="standalone", body="Unrelated."), intent_dir / "standalone" / "standalone.ic")
+        monkeypatch.chdir(tmp_path)
+        _open_session(tmp_path, "standalone")
+
+        fake = FakeBuilder(None, None, None, None)
+        monkeypatch.setattr(main, "Builder", lambda *a, **kw: fake)
+
+        result = runner.invoke(main.app, ["build", "models"])
+
+        assert result.exit_code == 0
+
+    def test_clean_refuses_when_target_has_open_session(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models")
+        monkeypatch.setattr(main, "Builder", _RejectBuilder)
+
+        result = runner.invoke(main.app, ["clean", "models"])
+
+        assert result.exit_code == 2
+        assert "'models' has an open refinement session" in result.output
+        assert "cleaning" in result.output
+
+    def test_clean_all_refuses_when_any_session_open(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models")
+        monkeypatch.setattr(main, "Builder", _RejectBuilder)
+
+        result = runner.invoke(main.app, ["clean", "--all"])
+
+        assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# refine
+# ---------------------------------------------------------------------------
+
+
+class TestRefineUsageErrors:
+    def test_unknown_target_exits_2(self, project_dir: Path) -> None:
+        result = runner.invoke(main.app, ["refine", "does/not/exist"])
+        assert result.exit_code == 2
+        assert "Unknown feature 'does/not/exist'" in result.output
+
+    def test_unbuilt_target_exits_2(self, project_dir: Path) -> None:
+        result = runner.invoke(main.app, ["refine", "models"])
+        assert result.exit_code == 2
+        assert "has not been built" in result.output
+
+    def test_bake_without_open_session_exits_2(self, project_dir: Path) -> None:
+        result = runner.invoke(main.app, ["refine", "models", "--bake"])
+        assert result.exit_code == 2
+        assert "No open refinement session" in result.output
+
+    def test_abandon_without_open_session_exits_2(self, project_dir: Path) -> None:
+        result = runner.invoke(main.app, ["refine", "models", "--abandon"])
+        assert result.exit_code == 2
+        assert "No open refinement session" in result.output
+
+    def test_bake_and_abandon_mutually_exclusive(self, project_dir: Path) -> None:
+        result = runner.invoke(main.app, ["refine", "models", "--bake", "--abandon"])
+        assert result.exit_code == 2
+
+
+class TestRefineWorkflow:
+    def test_records_session_and_prints_resume_hints(self, project_dir: Path, monkeypatch) -> None:
+        session = RefinementSession(
+            session_id="sess-2", target="models", output_dir="src", status="recording",
+            base_commit="deadbeef", started_at="2026-09-06T10:00:00",
+        )
+
+        def fake_run_refine(**kwargs):
+            return RefineOutcome.RECORDED, session, None
+
+        monkeypatch.setattr(main, "run_refine", fake_run_refine)
+        result = runner.invoke(main.app, ["refine", "models", "make it faster"])
+
+        assert result.exit_code == 0
+        assert "Session left open" in result.output
+        assert "intentc refine models" in result.output
+        assert "--bake" in result.output
+
+    def test_baked_outcome_prints_intent_updated_hint(self, project_dir: Path, monkeypatch) -> None:
+        session = RefinementSession(
+            session_id="sess-3", target="models", output_dir="src", status="baked",
+            base_commit="deadbeef", started_at="2026-09-06T10:00:00", ended_at="2026-09-06T10:05:00",
+            bake_generation_id="gen-1",
+        )
+        response = RefineBakeResponse(
+            status="success", summary="folded rule into models.ic", generalizations=["a rule"], open_questions=[]
+        )
+
+        def fake_run_refine(**kwargs):
+            return RefineOutcome.BAKED, session, response
+
+        monkeypatch.setattr(main, "run_refine", fake_run_refine)
+
+        result = runner.invoke(main.app, ["refine", "models"])
+
+        assert result.exit_code == 0
+        assert "Intent updated: intent/models/" in result.output
+        assert "folded rule into models.ic" in result.output
+
+    def test_failed_bake_outcome_prints_restore_hint_and_exits_1(self, project_dir: Path, monkeypatch) -> None:
+        session = RefinementSession(
+            session_id="sess-4", target="models", output_dir="src", status="failed",
+            base_commit="deadbeef", started_at="2026-09-06T10:00:00", ended_at="2026-09-06T10:05:00",
+        )
+
+        def fake_run_refine(**kwargs):
+            return RefineOutcome.FAILED, session, None
+
+        monkeypatch.setattr(main, "run_refine", fake_run_refine)
+
+        result = runner.invoke(main.app, ["refine", "models"])
+
+        assert result.exit_code == 1
+        assert "Refined code restored to" in result.output
+        assert "intentc refine models" in result.output
+        assert "--bake" in result.output
+
+    def test_bake_flag_invokes_bake_refinement_on_open_session(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models", session_id="sess-5")
+        calls = []
+
+        def fake_bake_refinement(**kwargs):
+            calls.append(kwargs["session"].session_id)
+            updated = kwargs["session"].model_copy(update={"status": "baked", "bake_generation_id": "gen-9"})
+            return RefineOutcome.BAKED, updated, RefineBakeResponse(status="success", summary="done")
+
+        monkeypatch.setattr(main, "bake_refinement", fake_bake_refinement)
+
+        result = runner.invoke(main.app, ["refine", "models", "--bake"])
+
+        assert result.exit_code == 0
+        assert calls == ["sess-5"]
+        assert "Intent updated" in result.output
+
+    def test_abandon_flag_invokes_abandon_refinement_on_open_session(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models", session_id="sess-6")
+        calls = []
+
+        def fake_abandon_refinement(state_manager, version_control, session, log=None):
+            calls.append(session.session_id)
+            return session.model_copy(update={"status": "abandoned"})
+
+        monkeypatch.setattr(main, "abandon_refinement", fake_abandon_refinement)
+
+        result = runner.invoke(main.app, ["refine", "models", "--abandon"])
+
+        assert result.exit_code == 0
+        assert calls == ["sess-6"]
+        assert "abandoned" in result.output
 
 
 # ---------------------------------------------------------------------------

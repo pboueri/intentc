@@ -62,6 +62,14 @@ class MockVersionControl(VersionControl):
     def has_changes(self) -> bool:
         return True
 
+    def snapshot(self, message: str, ref_name: str) -> str:
+        commit_id = f"snapshot-{len(self._commits) + 1}"
+        self._commits.append(commit_id)
+        return commit_id
+
+    def materialize(self, commit_id: str, dest_dir) -> None:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Conditional-failure agent for the DAG-stop test

@@ -175,6 +175,12 @@ class ScriptedAgent(Agent):
     def init(self, project_name: str, intent_dir: str, prompt: str | None = None) -> None:
         return None
 
+    def refine(self, ctx) -> None:
+        return None
+
+    def refine_bake(self, ctx):
+        raise NotImplementedError
+
     def get_name(self) -> str:
         return "scripted"
 

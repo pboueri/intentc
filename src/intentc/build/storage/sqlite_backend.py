@@ -13,6 +13,7 @@ from intentc.build.storage.backend import (
     BuildResult,
     BuildStep,
     GenerationStatus,
+    RefinementSession,
     StorageBackend,
     TargetStatus,
 )
@@ -149,6 +150,22 @@ class SQLiteBackend(StorageBackend):
                     last_build_result_id INTEGER REFERENCES build_results(id),
                     updated_at           TEXT NOT NULL,
                     PRIMARY KEY (target, output_dir)
+                );
+
+                CREATE TABLE IF NOT EXISTS refinement_sessions (
+                    session_id          TEXT PRIMARY KEY,
+                    target              TEXT NOT NULL,
+                    output_dir          TEXT NOT NULL,
+                    status              TEXT NOT NULL,
+                    base_commit         TEXT NOT NULL,
+                    snapshot_id         TEXT,
+                    seed_prompt         TEXT NOT NULL DEFAULT '',
+                    journal             TEXT NOT NULL DEFAULT '',
+                    bake_attempts       INTEGER NOT NULL DEFAULT 0,
+                    bake_generation_id  TEXT REFERENCES generations(generation_id),
+                    bake_response_json  TEXT,
+                    started_at          TEXT NOT NULL,
+                    ended_at            TEXT
                 );
                 """
             )
@@ -557,6 +574,123 @@ class SQLiteBackend(StorageBackend):
                 (build_result_id, validation_result_id, response_type, json.dumps(response_json), _now_iso()),
             )
             self._conn.commit()
+
+    # -- Refinement session methods -------------------------------------------
+
+    _REFINEMENT_SESSION_FIELDS = {
+        "target",
+        "output_dir",
+        "status",
+        "base_commit",
+        "snapshot_id",
+        "seed_prompt",
+        "journal",
+        "bake_attempts",
+        "bake_generation_id",
+        "bake_response_json",
+        "started_at",
+        "ended_at",
+    }
+
+    def create_refinement_session(self, session: RefinementSession) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO refinement_sessions (
+                    session_id, target, output_dir, status, base_commit, snapshot_id,
+                    seed_prompt, journal, bake_attempts, bake_generation_id,
+                    bake_response_json, started_at, ended_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    session.target,
+                    session.output_dir,
+                    session.status,
+                    session.base_commit,
+                    session.snapshot_id,
+                    session.seed_prompt,
+                    session.journal,
+                    session.bake_attempts,
+                    session.bake_generation_id,
+                    session.bake_response_json,
+                    session.started_at,
+                    session.ended_at,
+                ),
+            )
+            self._conn.commit()
+
+    def update_refinement_session(self, session_id: str, **fields: Any) -> None:
+        unknown = set(fields) - self._REFINEMENT_SESSION_FIELDS
+        if unknown:
+            raise ValueError(f"Unknown refinement_session field(s): {', '.join(sorted(unknown))}")
+        if not fields:
+            return
+        with self._lock:
+            assignments = ", ".join(f"{key}=?" for key in fields)
+            values = list(fields.values()) + [session_id]
+            self._conn.execute(
+                f"UPDATE refinement_sessions SET {assignments} WHERE session_id=?", values
+            )
+            self._conn.commit()
+
+    @staticmethod
+    def _row_to_refinement_session(row: sqlite3.Row) -> RefinementSession:
+        return RefinementSession(
+            session_id=row["session_id"],
+            target=row["target"],
+            output_dir=row["output_dir"],
+            status=row["status"],
+            base_commit=row["base_commit"],
+            snapshot_id=row["snapshot_id"],
+            seed_prompt=row["seed_prompt"] or "",
+            journal=row["journal"] or "",
+            bake_attempts=row["bake_attempts"] if row["bake_attempts"] is not None else 0,
+            bake_generation_id=row["bake_generation_id"],
+            bake_response_json=row["bake_response_json"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+        )
+
+    def get_refinement_session(self, session_id: str) -> Optional[RefinementSession]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM refinement_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            return self._row_to_refinement_session(row) if row is not None else None
+
+    def get_open_refinement_session(self, target: Optional[str] = None) -> Optional[RefinementSession]:
+        with self._lock:
+            if target is not None:
+                row = self._conn.execute(
+                    """
+                    SELECT * FROM refinement_sessions
+                    WHERE output_dir=? AND target=? AND status IN ('recording', 'baking')
+                    ORDER BY started_at DESC LIMIT 1
+                    """,
+                    (self.output_dir, target),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    """
+                    SELECT * FROM refinement_sessions
+                    WHERE output_dir=? AND status IN ('recording', 'baking')
+                    ORDER BY started_at DESC LIMIT 1
+                    """,
+                    (self.output_dir,),
+                ).fetchone()
+            return self._row_to_refinement_session(row) if row is not None else None
+
+    def list_refinement_sessions(self, target: str, limit: int = 10) -> list[RefinementSession]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM refinement_sessions WHERE output_dir=? AND target=?
+                ORDER BY started_at DESC LIMIT ?
+                """,
+                (self.output_dir, target, limit),
+            ).fetchall()
+            return [self._row_to_refinement_session(row) for row in rows]
 
     # -- Target state methods -------------------------------------------------
 

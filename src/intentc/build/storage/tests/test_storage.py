@@ -12,6 +12,7 @@ from intentc.build.storage import (
     BuildResult,
     BuildStep,
     GenerationStatus,
+    RefinementSession,
     SQLiteBackend,
     StorageBackend,
     TargetStatus,
@@ -415,6 +416,148 @@ def test_reset_all_is_scoped_to_its_own_output_dir(tmp_path):
     finally:
         backend_src.close()
         backend_go.close()
+
+
+# ---------------------------------------------------------------------------
+# Refinement sessions
+# ---------------------------------------------------------------------------
+
+
+def make_session(session_id: str = "sess-1", **overrides) -> RefinementSession:
+    defaults = dict(
+        session_id=session_id,
+        target="build/storage",
+        output_dir="src",
+        status="recording",
+        base_commit="deadbeef",
+        snapshot_id=None,
+        seed_prompt="make it faster",
+        journal="# Refinement journal\n",
+        bake_attempts=0,
+        bake_generation_id=None,
+        bake_response_json=None,
+        started_at="2026-09-06T10:00:00",
+        ended_at=None,
+    )
+    defaults.update(overrides)
+    return RefinementSession(**defaults)
+
+
+def test_create_and_get_refinement_session_roundtrip(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(make_session())
+        fetched = backend.get_refinement_session("sess-1")
+        assert fetched is not None
+        assert fetched.target == "build/storage"
+        assert fetched.status == "recording"
+        assert fetched.base_commit == "deadbeef"
+        assert fetched.seed_prompt == "make it faster"
+        assert fetched.bake_attempts == 0
+        assert fetched.snapshot_id is None
+    finally:
+        backend.close()
+
+
+def test_get_refinement_session_returns_none_for_unknown_id(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        assert backend.get_refinement_session("nope") is None
+    finally:
+        backend.close()
+
+
+def test_update_refinement_session_merges_fields(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(make_session())
+        backend.update_refinement_session(
+            "sess-1", status="baking", snapshot_id="cafef00d", bake_attempts=1
+        )
+        fetched = backend.get_refinement_session("sess-1")
+        assert fetched.status == "baking"
+        assert fetched.snapshot_id == "cafef00d"
+        assert fetched.bake_attempts == 1
+        # Untouched fields survive the partial update.
+        assert fetched.base_commit == "deadbeef"
+        assert fetched.seed_prompt == "make it faster"
+    finally:
+        backend.close()
+
+
+def test_update_refinement_session_rejects_unknown_field(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(make_session())
+        with pytest.raises(ValueError):
+            backend.update_refinement_session("sess-1", nonsense="oops")
+    finally:
+        backend.close()
+
+
+def test_get_open_refinement_session_by_target(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(make_session("sess-1", target="build/storage"))
+        backend.create_refinement_session(
+            make_session("sess-2", target="build/state", status="baked", ended_at="2026-09-06T11:00:00")
+        )
+
+        open_session = backend.get_open_refinement_session("build/storage")
+        assert open_session is not None
+        assert open_session.session_id == "sess-1"
+
+        assert backend.get_open_refinement_session("build/state") is None
+        assert backend.get_open_refinement_session("unknown/target") is None
+    finally:
+        backend.close()
+
+
+def test_get_open_refinement_session_any_target_when_none_given(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(
+            make_session("sess-1", target="build/state", status="baked", ended_at="2026-09-06T11:00:00")
+        )
+        backend.create_refinement_session(make_session("sess-2", target="build/storage", status="baking"))
+
+        open_session = backend.get_open_refinement_session()
+        assert open_session is not None
+        assert open_session.session_id == "sess-2"
+    finally:
+        backend.close()
+
+
+def test_get_open_refinement_session_scoped_to_output_dir(tmp_path):
+    backend_a = SQLiteBackend(base_dir=tmp_path, output_dir="src")
+    backend_b = SQLiteBackend(base_dir=tmp_path, output_dir="other_out")
+    try:
+        backend_a.create_refinement_session(make_session("sess-1", output_dir="src"))
+        assert backend_b.get_open_refinement_session() is None
+        assert backend_a.get_open_refinement_session() is not None
+    finally:
+        backend_a.close()
+        backend_b.close()
+
+
+def test_list_refinement_sessions_newest_first_and_limited(tmp_path):
+    backend = make_backend(tmp_path)
+    try:
+        backend.create_refinement_session(
+            make_session("sess-1", started_at="2026-09-06T09:00:00", status="baked", ended_at="x")
+        )
+        backend.create_refinement_session(
+            make_session("sess-2", started_at="2026-09-06T10:00:00", status="baked", ended_at="x")
+        )
+        backend.create_refinement_session(make_session("sess-3", started_at="2026-09-06T11:00:00"))
+
+        sessions = backend.list_refinement_sessions("build/storage")
+        assert [s.session_id for s in sessions] == ["sess-3", "sess-2", "sess-1"]
+
+        limited = backend.list_refinement_sessions("build/storage", limit=2)
+        assert [s.session_id for s in limited] == ["sess-3", "sess-2"]
+    finally:
+        backend.close()
 
 
 # ---------------------------------------------------------------------------

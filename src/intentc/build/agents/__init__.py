@@ -14,12 +14,15 @@ from intentc.build.agents.agent import (
     LogFn,
     MockAgent,
     PromptTemplates,
+    RefineBakeResponse,
+    RefineContext,
     ValidationResponse,
     create_from_profile,
     load_default_prompts,
     render_differencing_prompt,
     render_init_prompt,
     render_prompt,
+    render_refine_prompt,
 )
 
 __all__ = [
@@ -36,10 +39,13 @@ __all__ = [
     "LogFn",
     "MockAgent",
     "PromptTemplates",
+    "RefineBakeResponse",
+    "RefineContext",
     "ValidationResponse",
     "create_from_profile",
     "load_default_prompts",
     "render_differencing_prompt",
     "render_init_prompt",
     "render_prompt",
+    "render_refine_prompt",
 ]
