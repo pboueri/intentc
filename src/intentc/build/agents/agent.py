@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from intentc.core import (
+    Artifact,
     Implementation,
     IntentFile,
     ProjectIntent,
@@ -106,6 +107,7 @@ class BuildContext(BaseModel):
     previous_errors: list[str] = Field(default_factory=list)
     seed_prompt: str = ""
     feature_path: str = ""
+    artifacts: list[Artifact] = Field(default_factory=list)
 
 
 class DifferencingContext(BaseModel):
@@ -222,6 +224,47 @@ def _render_previous_errors(previous_errors: list[str]) -> str:
     return f"\n### Previous Attempt Errors\n{bullets}"
 
 
+_MAX_INLINE_ARTIFACT_BYTES = 16 * 1024
+
+
+def _render_artifact_file(resolved_path: Path) -> str:
+    """A fenced code block with the file's content, or "(read this file)" for
+    anything larger than 16 KB or that doesn't decode as UTF-8 text."""
+    try:
+        data = resolved_path.read_bytes()
+    except OSError:
+        return "(read this file)"
+    if len(data) > _MAX_INLINE_ARTIFACT_BYTES:
+        return "(read this file)"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "(read this file)"
+    lang = resolved_path.suffix.lstrip(".")
+    return f"```{lang}\n{text}\n```"
+
+
+def _render_artifact_entry(artifact: Artifact) -> str:
+    label = f"- {artifact.path}  ({artifact.kind}, from {artifact.owner})" if artifact.owner else f"- {artifact.path}  ({artifact.kind})"
+    lines = [label]
+    if artifact.note:
+        lines.append(f"  {artifact.note}")
+    if not artifact.resolved_paths:
+        lines.append(f"  path: {artifact.path}")
+        return "\n".join(lines)
+    for resolved_path in artifact.resolved_paths:
+        lines.append(f"  path: {resolved_path}")
+        for content_line in _render_artifact_file(resolved_path).splitlines():
+            lines.append(f"  {content_line}")
+    return "\n".join(lines)
+
+
+def _render_artifacts(artifacts: list[Artifact]) -> str:
+    if not artifacts:
+        return "(none)"
+    return "\n\n".join(_render_artifact_entry(artifact) for artifact in artifacts)
+
+
 def render_prompt(
     template: str,
     ctx: BuildContext,
@@ -240,6 +283,7 @@ def render_prompt(
         "response_file": ctx.response_file_path,
         "previous_errors": _render_previous_errors(ctx.previous_errors),
         "seed_prompt": ctx.seed_prompt,
+        "artifacts": _render_artifacts(ctx.artifacts),
     }
     return _safe_format(template, variables)
 

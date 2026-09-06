@@ -28,6 +28,21 @@ class Severity(str, Enum):
     WARNING = "warning"
 
 
+class Artifact(BaseModel):
+    """A file that constrains a build: a schema, mockup, fixture, prompt, etc.
+
+    Declared explicitly in `.ic` frontmatter (kind carries meaning, note explains
+    how it constrains the build) or derived from an inline body reference (always
+    `kind: reference` with an empty note).
+    """
+
+    path: str
+    kind: str = "reference"
+    note: str = ""
+    owner: str = ""
+    resolved_paths: list[Path] = Field(default_factory=list)
+
+
 class IntentFile(BaseModel):
     """An `.ic` file describing a feature's intent."""
 
@@ -37,6 +52,7 @@ class IntentFile(BaseModel):
     authors: list[str] = Field(default_factory=list)
     body: str = ""
     file_references: list[str] = Field(default_factory=list)
+    artifacts: list[Artifact] = Field(default_factory=list)
     source_path: Optional[Path] = None
 
 
@@ -48,6 +64,7 @@ class ProjectIntent(BaseModel):
     authors: list[str] = Field(default_factory=list)
     body: str = ""
     file_references: list[str] = Field(default_factory=list)
+    artifacts: list[Artifact] = Field(default_factory=list)
     source_path: Optional[Path] = None
 
 
@@ -60,6 +77,7 @@ class Implementation(BaseModel):
     authors: list[str] = Field(default_factory=list)
     body: str = ""
     file_references: list[str] = Field(default_factory=list)
+    artifacts: list[Artifact] = Field(default_factory=list)
     source_path: Optional[Path] = None
 
 

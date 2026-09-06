@@ -15,6 +15,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from intentc.core.models import (
+    Artifact,
     Implementation,
     IntentFile,
     ParseError,
@@ -92,6 +93,77 @@ def _topological_order(features: dict[str, "FeatureNode"]) -> list[str]:
     for feature_path in features:
         visit(feature_path)
     return order
+
+
+def _resolve_intent_artifacts(
+    intent: IntentFile | ProjectIntent | Implementation,
+    intent_dir: Path,
+    owner: str,
+    errors: list[ParseError],
+) -> None:
+    """Fill in `owner` and `resolved_paths` for every artifact declared by `intent`.
+
+    A path (literal or glob) that resolves to a location outside `intent_dir` is a
+    load-time error. A literal path that simply does not exist yet is left with
+    empty `resolved_paths` -- `check_project` is what flags a missing artifact.
+    """
+    if intent.source_path is None:
+        return
+    base_dir = intent.source_path.resolve().parent
+    intent_dir_resolved = intent_dir.resolve()
+
+    for artifact in intent.artifacts:
+        artifact.owner = owner
+        pattern = artifact.path
+        resolved_paths: list[Path] = []
+
+        if _is_wildcard(pattern):
+            for match in sorted(base_dir.glob(pattern)):
+                if not match.is_file():
+                    continue
+                resolved_match = match.resolve()
+                if not resolved_match.is_relative_to(intent_dir_resolved):
+                    errors.append(
+                        ParseError(
+                            intent.source_path,
+                            "artifacts",
+                            f"artifact '{pattern}' resolves outside intent/ ({resolved_match})",
+                        )
+                    )
+                    continue
+                resolved_paths.append(resolved_match)
+        else:
+            resolved_candidate = (base_dir / pattern).resolve()
+            if not resolved_candidate.is_relative_to(intent_dir_resolved):
+                errors.append(
+                    ParseError(
+                        intent.source_path,
+                        "artifacts",
+                        f"artifact '{pattern}' resolves outside intent/ ({resolved_candidate})",
+                    )
+                )
+            elif resolved_candidate.is_file():
+                resolved_paths.append(resolved_candidate)
+
+        artifact.resolved_paths = resolved_paths
+
+
+def _artifact_dedup_key(artifact: Artifact) -> tuple:
+    if artifact.resolved_paths:
+        return tuple(sorted(str(p) for p in artifact.resolved_paths))
+    return ("__unresolved__", artifact.owner, artifact.path)
+
+
+def _dedup_artifacts_by_resolved_path(artifacts: list[Artifact]) -> list[Artifact]:
+    seen: set[tuple] = set()
+    result: list[Artifact] = []
+    for artifact in artifacts:
+        key = _artifact_dedup_key(artifact)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(artifact)
+    return result
 
 
 class FeatureNode(BaseModel):
@@ -199,6 +271,46 @@ class Project(BaseModel):
             if path not in built and all(dep in built for dep in node.depends_on)
         ]
 
+    def artifacts_for(
+        self, feature_path: str, implementation: Optional[Implementation] = None
+    ) -> list[Artifact]:
+        """The target's own artifacts, then its ancestors' (topological order), then
+        the project's, then the implementation's. Deduplicated by resolved path,
+        first occurrence wins."""
+        self._require_feature(feature_path)
+        order = self.topological_order()
+        order_index = {path: index for index, path in enumerate(order)}
+        ancestors = sorted(self.ancestors(feature_path), key=lambda p: order_index.get(p, len(order)))
+
+        collected: list[Artifact] = []
+        for intent in self.features[feature_path].intents:
+            collected.extend(intent.artifacts)
+        for ancestor in ancestors:
+            for intent in self.features[ancestor].intents:
+                collected.extend(intent.artifacts)
+        collected.extend(self.project_intent.artifacts)
+        if implementation is not None:
+            collected.extend(implementation.artifacts)
+
+        return _dedup_artifacts_by_resolved_path(collected)
+
+    def source_files(self, target: str) -> list[Path]:
+        """The target's `.ic` and `.icv` files plus the resolved paths of the
+        target's own artifacts. Ancestor, project and implementation artifacts are
+        deliberately excluded -- see `artifacts_for` for the full constraint set."""
+        self._require_feature(target)
+        node = self.features[target]
+        paths: list[Path] = []
+        for intent in node.intents:
+            if intent.source_path is not None:
+                paths.append(Path(intent.source_path))
+            for artifact in intent.artifacts:
+                paths.extend(artifact.resolved_paths)
+        for validation_file in node.validations:
+            if validation_file.source_path is not None:
+                paths.append(Path(validation_file.source_path))
+        return paths
+
 
 @dataclass
 class ProjectIssue:
@@ -278,6 +390,14 @@ def load_project(intent_dir: Path) -> Project:
                 errors.extend(exc.errors)
         features[rel] = FeatureNode(path=rel, intents=intents, validations=validations)
 
+    if project_intent is not None:
+        _resolve_intent_artifacts(project_intent, intent_dir, "project", errors)
+    for impl in implementations.values():
+        _resolve_intent_artifacts(impl, intent_dir, f"implementation:{impl.name}", errors)
+    for feature in features.values():
+        for intent in feature.intents:
+            _resolve_intent_artifacts(intent, intent_dir, feature.path, errors)
+
     feature_paths = set(features.keys())
 
     for feature in features.values():
@@ -345,19 +465,18 @@ def load_project(intent_dir: Path) -> Project:
 _LAYOUT_PREFIXES = {"intent", ".intentc"}
 
 
-def _copy_file_references(intent: IntentFile | ProjectIntent | Implementation, dest_dir: Path) -> None:
+def _copy_artifacts(intent: IntentFile | ProjectIntent | Implementation, dest_dir: Path) -> None:
+    """Copy every resolved artifact file next to the copied intent, preserving the
+    relative layout it had next to the source intent file (including `../`)."""
     if intent.source_path is None:
         return
-    src_base = intent.source_path.parent
-    for ref in intent.file_references:
-        if _is_wildcard(ref):
-            continue
-        src_path = src_base / ref
-        if not src_path.is_file():
-            continue
-        dest_path = dest_dir / ref
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_path, dest_path)
+    base_src = intent.source_path.resolve().parent
+    for artifact in intent.artifacts:
+        for resolved in artifact.resolved_paths:
+            rel = os.path.relpath(resolved, base_src)
+            dest_path = dest_dir / rel
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved, dest_path)
 
 
 def write_project(project: Project, dest_dir: Path) -> Path:
@@ -366,7 +485,7 @@ def write_project(project: Project, dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     write_intent_file(project.project_intent, dest_dir / "project.ic")
-    _copy_file_references(project.project_intent, dest_dir)
+    _copy_artifacts(project.project_intent, dest_dir)
 
     if project.implementations:
         impl_dir = dest_dir / "implementations"
@@ -374,7 +493,7 @@ def write_project(project: Project, dest_dir: Path) -> Path:
             filename = impl.source_path.name if impl.source_path is not None else f"{impl.name}.ic"
             dest_path = impl_dir / filename
             write_intent_file(impl, dest_path)
-            _copy_file_references(impl, dest_path.parent)
+            _copy_artifacts(impl, dest_path.parent)
 
     if project.assertions:
         assertions_dir = dest_dir / "assertions"
@@ -392,7 +511,7 @@ def write_project(project: Project, dest_dir: Path) -> Path:
             filename = intent.source_path.name if intent.source_path is not None else f"{leaf}.ic"
             dest_path = feature_dir / filename
             write_intent_file(intent, dest_path)
-            _copy_file_references(intent, dest_path.parent)
+            _copy_artifacts(intent, dest_path.parent)
         for idx, vf in enumerate(node.validations):
             if vf.source_path is not None:
                 filename = vf.source_path.name
@@ -469,6 +588,70 @@ def blank_project(name: str) -> Project:
 
 def _sort_key(issue: ProjectIssue) -> tuple[str, str]:
     return (str(issue.path) if issue.path is not None else "", issue.level)
+
+
+_MAX_ARTIFACT_BYTES = 1024 * 1024
+
+
+def _check_artifacts(project: Project, issues: list[ProjectIssue]) -> None:
+    """Declared-artifact existence/size checks, plus a cross-feature note-mismatch
+    check for artifacts declared by more than one feature."""
+    notes_by_resolved: dict[Path, list[tuple[str, str]]] = {}
+
+    def check_owner(intent: IntentFile | ProjectIntent | Implementation, feature_label: str, is_feature: bool) -> None:
+        for artifact in intent.artifacts:
+            is_declared = artifact.path not in intent.file_references
+            if is_declared and not artifact.resolved_paths:
+                issues.append(
+                    ProjectIssue(
+                        level="error",
+                        path=intent.source_path,
+                        feature=feature_label,
+                        message=f"artifact '{artifact.path}' matches no file — add it or remove the entry",
+                    )
+                )
+            for resolved in artifact.resolved_paths:
+                try:
+                    size = resolved.stat().st_size
+                except OSError:
+                    continue
+                if size > _MAX_ARTIFACT_BYTES:
+                    issues.append(
+                        ProjectIssue(
+                            level="warning",
+                            path=intent.source_path,
+                            feature=feature_label,
+                            message=(
+                                f"artifact '{artifact.path}' is {size} bytes (> 1 MB); it will not be "
+                                "inlined in the prompt and is unlikely to be useful to an agent as a whole"
+                            ),
+                        )
+                    )
+                if is_feature:
+                    notes_by_resolved.setdefault(resolved, []).append((feature_label, artifact.note))
+
+    check_owner(project.project_intent, "", is_feature=False)
+    for impl in project.implementations.values():
+        check_owner(impl, f"implementation:{impl.name}", is_feature=False)
+    for feature_path, node in project.features.items():
+        for intent in node.intents:
+            check_owner(intent, feature_path, is_feature=True)
+
+    for resolved, entries in notes_by_resolved.items():
+        features = sorted({feature for feature, _ in entries})
+        notes = {note for _, note in entries}
+        if len(features) > 1 and len(notes) > 1:
+            issues.append(
+                ProjectIssue(
+                    level="warning",
+                    path=resolved,
+                    feature="",
+                    message=(
+                        f"artifact '{resolved.name}' is declared by multiple features "
+                        f"({', '.join(features)}) with different notes; the notes should agree"
+                    ),
+                )
+            )
 
 
 def check_project(project: Project) -> list[ProjectIssue]:
@@ -602,6 +785,8 @@ def check_project(project: Project) -> list[ProjectIssue]:
                 message="implementations/ is empty or missing; builds will have no implementation guidance",
             )
         )
+
+    _check_artifacts(project, issues)
 
     issues.sort(key=_sort_key)
     return issues

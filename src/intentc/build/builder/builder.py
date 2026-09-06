@@ -204,7 +204,7 @@ class Builder:
             result = self._state_manager.get_build_result(target)
             if result is None:
                 continue
-            source_paths = self._source_files(target)
+            source_paths = self._project.source_files(target)
             if result.source_hash:
                 if content_hash(source_paths) != result.source_hash:
                     stale.append(target)
@@ -250,19 +250,6 @@ class Builder:
             }
         return [feature for feature in order if feature in candidates]
 
-    def _source_files(self, target: str) -> list[Path]:
-        node = self._project.features.get(target)
-        if node is None:
-            return []
-        paths: list[Path] = []
-        for intent in node.intents:
-            if intent.source_path is not None:
-                paths.append(Path(intent.source_path))
-        for validation_file in node.validations:
-            if validation_file.source_path is not None:
-                paths.append(Path(validation_file.source_path))
-        return paths
-
     @staticmethod
     def _sources_newer_than(paths: list[Path], timestamp: str) -> bool:
         if not timestamp:
@@ -285,7 +272,13 @@ class Builder:
             return self._agent_profile.model_copy(update={"name": opts.profile_override})
         return self._agent_profile
 
-    def _apply_sandbox_paths(self, profile: AgentProfile, target: str, output_dir: Path) -> AgentProfile:
+    def _apply_sandbox_paths(
+        self,
+        profile: AgentProfile,
+        target: str,
+        output_dir: Path,
+        implementation: Optional[Implementation] = None,
+    ) -> AgentProfile:
         write_paths = [
             str(output_dir.resolve()),
             str(self._state_manager.build_response_dir.resolve()),
@@ -313,6 +306,10 @@ class Builder:
             legacy_impl = Path(intent_dir) / "implementation.ic"
             if legacy_impl.exists():
                 read_paths.append(str(legacy_impl.resolve()))
+
+        for artifact in self._project.artifacts_for(target, implementation):
+            for resolved in artifact.resolved_paths:
+                read_paths.append(str(Path(resolved).resolve()))
 
         return profile.model_copy(
             update={"sandbox_write_paths": write_paths, "sandbox_read_paths": read_paths}
@@ -343,15 +340,16 @@ class Builder:
     ) -> tuple[BuildResult, Optional[Exception]]:
         node = self._project.features[target]
         self._record_source_versions(target)
-        source_hash = content_hash(self._source_files(target))
+        source_hash = content_hash(self._project.source_files(target))
 
         profile = self._resolve_profile(opts)
-        sandboxed_profile = self._apply_sandbox_paths(profile, target, output_path)
+        sandboxed_profile = self._apply_sandbox_paths(profile, target, output_path, implementation)
         agent = self._create_agent(sandboxed_profile)
 
         dependency_names = node.depends_on
         feature_intent = node.intents[0] if node.intents else IntentFile(name=target, body="")
         has_validations = any(vf.validations for vf in node.validations)
+        artifacts = self._project.artifacts_for(target, implementation)
 
         previous_errors: list[str] = []
         steps: list[BuildStep] = []
@@ -387,6 +385,7 @@ class Builder:
                 response_file_path=str(self._state_manager.build_response_dir / response_file_name(target)),
                 previous_errors=list(previous_errors),
                 feature_path=target,
+                artifacts=artifacts,
             )
 
             build_start = time.monotonic()

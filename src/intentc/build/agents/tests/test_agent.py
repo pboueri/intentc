@@ -29,6 +29,7 @@ from intentc.build.agents import (
     render_prompt,
 )
 from intentc.core import (
+    Artifact,
     Implementation,
     IntentFile,
     ProjectIntent,
@@ -181,6 +182,54 @@ def test_render_prompt_never_raises_on_undocumented_placeholder():
     assert rendered == " and "
 
 
+def test_render_prompt_artifacts_none_when_empty():
+    ctx = make_build_context(artifacts=[])
+    rendered = render_prompt("{artifacts}", ctx)
+    assert rendered == "(none)"
+
+
+def test_render_prompt_artifacts_inlines_small_utf8_text_file(tmp_path):
+    schema_path = tmp_path / "task.schema.json"
+    schema_path.write_text('{"type": "object"}', encoding="utf-8")
+    artifact = Artifact(
+        path="task.schema.json",
+        kind="schema",
+        note="Every Task must validate against this schema.",
+        owner="store",
+        resolved_paths=[schema_path],
+    )
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "task.schema.json" in rendered
+    assert "(schema, from store)" in rendered
+    assert "Every Task must validate against this schema." in rendered
+    assert str(schema_path) in rendered
+    assert "```json" in rendered
+    assert '{"type": "object"}' in rendered
+
+
+def test_render_prompt_artifacts_large_file_says_read_this_file(tmp_path):
+    big_path = tmp_path / "big.csv"
+    big_path.write_text("x" * (16 * 1024 + 1), encoding="utf-8")
+    artifact = Artifact(path="big.csv", kind="fixture", owner="store", resolved_paths=[big_path])
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "(read this file)" in rendered
+    assert "x" * 100 not in rendered
+
+
+def test_render_prompt_artifacts_binary_file_says_read_this_file(tmp_path):
+    bin_path = tmp_path / "mockup.png"
+    bin_path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    artifact = Artifact(path="mockup.png", kind="design", owner="store", resolved_paths=[bin_path])
+    ctx = make_build_context(artifacts=[artifact])
+    rendered = render_prompt("{artifacts}", ctx)
+
+    assert "(read this file)" in rendered
+
+
 def test_render_init_prompt_fills_variables():
     template = "{project_name}|{specifications}|{user_prompt}"
     rendered = render_init_prompt(template, "calculator", user_prompt="a calculator app")
@@ -214,6 +263,13 @@ def test_load_default_prompts_reads_bundled_files():
     assert "{feature_name}" in templates.build
     assert "{validation}" in templates.validate_template
     assert "{seed_prompt}" in templates.plan
+
+
+def test_load_default_prompts_build_validate_plan_carry_artifacts_placeholder():
+    templates = load_default_prompts()
+    assert "{artifacts}" in templates.build
+    assert "{artifacts}" in templates.validate_template
+    assert "{artifacts}" in templates.plan
 
 
 def test_load_default_prompts_reads_bundled_init_prompt():

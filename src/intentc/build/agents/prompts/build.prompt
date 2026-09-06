@@ -18,6 +18,12 @@ You have been asked to do the following:
 
 {feature}
 
+### Artifacts
+
+The following artifacts constrain the solution. Conform to them exactly. Where the prose and an artifact disagree, the artifact wins — say so in your summary so the author can fix the prose.
+
+{artifacts}
+
 ### Validation
 Your work must pass the following validations. Deterministic validations (`command_validation`, `file_exists`) will be run exactly as written, so make sure they can pass:
 

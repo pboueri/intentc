@@ -1,6 +1,7 @@
 """Core intent/validation data models and file I/O. No dependency on build, cli, or differencing."""
 
 from intentc.core.models import (
+    Artifact,
     Implementation,
     IntentFile,
     ParseError,
@@ -30,6 +31,7 @@ from intentc.core.project import (
 )
 
 __all__ = [
+    "Artifact",
     "IntentFile",
     "ProjectIntent",
     "Implementation",
