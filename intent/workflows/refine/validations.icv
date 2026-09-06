@@ -76,16 +76,25 @@ validations:
         Verify tests show the bake: snapshots the refined tree via
         version_control.snapshot without moving HEAD; calls agent.refine_bake once
         with a RefineContext whose diff, files_by_owner, journal and snapshot_dir are
-        populated; then runs builder.clean, builder.build with force for the target,
-        and run_differencing in that order; a "divergent" DifferencingResponse causes
-        a second refine_bake call whose previous_errors contain the failing
-        dimension's name and rationale; a failed rebuild feeds the failing step
-        summary the same way; after profile.retries attempts the snapshot is restored
-        into the output directory, the target status is "outdated", the session is
-        "failed" and the draft .ic/.icv edits remain on disk; on success the session
-        is "baked" with bake_generation_id set and the journal file deleted; with
-        --no-compare run_differencing is never called. Verify that refine_bake with a
-        missing response file raises AgentError rather than synthesising a response.
+        populated; then commits the target's feature directory as a dedicated
+        intent commit (message "refine <target>: attempt <n> [session:<id8>]", only
+        when it changed), runs builder.clean, builder.build for the target WITHOUT
+        force (the BuildOptions passed to the builder must have force false, so
+        already-built ancestors are not regenerated), and run_differencing, in that
+        order; a "divergent" DifferencingResponse causes a second refine_bake call
+        whose previous_errors contain the failing dimension's name and rationale; a
+        rebuild whose validate step fails feeds one "<name>: <reason>" entry per
+        failed validation (read back from storage) plus the failing step's summary,
+        where a failed step is one with status "failure"; after profile.retries
+        attempts the snapshot is restored into the output directory, the target
+        status is "outdated", the session is "failed" and the .ic/.icv edits remain;
+        --bake on a target whose latest session is "failed" re-bakes it reusing the
+        stored snapshot_id without calling version_control.snapshot again; on success
+        the session is "baked" with bake_generation_id set and the journal file
+        deleted; with --no-compare run_differencing is never called. Verify log lines
+        use the prefix "bake n/N:" (no square brackets). Verify that refine_bake with
+        a missing response file raises AgentError rather than synthesising a
+        response.
 
   - name: refine-prompts-encode-the-contract
     type: agent_validation

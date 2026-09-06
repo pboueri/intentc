@@ -74,6 +74,17 @@ Settled at review; the intents reflect them.
 9. 16 KB per-file inline limit, no total cap.
 10. `{intent_dir}` is available to validation commands.
 
+## Trial findings (todo-app, single-shot `cli` provider session, then `--bake`)
+
+The session phase worked first time: two journal entries with implementation-independent Rules and deterministic Checks, only `cli.py` touched, `status` showed the open session. The bake phase surfaced four spec gaps, now folded into `refine.ic` and `refine_bake.prompt`:
+
+1. `build(target, force=True)` regenerated every ancestor, not just the target. The rebuild is now specified without `force` (`clean` already makes the target pending).
+2. The bake agent referenced its check scripts as `{intent_dir}/checks/...` when they lived under `intent/cli/checks/`; the prompt now spells out that `{intent_dir}` is the intent root.
+3. On the retry, the agent only received "validation failed: 0/4 passed" and guessed at a `depends_on` problem. `previous_errors` must now carry each failed validation's reason.
+4. The rebuild checkpoint (`git add -A`) swept the baked intent into a `build:` commit. The bake now commits the feature directory as its own `refine <target>: attempt n` commit first, and `--bake` can re-bake a `failed` session.
+
+Plus: log prefixes written as `[bake 1/2]` were swallowed as terminal markup; the spec now uses `bake 1/2:`.
+
 ## Build
 
 Both features are built with intentc itself, in order: `intentc build constraints/artifacts`, then `intentc build workflows/refine`. No hand-written implementation.
