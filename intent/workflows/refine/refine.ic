@@ -194,7 +194,7 @@ refinement_sessions (
 - `intentc log <target>` — after the build history, a `Refinements` table: session id (8 chars), status, started, attempts, bake generation, and the count of journal entries; `--session <id>` prints that session's journal in full.
 - `intentc build` — refuses with exit 2 when the requested build set contains a target with an open session: `"'<target>' has an open refinement session. Bake or abandon it before building."` Building unrelated targets is allowed.
 - `intentc clean <target>` — same refusal.
-- Output rendering: `render_refine_summary(session, response)` prints the bake summary, generalisations as a bulleted list and open questions in yellow; `render_refinement_log(sessions)` renders the table. Agent-authored text (summaries, generalisations, questions, journal excerpts, validation reasons) is escaped before it reaches the terminal library, so a literal `[x]` or `[ ]` in a generalisation is printed as written rather than swallowed as markup.
+- Output rendering: `render_refine_summary(session, response)` prints the bake summary, generalisations as a bulleted list and open questions in yellow; `render_refinement_log(sessions)` renders the table. Agent-authored text (summaries, generalisations, questions, journal excerpts, validation reasons, divergence rationales) is escaped before it reaches the terminal library — in rendered tables and summaries **and** in the workflow's log lines (`"  ✗ divergent: ..."`) — so a literal `[x]` or `[ ]` is printed as written rather than swallowed as markup.
 
 ## Module layout
 
