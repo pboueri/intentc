@@ -77,8 +77,13 @@ def timestamped_log(console: Optional[Console] = None) -> LogFn:
     out = console or Console()
 
     def _log(message: str) -> None:
+        # `message` may embed agent-authored text (a build summary, a
+        # divergence rationale, ...): escape it so a literal "[x]" or a
+        # bracketed prefix is printed as written rather than swallowed as
+        # markup. The "[dim]...[/dim]" wrapper is our own markup and stays
+        # unescaped.
         timestamp = datetime.now().strftime("%H:%M:%S")
-        out.print(f"[dim]{timestamp}[/dim] {message}")
+        out.print(f"[dim]{timestamp}[/dim] {escape(message)}")
 
     return _log
 

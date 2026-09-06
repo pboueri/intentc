@@ -155,3 +155,25 @@ class TestRefineSummaryRendering:
         text = console.export_text()
 
         assert "[x] when done, [ ] otherwise" in text
+
+
+class TestTimestampedLog:
+    def test_bracket_markup_in_message_is_printed_verbatim(self) -> None:
+        console = _capturing_console()
+        log = out.timestamped_log(console)
+
+        log("  ✗ divergent: runtime_behavior — Checklist [x] done, [ ] pending")
+        text = console.export_text()
+
+        assert "divergent: runtime_behavior" in text
+        assert "[x] done, [ ] pending" in text
+
+    def test_dim_timestamp_wrapper_still_renders_as_markup(self) -> None:
+        console = _capturing_console()
+        log = out.timestamped_log(console)
+
+        log("hello")
+        text = console.export_text()
+
+        assert "[dim]" not in text
+        assert "hello" in text
