@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from intentc.build.agents import DifferencingResponse, DimensionResult, ValidationResponse
-from intentc.build.storage import BuildResult, BuildStep, TargetStatus
+from intentc.build.agents import DifferencingResponse, DimensionResult, RefineBakeResponse, ValidationResponse
+from intentc.build.storage import BuildResult, BuildStep, RefinementSession, TargetStatus
 from intentc.build.validations import ValidationSuiteResult
 from intentc.cli import output as out
 from intentc.core.project import ProjectIssue
@@ -122,3 +122,36 @@ class TestBuildLogRendering:
         assert "Build history: api" in text
         assert "Steps for generation abcdef12" in text
         assert "check" in text
+
+
+class TestRefineSummaryRendering:
+    def test_generalization_with_bracket_markup_is_printed_verbatim(self) -> None:
+        console = _capturing_console()
+        session = RefinementSession(
+            session_id="sess-escape-test",
+            target="models",
+            output_dir="src",
+            status="baked",
+            base_commit="deadbeef",
+            started_at="2026-01-01T00:00:00",
+        )
+        response = RefineBakeResponse(
+            status="success",
+            summary="Checklist state: [x] done, [ ] pending",
+            generalizations=["Every item renders a [x] or [ ] checkbox"],
+            open_questions=["Should [ ] items be hidden?"],
+        )
+
+        out.render_refine_summary(session, response, console=console)
+        text = console.export_text()
+
+        assert "[x] done, [ ] pending" in text
+        assert "Every item renders a [x] or [ ] checkbox" in text
+        assert "Should [ ] items be hidden?" in text
+
+    def test_render_journal_escapes_markup(self) -> None:
+        console = _capturing_console()
+        out.render_journal("## 1. Ask\n**Rule:** show [x] when done, [ ] otherwise\n", console=console)
+        text = console.export_text()
+
+        assert "[x] when done, [ ] otherwise" in text

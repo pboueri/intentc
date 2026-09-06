@@ -628,6 +628,64 @@ def test_bake_failed_validation_feeds_per_validation_reason_into_next_attempt(ha
     assert any("always-fails: no match for: nonexistent-must-fail.txt" in e for e in second_errors)
 
 
+def test_compare_agent_error_is_retried_then_feeds_previous_errors(harness: Harness, monkeypatch):
+    harness.profile.retries = 3
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    calls: list[int] = []
+
+    def flaky_differencing(**kwargs):
+        calls.append(1)
+        if len(calls) <= 2:
+            raise AgentError("compare crashed")
+        return DifferencingResponse(status="equivalent", dimensions=[], summary="same")
+
+    monkeypatch.setattr(workflow, "run_differencing", flaky_differencing)
+    logs: list[str] = []
+
+    outcome, session, response = harness.bake(session, log=logs.append)
+
+    assert outcome == RefineOutcome.BAKED
+    assert len(calls) == 3
+    assert len(harness.agent.refine_bake_calls) == 1  # compare retries do not re-run refine_bake
+    assert any("compare agent error, retrying" in line for line in logs)
+
+
+def test_compare_agent_error_exhausted_fails_attempt_without_crashing(harness: Harness, monkeypatch):
+    harness.profile.retries = 2
+
+    def always_errors(**kwargs):
+        raise AgentError("compare always crashes")
+
+    monkeypatch.setattr(workflow, "run_differencing", always_errors)
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    outcome, session, response = harness.bake(session)
+
+    assert outcome == RefineOutcome.FAILED
+    assert session.status == "failed"
+    second_errors = harness.agent.refine_bake_calls[1].previous_errors
+    assert any("compare: agent error" in e and "compare always crashes" in e for e in second_errors)
+
+
+def test_unexpected_exception_marks_session_failed_before_propagating(harness: Harness, monkeypatch):
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    def boom(paths, message):
+        raise RuntimeError("git exploded")
+
+    monkeypatch.setattr(harness.vc, "commit_paths", boom)
+
+    with pytest.raises(RuntimeError, match="git exploded"):
+        harness.bake(session)
+
+    updated = harness.state_manager.backend.get_refinement_session(session.session_id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.ended_at is not None
+    assert updated.bake_attempts == 1
+
+
 def test_refine_bake_agent_error_is_retried_with_error_in_previous_errors(harness: Harness):
     outcome0, session, _ = harness.run_refine(no_bake=True)
     harness.agent.bake_script = [AgentError("bake exploded")]

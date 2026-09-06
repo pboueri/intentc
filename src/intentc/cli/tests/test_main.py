@@ -518,6 +518,47 @@ class TestRefineWorkflow:
         assert "intentc refine models" in result.output
         assert "--bake" in result.output
 
+    def test_agent_error_from_run_refine_prints_agent_error_and_exits_1(
+        self, project_dir: Path, monkeypatch
+    ) -> None:
+        def fake_run_refine(**kwargs):
+            raise AgentError("refine session crashed")
+
+        monkeypatch.setattr(main, "run_refine", fake_run_refine)
+        result = runner.invoke(main.app, ["refine", "models"])
+
+        assert result.exit_code == 1
+        assert "Agent error: refine session crashed" in result.output
+        assert "Traceback" not in result.output
+
+    def test_runtime_error_from_run_refine_exits_2_without_traceback(
+        self, project_dir: Path, monkeypatch
+    ) -> None:
+        def fake_run_refine(**kwargs):
+            raise RuntimeError("git blew up")
+
+        monkeypatch.setattr(main, "run_refine", fake_run_refine)
+        result = runner.invoke(main.app, ["refine", "models"])
+
+        assert result.exit_code == 2
+        assert "git blew up" in result.output
+        assert "Traceback" not in result.output
+
+    def test_agent_error_from_bake_refinement_prints_agent_error_and_exits_1(
+        self, project_dir: Path, monkeypatch
+    ) -> None:
+        _open_session(project_dir, "models", session_id="sess-agent-err")
+
+        def fake_bake_refinement(**kwargs):
+            raise AgentError("bake compare crashed")
+
+        monkeypatch.setattr(main, "bake_refinement", fake_bake_refinement)
+        result = runner.invoke(main.app, ["refine", "models", "--bake"])
+
+        assert result.exit_code == 1
+        assert "Agent error: bake compare crashed" in result.output
+        assert "Traceback" not in result.output
+
     def test_bake_flag_invokes_bake_refinement_on_open_session(self, project_dir: Path, monkeypatch) -> None:
         _open_session(project_dir, "models", session_id="sess-5")
         calls = []

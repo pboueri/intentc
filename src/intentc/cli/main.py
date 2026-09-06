@@ -620,7 +620,11 @@ def refine(
         if open_session is None:
             out.print_error(f"No open refinement session for '{target}' in {resolved_output_dir}.")
             raise typer.Exit(code=2)
-        abandon_refinement(state_manager, version_control, open_session, log=console.print)
+        try:
+            abandon_refinement(state_manager, version_control, open_session, log=console.print)
+        except RuntimeError as exc:
+            out.print_error(str(exc))
+            raise typer.Exit(code=2) from exc
         console.print(f"Session {open_session.session_id[:8]} abandoned.")
         raise typer.Exit(code=0)
 
@@ -634,18 +638,25 @@ def refine(
                 f"'{target}' has no refinement session to bake. Run: intentc refine {target}"
             )
             raise typer.Exit(code=2)
-        outcome, session_after, response = bake_refinement(
-            project=project,
-            profile=agent_profile,
-            implementation=implementation_obj,
-            state_manager=state_manager,
-            version_control=version_control,
-            builder=builder,
-            session=open_session,
-            output_dir=resolved_output_dir,
-            no_compare=no_compare,
-            log=out.timestamped_log(console),
-        )
+        try:
+            outcome, session_after, response = bake_refinement(
+                project=project,
+                profile=agent_profile,
+                implementation=implementation_obj,
+                state_manager=state_manager,
+                version_control=version_control,
+                builder=builder,
+                session=open_session,
+                output_dir=resolved_output_dir,
+                no_compare=no_compare,
+                log=out.timestamped_log(console),
+            )
+        except AgentError as exc:
+            out.print_error(f"Agent error: {exc}")
+            raise typer.Exit(code=1) from exc
+        except RuntimeError as exc:
+            out.print_error(str(exc))
+            raise typer.Exit(code=2) from exc
         out.render_refine_summary(session_after, response, console=console)
         _print_bake_outcome(outcome, target, resolved_output_dir, console)
         raise typer.Exit(code=0 if outcome == RefineOutcome.BAKED else 1)
@@ -666,6 +677,12 @@ def refine(
             log=out.timestamped_log(console),
         )
     except RefineUsageError as exc:
+        out.print_error(str(exc))
+        raise typer.Exit(code=2) from exc
+    except AgentError as exc:
+        out.print_error(f"Agent error: {exc}")
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
         out.print_error(str(exc))
         raise typer.Exit(code=2) from exc
 
@@ -835,7 +852,7 @@ def log_command(
         if refinement_session is None:
             out.print_error(f"No refinement session '{session}' for '{target}' in {resolved_output_dir}.")
             raise typer.Exit(code=2)
-        console.print(refinement_session.journal)
+        out.render_journal(refinement_session.journal, console=console)
         return
 
     history = state_manager.get_build_history(target, limit=limit)

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, Union
 
 from rich.console import Console
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 
@@ -323,18 +324,27 @@ def render_refine_summary(
     response: Optional[RefineBakeResponse],
     console: Optional[Console] = None,
 ) -> None:
+    # `response` fields are agent-authored free text: escape before printing
+    # so a literal "[x]" or "[ ]" is rendered verbatim, not swallowed as rich
+    # markup.
     out = console or Console()
     out.print(f"Session {session.session_id[:8]}: {_styled(session.status)}")
     if response is None:
         return
-    out.print(response.summary)
+    out.print(escape(response.summary))
     if response.generalizations:
         out.print("Generalizations:")
         for generalization in response.generalizations:
-            out.print(f"  - {generalization}")
+            out.print(f"  - {escape(generalization)}")
     if response.open_questions:
         for question in response.open_questions:
-            print_warning(f"  ? {question}", console=out)
+            print_warning(f"  ? {escape(question)}", console=out)
+
+
+def render_journal(journal: str, console: Optional[Console] = None) -> None:
+    """Print a refinement session's journal in full. The journal is
+    agent-authored: escape it so literal markup-like text prints verbatim."""
+    (console or Console()).print(escape(journal))
 
 
 def render_refinement_log(sessions: Sequence[RefinementSession], console: Optional[Console] = None) -> None:
