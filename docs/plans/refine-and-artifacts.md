@@ -85,6 +85,14 @@ The session phase worked first time: two journal entries with implementation-ind
 
 Plus: log prefixes written as `[bake 1/2]` were swallowed as terminal markup; the spec now uses `bake 1/2:`.
 
+Second round (after rebuilding `workflows/refine` with the fixes above and re-baking the failed session with `--bake`):
+
+- The re-bake path worked: attempt 1 rebuilt only `cli`; the rebuild's real validation reasons reached attempt 2, which corrected the check-script paths and committed that as `refine cli: attempt 2 [session:165f6f03]`; `cli` was rebuilt from the intent alone and passed 4/4, with behaviour matching the hand-refined code. The baked `cli.ic` reads as requirements and declares the check scripts as `kind: test` artifacts.
+- The final compare crashed: `run_differencing` re-reads the response file after the agent has already read, validated and deleted it, so `intentc compare` failed for every provider on main. The differencing intent now returns the agent's response and threads the log callback through.
+- That crash left the session `baking`. The refine intent now marks a session `failed` on any crash inside an attempt, retries a compare `AgentError` up to `profile.retries` times, counts `bake_attempts` at attempt start, and has the CLI catch `AgentError` without a traceback.
+- Upgrading intentc marked nine existing targets outdated because inline references were being hashed and because `source_files` mixed relative and absolute paths (the hash depended on how the project was loaded). Staleness now covers declared artifacts only, `source_files` returns absolute paths, and the linter warns about undeclared inline references.
+- Terminal output ate a literal `[x]` in a generalisation; agent-authored text is now escaped before rendering.
+
 ## Build
 
 Both features are built with intentc itself, in order: `intentc build constraints/artifacts`, then `intentc build workflows/refine`. No hand-written implementation.
