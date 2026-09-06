@@ -577,6 +577,26 @@ Build B.
     assert not any(p.name == "a.schema.json" for p in b_sources)
 
 
+def test_source_files_excludes_inline_references(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+---
+See `./notes.md` for background.
+""",
+    )
+    _write(tmp_path / "a" / "notes.md", "background notes")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    sources = project.source_files("a")
+    assert not any(p.name == "notes.md" for p in sources)
+    assert any(p.name == "a.ic" for p in sources)
+
+
 def test_check_project_flags_declared_artifact_matching_no_file(tmp_path):
     _write_project_ic(tmp_path)
     _write_default_impl(tmp_path)
@@ -619,6 +639,52 @@ See `./missing.png` for the mockup.
         issue.level == "warning" and "./missing.png" in issue.message for issue in issues
     )
     assert not any("./missing.png" in issue.message and issue.level == "error" for issue in issues)
+
+
+def test_check_project_warns_on_undeclared_inline_reference(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+---
+See `./notes.md` for background.
+""",
+    )
+    _write(tmp_path / "a" / "notes.md", "background notes")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning"
+        and "./notes.md" in issue.message
+        and "not declared as an artifact" in issue.message
+        for issue in issues
+    )
+
+
+def test_check_project_no_undeclared_warning_when_also_declared(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+artifacts:
+  - path: ./notes.md
+    kind: reference
+---
+See `./notes.md` for background.
+""",
+    )
+    _write(tmp_path / "a" / "notes.md", "background notes")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert not any("not declared as an artifact" in issue.message for issue in issues)
 
 
 def test_check_project_flags_large_artifact_as_warning(tmp_path):

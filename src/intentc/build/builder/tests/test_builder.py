@@ -673,6 +673,49 @@ def test_editing_only_a_declared_artifact_marks_feature_outdated_and_rebuilds(tm
     assert len(agent.build_calls) == 2
 
 
+def test_editing_an_undeclared_inline_reference_does_not_mark_outdated(tmp_path):
+    intent_dir = tmp_path / "intent"
+    intent_dir.mkdir(parents=True)
+    write_intent_file(ProjectIntent(name="demo", body="A demo project."), intent_dir / "project.ic")
+    write_intent_file(
+        Implementation(name="default", body="Python 3.11, uv, pydantic."),
+        intent_dir / "implementations" / "default.ic",
+    )
+    (intent_dir / "a").mkdir(parents=True)
+    (intent_dir / "a" / "a.ic").write_text(
+        "---\nname: a\n---\nSee `./notes.md` for background.\n",
+        encoding="utf-8",
+    )
+    (intent_dir / "a" / "notes.md").write_text("background notes", encoding="utf-8")
+    write_validation_file(
+        ValidationFile(
+            target="a",
+            validations=[
+                Validation(
+                    name="a-check",
+                    type=ValidationType.AGENT_VALIDATION.value,
+                    severity=Severity.ERROR,
+                    args={"rubric": "Check the feature was built correctly and completely."},
+                )
+            ],
+        ),
+        intent_dir / "a" / "validation.icv",
+    )
+
+    project = load_project(intent_dir)
+    agent = ScriptedAgent()
+    builder, output_dir = make_builder(tmp_path, project, make_factory(agent))
+
+    results, error = builder.build(BuildOptions(target="a", output_dir=str(output_dir)))
+    assert error is None
+    assert len(agent.build_calls) == 1
+
+    (intent_dir / "a" / "notes.md").write_text("changed notes", encoding="utf-8")
+
+    assert builder.detect_outdated() == []
+    assert not any(p.name == "notes.md" for p in project.source_files("a"))
+
+
 def test_refresh_outdated_leaves_pending_and_failed_descendants_alone(tmp_path):
     project = make_project(tmp_path)
     agent = ScriptedAgent()

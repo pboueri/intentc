@@ -208,7 +208,10 @@ def parse_intent_file(
         return ProjectIntent(**common)
     if as_implementation:
         return Implementation(depends_on=depends_on, **common)
-    return IntentFile(depends_on=depends_on, **common)
+
+    intent = IntentFile(depends_on=depends_on, **common)
+    intent._declared_artifact_paths = {a.path for a in declared_artifacts}
+    return intent
 
 
 def parse_validation_file(path: Union[str, Path]) -> ValidationFile:

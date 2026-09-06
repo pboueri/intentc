@@ -296,8 +296,11 @@ class Project(BaseModel):
 
     def source_files(self, target: str) -> list[Path]:
         """The target's `.ic` and `.icv` files plus the resolved paths of the
-        target's own artifacts. Ancestor, project and implementation artifacts are
-        deliberately excluded -- see `artifacts_for` for the full constraint set."""
+        target's own *declared* artifacts (frontmatter entries). Inline references
+        (kind "reference") are context for the agent, not a declared constraint, and
+        are deliberately excluded -- editing one must not mark the feature outdated.
+        Ancestor, project and implementation artifacts are also excluded -- see
+        `artifacts_for` for the full constraint set."""
         self._require_feature(target)
         node = self.features[target]
         paths: list[Path] = []
@@ -305,7 +308,8 @@ class Project(BaseModel):
             if intent.source_path is not None:
                 paths.append(Path(intent.source_path))
             for artifact in intent.artifacts:
-                paths.extend(artifact.resolved_paths)
+                if artifact.path in intent._declared_artifact_paths:
+                    paths.extend(artifact.resolved_paths)
         for validation_file in node.validations:
             if validation_file.source_path is not None:
                 paths.append(Path(validation_file.source_path))
@@ -751,6 +755,19 @@ def check_project(project: Project) -> list[ProjectIssue]:
                                 path=intent.source_path,
                                 feature=feature_path,
                                 message=f"referenced file '{ref}' does not exist relative to this intent file",
+                            )
+                        )
+                    elif ref not in intent._declared_artifact_paths:
+                        issues.append(
+                            ProjectIssue(
+                                level="warning",
+                                path=intent.source_path,
+                                feature=feature_path,
+                                message=(
+                                    f"'{ref}' is referenced but not declared as an artifact; edits to "
+                                    "it will not trigger a rebuild. Add it to artifacts: to make it a "
+                                    "constraint."
+                                ),
                             )
                         )
 

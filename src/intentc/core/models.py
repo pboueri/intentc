@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class ValidationType(str, Enum):
@@ -54,6 +54,12 @@ class IntentFile(BaseModel):
     file_references: list[str] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
     source_path: Optional[Path] = None
+
+    # Paths explicitly declared under `artifacts:` frontmatter (as opposed to inline
+    # body references), tracked separately from `artifacts` because that list merges
+    # both kinds and dedup collapses a path declared both ways to one entry. Used by
+    # `check_project` to warn about inline references that were never declared.
+    _declared_artifact_paths: set[str] = PrivateAttr(default_factory=set)
 
 
 class ProjectIntent(BaseModel):
