@@ -69,10 +69,17 @@ IntentFile, ProjectIntent, Implementation gain:
 
 - `load_project()` resolves every artifact against the directory of the intent file that declares it, expands globs, and fills `resolved_paths` and `owner`. A path that resolves outside `intent/` is a load-time `ParseError` with `field: artifacts`.
 - `Project.artifacts_for(feature_path: string, implementation: Implementation or null = null) -> list of Artifact` — the target's own artifacts, then its ancestors' in topological order, then the project's, then the implementation's. Deduplicated by resolved path, first occurrence wins.
-- `Project.source_files(target: string) -> list of path` — the target's `.ic` and `.icv` files **plus the resolved paths of the target's own artifacts**. This is the list the builder hashes, so editing a schema marks the feature outdated exactly like editing its intent. Ancestor, project and implementation artifacts are deliberately *not* included: editing a project-wide design file does not silently schedule a rebuild of every target (the user runs `intentc build --force` for that).
+- `Project.source_files(target: string) -> list of path` — the target's `.ic` and `.icv` files **plus the resolved paths of the target's own *declared* artifacts** (frontmatter entries). This is the list the builder hashes, so editing a declared schema marks the feature outdated exactly like editing its intent. Two things are deliberately *not* included:
+  - **Inline references** (`kind: reference`). They are context the agent can read, not a declared constraint, and hashing them would change the staleness hash of every existing project on upgrade — every target whose prose links a file would come up `outdated` and `intentc build` would offer to regenerate the codebase. For a project that declares nothing, `source_files` therefore returns exactly what it did before this feature, and recorded hashes stay valid.
+  - Ancestor, project and implementation artifacts. Editing a project-wide design file does not silently schedule a rebuild of every target (the user runs `intentc build --force` for that).
+
+  To make a referenced file drive rebuilds, declare it under `artifacts:`; the linter says so (below).
+
+  Every path `source_files` returns is **absolute and resolved** (`Path.resolve()`), including the `.ic`/`.icv` entries. `content_hash` sorts by path, so mixing a relative intent path with an absolute artifact path would make the hash depend on whether the project was loaded from `intent` or `/abs/.../intent` — the CLI loads it absolute, tests often load it relative, and the two must agree.
 - `write_project()` copies resolved artifacts next to the copied intents, preserving their relative layout. This replaces the current copying of inline references.
 - `check_project()` gains:
   - error: a *declared* artifact whose path or glob matches no file — `"artifact 'task.schema.json' matches no file — add it or remove the entry"`. (An inline reference that does not exist stays a warning, as today.)
+  - warning: an inline reference that exists but is not declared under `artifacts:` — `"'<path>' is referenced but not declared as an artifact; edits to it will not trigger a rebuild. Add it to artifacts: to make it a constraint."` Skipped for references whose first path segment is `intent` or `.intentc`, as for the existing missing-reference warning.
   - warning: an artifact larger than 1 MB — it will not be inlined in the prompt and is unlikely to be useful to an agent as a whole.
   - warning: an artifact declared by two features with different `note`s (the agent gets both; the notes should agree).
 
@@ -117,7 +124,7 @@ A template that lacks the placeholder still renders (every variable is always su
 ## Builder (build/builder)
 
 - Sandbox read paths include every resolved path of `project.artifacts_for(target, implementation)`, absolute.
-- The `source_hash` recorded on a `BuildResult` is `content_hash(project.source_files(target))`, which now covers the target's own artifacts. Intent and validation file versions are recorded as before; artifacts contribute to the combined hash only.
+- The `source_hash` recorded on a `BuildResult` is `content_hash(project.source_files(target))`, which now covers the target's own declared artifacts. Intent and validation file versions are recorded as before; artifacts contribute to the combined hash only. Because inline references are excluded, a database recorded before this feature existed compares equal for every target that declares nothing: upgrading intentc must not mark anything outdated by itself.
 - `refresh_outdated()` keeps its current messages. (Attributing staleness to a specific artifact would need a per-file manifest; deferred.)
 - The `BuildContext` for every build and validation carries `artifacts_for(target, implementation)`.
 
@@ -127,8 +134,8 @@ intentc's own prompt templates are artifacts: `intent/build/agents/prompts/*.pro
 
 ## Requirements
 
-1. Declaring an artifact and then editing it marks the feature outdated and rebuilds it without `--force`.
+1. Declaring an artifact and then editing it marks the feature outdated and rebuilds it without `--force`. Editing a file that is only referenced inline does not (the linter warns that it is undeclared).
 2. Inside the sandbox the agent can read every artifact of the target, its ancestors, the project and the selected implementation, and the prompt tells it they exist, what they are for, and (for small text files) what they contain.
 3. A missing declared artifact fails `intentc check`, not a build an hour later.
 4. `write_project` followed by `load_project` on the copy yields the same artifacts with the same content.
-5. Nothing changes for a project that declares no artifacts: prompts render `(none)`, hashes cover the same files as before, and existing databases keep working.
+5. Nothing changes for a project that declares no artifacts: prompts render `(none)` (or list the inline references, which is new but harmless), hashes cover exactly the same files as before, `intentc status` shows the same statuses as before the upgrade, and existing databases keep working.

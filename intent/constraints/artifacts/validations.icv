@@ -54,7 +54,10 @@ validations:
         Verify builder tests show that after a successful build of a feature that
         declares an artifact, editing only the artifact file (not the .ic or .icv)
         makes detect_outdated() report the feature and the next build() rebuilds it
-        without force. Verify that the sandbox read paths handed to the agent profile
+        without force. Verify the converse for inline references: a feature whose
+        body links a file it does not declare has source_files() equal to just its
+        .ic/.icv files, so editing that file does NOT make it outdated, and
+        check_project warns that the reference is undeclared. Verify that the sandbox read paths handed to the agent profile
         include the absolute resolved path of every artifact returned by
         artifacts_for(target), including a project-level artifact, and that the
         BuildContext passed to the mock agent carries the same artifacts.
