@@ -130,6 +130,14 @@ class VersionControl(ABC):
     @abstractmethod
     def materialize(self, commit_id: str, dest_dir: "str | Path") -> None: ...
 
+    def commit_paths(self, paths: list[str], message: str) -> Optional[str]:
+        """Stage and commit only `paths`, returning the new commit id, or
+        `None` if nothing under `paths` had changed. Used to check in a
+        targeted subset of the tree (e.g. an intent directory) separately
+        from a full checkpoint. Backends that don't support partial commits
+        may leave this as a no-op."""
+        return None
+
 
 class GitVersionControl(VersionControl):
     """`VersionControl` backed by git. Shells out via `subprocess` with argument
@@ -222,6 +230,23 @@ class GitVersionControl(VersionControl):
         commit_id = self._run(commit_args).strip()
         self._run(["update-ref", ref_name, commit_id])
         return commit_id
+
+    def commit_paths(self, paths: list[str], message: str) -> Optional[str]:
+        """Stage and commit only `paths` (absolute or repo-relative),
+        independent of the instance's `output_dir` pathspec. Returns the new
+        commit id, or `None` (no commit is made) if nothing under `paths`
+        differs from HEAD."""
+        if not paths:
+            return None
+        self._run(["add", "-A", "--", *paths])
+        check = subprocess.run(
+            ["git", "diff", "--cached", "--quiet", "--", *paths],
+            cwd=self.repo_dir,
+        )
+        if check.returncode == 0:
+            return None
+        self._run(["commit", "-m", message, "--", *paths])
+        return self._run(["rev-parse", "HEAD"]).strip()
 
     def materialize(self, commit_id: str, dest_dir: "str | Path") -> None:
         """Extract `commit_id`'s output directory into `dest_dir` (as

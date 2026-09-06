@@ -31,7 +31,10 @@ from intentc.core import (
     Implementation,
     IntentFile,
     ProjectIntent,
+    Validation,
+    ValidationFile,
     write_intent_file,
+    write_validation_file,
     load_project,
 )
 from intentc.refine import RefineOutcome, RefineUsageError, abandon_refinement, bake_refinement, run_refine
@@ -62,6 +65,8 @@ class MockVersionControl(VersionControl):
         self.restored_to: list[str] = []
         self.snapshot_refs: dict[str, str] = {}
         self.materialized: list[tuple[str, str]] = []
+        self.committed_paths: list[tuple[list[str], str]] = []
+        self.commit_paths_changed = True
         self.diff_text = (
             f"diff --git a/{output_dir}/store.py b/{output_dir}/store.py\n"
             "@@ -1 +1 @@\n-old\n+new\n"
@@ -92,6 +97,14 @@ class MockVersionControl(VersionControl):
 
     def materialize(self, commit_id: str, dest_dir) -> None:
         self.materialized.append((commit_id, str(dest_dir)))
+
+    def commit_paths(self, paths: list[str], message: str) -> Optional[str]:
+        self.committed_paths.append((list(paths), message))
+        if not self.commit_paths_changed:
+            return None
+        commit_id = f"intent-commit-{len(self._commits) + 1}"
+        self._commits.append(commit_id)
+        return commit_id
 
 
 class ScriptedRefineAgent(MockAgent):
@@ -451,6 +464,13 @@ def test_bake_success_calls_refine_bake_then_clean_build_compare_in_order(harnes
 
     harness.agent.refine_bake = tracking_refine_bake
 
+    original_commit_paths = harness.vc.commit_paths
+
+    def tracking_commit_paths(paths, message):
+        call_order.append("commit")
+        return original_commit_paths(paths, message)
+
+    monkeypatch.setattr(harness.vc, "commit_paths", tracking_commit_paths)
     monkeypatch.setattr(Builder, "clean", tracking_clean)
     monkeypatch.setattr(Builder, "build", tracking_build)
     monkeypatch.setattr(workflow, "run_differencing", fake_differencing)
@@ -458,7 +478,7 @@ def test_bake_success_calls_refine_bake_then_clean_build_compare_in_order(harnes
     outcome, session, response = harness.bake(session)
 
     assert outcome == RefineOutcome.BAKED
-    assert call_order == ["refine_bake", "clean", "build", "compare"]
+    assert call_order == ["refine_bake", "commit", "clean", "build", "compare"]
     assert len(harness.agent.refine_bake_calls) == 1
     assert session.status == "baked"
     assert session.bake_generation_id
@@ -467,6 +487,38 @@ def test_bake_success_calls_refine_bake_then_clean_build_compare_in_order(harnes
 
     journal_file = _journal_path(harness.tmp_path, harness.output_dir, session.session_id)
     assert not journal_file.exists()
+
+
+def test_bake_commits_feature_dir_with_attempt_and_session_in_message(harness: Harness):
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    outcome, session, response = harness.bake(session, no_compare=True)
+
+    assert outcome == RefineOutcome.BAKED
+    _, _, feature_dir = _feature_paths(harness.project, harness.target)
+    assert len(harness.vc.committed_paths) == 1
+    committed_paths, message = harness.vc.committed_paths[0]
+    assert committed_paths == [feature_dir]
+    assert message == f"refine {harness.target}: attempt 1 [session:{session.session_id[:8]}]"
+
+
+def test_bake_rebuild_does_not_force_ancestors(harness: Harness, monkeypatch):
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    captured: list[BuildOptions] = []
+    original_build = Builder.build
+
+    def tracking_build(self, opts, *a, **k):
+        captured.append(opts)
+        return original_build(self, opts, *a, **k)
+
+    monkeypatch.setattr(Builder, "build", tracking_build)
+
+    outcome, session, response = harness.bake(session, no_compare=True)
+
+    assert outcome == RefineOutcome.BAKED
+    assert len(captured) == 1
+    assert captured[0].force is False
 
 
 def test_bake_populates_diff_files_by_owner_journal_and_snapshot_dir(harness: Harness):
@@ -548,6 +600,34 @@ def test_bake_failed_rebuild_feeds_failing_step_summary_into_next_attempt(harnes
     assert session.bake_attempts == 2
 
 
+def test_bake_failed_validation_feeds_per_validation_reason_into_next_attempt(harness: Harness):
+    harness.profile.retries = 2
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+
+    # A deterministic file_exists validation that can never pass: the mock
+    # build never creates the file, so every rebuild attempt fails validation
+    # in the same way.
+    vf = ValidationFile(
+        target=harness.target,
+        validations=[
+            Validation(
+                name="always-fails",
+                type="file_exists",
+                args={"paths": ["nonexistent-must-fail.txt"]},
+            )
+        ],
+    )
+    write_validation_file(vf, harness.tmp_path / "intent" / harness.target / "validation.icv")
+
+    outcome, session, response = harness.bake(session, no_compare=True)
+
+    assert outcome == RefineOutcome.FAILED
+    assert len(harness.agent.refine_bake_calls) == 2
+    second_errors = harness.agent.refine_bake_calls[1].previous_errors
+    assert any("validation failed" in e for e in second_errors)
+    assert any("always-fails: no match for: nonexistent-must-fail.txt" in e for e in second_errors)
+
+
 def test_refine_bake_agent_error_is_retried_with_error_in_previous_errors(harness: Harness):
     outcome0, session, _ = harness.run_refine(no_bake=True)
     harness.agent.bake_script = [AgentError("bake exploded")]
@@ -578,6 +658,25 @@ def test_bake_exhaustion_restores_snapshot_marks_outdated_and_failed(harness: Ha
     assert harness.vc.restored_to == [session.snapshot_id]
     intent_path, _, _ = _feature_paths(harness.project, harness.target)
     assert Path(intent_path).exists()
+
+
+def test_bake_rebake_of_failed_session_reuses_snapshot(harness: Harness):
+    harness.profile.retries = 1
+    outcome0, session, _ = harness.run_refine(no_bake=True)
+    harness.agent.bake_script = [AgentError("first attempt fails")]
+
+    outcome1, session, _ = harness.bake(session, no_compare=True)
+    assert outcome1 == RefineOutcome.FAILED
+    first_snapshot_id = session.snapshot_id
+    assert first_snapshot_id
+    snapshot_refs_before = dict(harness.vc.snapshot_refs)
+
+    harness.profile.retries = 2
+    outcome2, session, response2 = harness.bake(session, no_compare=True)
+
+    assert outcome2 == RefineOutcome.BAKED
+    assert session.snapshot_id == first_snapshot_id
+    assert harness.vc.snapshot_refs == snapshot_refs_before
 
 
 def test_run_refine_confirm_declined_leaves_session_open(harness: Harness):

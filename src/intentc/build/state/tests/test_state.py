@@ -492,3 +492,42 @@ def test_materialize_of_unknown_commit_raises_runtime_error(tmp_path):
 
     with pytest.raises(RuntimeError):
         vc.materialize("not-a-real-commit-sha", tmp_path / "materialized")
+
+
+def test_commit_paths_commits_only_the_given_pathspec(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "intent" / "store").mkdir(parents=True)
+    (tmp_path / "out").mkdir()
+    (tmp_path / "intent" / "store" / "store.ic").write_text("body", encoding="utf-8")
+    (tmp_path / "out" / "store.py").write_text("value = 1\n", encoding="utf-8")
+    vc = GitVersionControl(tmp_path, output_dir="out")
+    base = vc.checkpoint("base build")
+
+    (tmp_path / "intent" / "store" / "store.ic").write_text("updated body", encoding="utf-8")
+    (tmp_path / "out" / "store.py").write_text("value = 2\n", encoding="utf-8")
+
+    commit_id = vc.commit_paths([str(tmp_path / "intent" / "store")], "refine store: attempt 1 [session:abcd1234]")
+
+    assert commit_id is not None
+    assert commit_id != base
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout
+    assert "out/store.py" in status
+    assert "store.ic" not in status
+    log_output = subprocess.run(
+        ["git", "log", "-1", "--format=%s", commit_id], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert log_output == "refine store: attempt 1 [session:abcd1234]"
+
+
+def test_commit_paths_returns_none_when_nothing_changed(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "intent" / "store").mkdir(parents=True)
+    (tmp_path / "intent" / "store" / "store.ic").write_text("body", encoding="utf-8")
+    vc = GitVersionControl(tmp_path)
+    vc.checkpoint("base build")
+
+    commit_id = vc.commit_paths([str(tmp_path / "intent" / "store")], "refine store: attempt 1 [session:abcd1234]")
+
+    assert commit_id is None

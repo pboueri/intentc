@@ -362,15 +362,22 @@ class TestClean:
 # ---------------------------------------------------------------------------
 
 
-def _open_session(project_root: Path, target: str, output_dir: str = "src", session_id: str = "sess-1") -> None:
+def _open_session(
+    project_root: Path,
+    target: str,
+    output_dir: str = "src",
+    session_id: str = "sess-1",
+    status: str = "recording",
+) -> None:
     state_manager = StateManager(base_dir=project_root, output_dir=output_dir)
     state_manager.backend.create_refinement_session(
         RefinementSession(
             session_id=session_id,
             target=target,
             output_dir=output_dir,
-            status="recording",
+            status=status,
             base_commit="deadbeef",
+            snapshot_id="snap-1" if status == "failed" else None,
             started_at="2026-09-06T10:00:00",
         )
     )
@@ -441,7 +448,8 @@ class TestRefineUsageErrors:
     def test_bake_without_open_session_exits_2(self, project_dir: Path) -> None:
         result = runner.invoke(main.app, ["refine", "models", "--bake"])
         assert result.exit_code == 2
-        assert "No open refinement session" in result.output
+        assert "'models' has no refinement session to bake" in result.output
+        assert "intentc refine models" in result.output
 
     def test_abandon_without_open_session_exits_2(self, project_dir: Path) -> None:
         result = runner.invoke(main.app, ["refine", "models", "--abandon"])
@@ -525,6 +533,23 @@ class TestRefineWorkflow:
 
         assert result.exit_code == 0
         assert calls == ["sess-5"]
+        assert "Intent updated" in result.output
+
+    def test_bake_flag_falls_back_to_most_recent_failed_session(self, project_dir: Path, monkeypatch) -> None:
+        _open_session(project_dir, "models", session_id="sess-5b", status="failed")
+        calls = []
+
+        def fake_bake_refinement(**kwargs):
+            calls.append(kwargs["session"].session_id)
+            updated = kwargs["session"].model_copy(update={"status": "baked", "bake_generation_id": "gen-9"})
+            return RefineOutcome.BAKED, updated, RefineBakeResponse(status="success", summary="done")
+
+        monkeypatch.setattr(main, "bake_refinement", fake_bake_refinement)
+
+        result = runner.invoke(main.app, ["refine", "models", "--bake"])
+
+        assert result.exit_code == 0
+        assert calls == ["sess-5b"]
         assert "Intent updated" in result.output
 
     def test_abandon_flag_invokes_abandon_refinement_on_open_session(self, project_dir: Path, monkeypatch) -> None:

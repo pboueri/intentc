@@ -627,7 +627,12 @@ def refine(
     if bake:
         open_session = backend.get_open_refinement_session(target)
         if open_session is None:
-            out.print_error(f"No open refinement session for '{target}' in {resolved_output_dir}.")
+            recent_sessions = backend.list_refinement_sessions(target)
+            open_session = next((s for s in recent_sessions if s.status == "failed"), None)
+        if open_session is None:
+            out.print_error(
+                f"'{target}' has no refinement session to bake. Run: intentc refine {target}"
+            )
             raise typer.Exit(code=2)
         outcome, session_after, response = bake_refinement(
             project=project,

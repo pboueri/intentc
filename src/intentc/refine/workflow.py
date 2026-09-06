@@ -353,8 +353,14 @@ def bake_refinement(
     implementation_name = implementation.name if implementation is not None else ""
     resolved_create_agent = create_agent or (lambda p: create_from_profile(p, log=log_fn))
 
-    ref_name = f"refs/intentc/refinements/{session.session_id}"
-    snapshot_id = version_control.snapshot(f"refine: {target} session {session.session_id}", ref_name)
+    if session.snapshot_id:
+        # Re-baking a previously failed session: the refined tree was already
+        # captured on the earlier attempt, and `builder.clean` will overwrite
+        # the output directory anyway, so there is nothing new to snapshot.
+        snapshot_id = session.snapshot_id
+    else:
+        ref_name = f"refs/intentc/refinements/{session.session_id}"
+        snapshot_id = version_control.snapshot(f"refine: {target} session {session.session_id}", ref_name)
     diff_text = version_control.diff(session.base_commit, snapshot_id)
     by_owner = _files_by_owner(diff_text, output_dir, target, project, state_manager)
 
@@ -404,7 +410,7 @@ def bake_refinement(
             feature_dir=feature_dir,
         )
 
-        log_fn(f"[bake {attempt}/{total_attempts}] rewriting intent")
+        log_fn(f"bake {attempt}/{total_attempts}: rewriting intent")
         try:
             bake_response = agent.refine_bake(ctx)
         except AgentError as exc:
@@ -431,22 +437,40 @@ def bake_refinement(
         # the rebuild sees this attempt's intent edits.
         builder._project = project
 
-        log_fn(f"[bake {attempt}/{total_attempts}] rebuilding {target} from scratch")
+        # Commit the target's feature directory as a dedicated intent commit
+        # *before* rebuilding. The rebuild's own checkpoint stages everything
+        # (`git add -A`), so without this the baked intent edits would be
+        # swept into the `build:` commit instead of getting their own
+        # traceable history entry.
+        commit_message = f"refine {target}: attempt {attempt} [session:{session.session_id[:8]}]"
+        commit_id = version_control.commit_paths([feature_dir], commit_message)
+        if commit_id:
+            log_fn(f"bake {attempt}/{total_attempts}: committing intent ({commit_id[:8]})")
+
+        log_fn(f"bake {attempt}/{total_attempts}: rebuilding {target} from scratch")
         builder.clean(target, output_dir)
         results, error = builder.build(
-            BuildOptions(target=target, force=True, output_dir=output_dir, implementation=implementation_name)
+            BuildOptions(target=target, force=False, output_dir=output_dir, implementation=implementation_name)
         )
         if error is not None:
             failing_step = None
             if results:
                 failing_step = next((step for step in results[-1].steps if step.status == "failed"), None)
             summary = failing_step.summary if failing_step is not None else str(error)
-            previous_errors = [summary]
+            build_errors = [summary]
+            if failing_step is not None and failing_step.phase == "validate":
+                validation_rows = backend.get_validation_results(target)
+                build_errors.extend(
+                    f"{row['name']}: {row['reason']}"
+                    for row in validation_rows
+                    if row["status"] != "pass"
+                )
+            previous_errors = build_errors
             backend.update_refinement_session(session.session_id, bake_attempts=attempt)
             continue
 
         if not no_compare:
-            log_fn(f"[bake {attempt}/{total_attempts}] comparing against refined snapshot")
+            log_fn(f"bake {attempt}/{total_attempts}: comparing against refined snapshot")
             diff_response = run_differencing(
                 output_dir_a=materialized_output_dir,
                 output_dir_b=output_dir,
