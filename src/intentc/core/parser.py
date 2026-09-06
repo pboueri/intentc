@@ -25,12 +25,14 @@ _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?\n)---\s*\n?(.*)\Z", re.DOTALL)
 
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
+# Bare words are candidates only when they contain a path separator (or start with ./ or ../).
 _BARE_FILE_RE = re.compile(
-    r"(?<![\w/.\-])"
-    r"((?:\.{1,2}/)?[\w.\-]+(?:/[\w.\-]+)*\.[A-Za-z0-9]{1,6}"
-    r"|(?:\.{1,2}/)[\w.\-/]*\*)"
+    r"(?<![\w/.\-\[`])"
+    r"((?:\.{1,2}/)+[\w.\-/*]+|[\w.\-]+(?:/[\w.\-*]+)+)"
     r"(?![\w])"
 )
+_URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+_TRAILING_PUNCT = ".,;:)"
 
 
 def extract_file_references(body: str) -> list[str]:
@@ -39,10 +41,10 @@ def extract_file_references(body: str) -> list[str]:
     seen: set[str] = set()
 
     def add(candidate: str) -> None:
-        candidate = candidate.strip()
+        candidate = candidate.strip().rstrip(_TRAILING_PUNCT)
         if not candidate or candidate in seen:
             return
-        if candidate.startswith(("http://", "https://")):
+        if _URL_RE.match(candidate):
             return
         if not _looks_like_file_reference(candidate):
             return
@@ -60,14 +62,16 @@ def extract_file_references(body: str) -> list[str]:
 
 
 def _looks_like_file_reference(candidate: str) -> bool:
+    """A path with a separator whose last segment has an extension or is a glob."""
     if any(ch.isspace() for ch in candidate):
         return False
-    if "/" in candidate or "*" in candidate:
+    if "/" not in candidate and not candidate.startswith(("./", "../")):
+        return False
+    last = candidate.rstrip("/").rsplit("/", 1)[-1]
+    if last.endswith("*"):
         return True
-    if "." in candidate:
-        name, _, ext = candidate.rpartition(".")
-        return bool(name) and ext.isalnum() and 1 <= len(ext) <= 6
-    return False
+    name, dot, ext = last.rpartition(".")
+    return bool(dot) and bool(name) and ext.isalnum() and 1 <= len(ext) <= 6
 
 
 def _split_frontmatter(path: Path, text: str) -> tuple[dict[str, Any], str]:

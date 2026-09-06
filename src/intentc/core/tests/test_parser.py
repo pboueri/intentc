@@ -27,26 +27,30 @@ from intentc.core import (
 
 def test_extract_file_references_plain_and_backtick_and_markdown_link():
     body = (
-        "See the image ui_design.png next to this feature.\n"
+        "See the image ./ui_design.png next to this feature.\n"
         "Also reference the shared design system like `../../design_system/*`.\n"
         "Full details in [core/project](core/project/project.ic).\n"
     )
     refs = extract_file_references(body)
-    assert "ui_design.png" in refs
+    assert "./ui_design.png" in refs
     assert "../../design_system/*" in refs
     assert "core/project/project.ic" in refs
 
 
 def test_extract_file_references_ignores_urls_and_plain_words():
-    body = "Visit https://example.com/file.png for docs. This is a normal sentence."
+    body = (
+        "Visit https://example.com/file.png for docs. This is a normal sentence, e.g. one that\n"
+        "mentions project.ic, args.rubric, Severity.ERROR and 0.0 — none of which are paths.\n"
+        "Link text is ignored: [core/project](../project/project.ic)."
+    )
     refs = extract_file_references(body)
-    assert refs == []
+    assert refs == ["../project/project.ic"]
 
 
 def test_extract_file_references_no_duplicates():
-    body = "See `foo.txt` and foo.txt again."
+    body = "See `./foo.txt` and ./foo.txt again, plus assets/foo.txt."
     refs = extract_file_references(body)
-    assert refs.count("foo.txt") == 1
+    assert refs == ["./foo.txt", "assets/foo.txt"]
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ depends_on:
 tags: [alpha, beta]
 authors: [jane]
 ---
-Body text referencing `design.png`.
+Body text referencing `./design.png`.
 """,
     )
     intent = parse_intent_file(path)
@@ -80,7 +84,7 @@ Body text referencing `design.png`.
     assert intent.tags == ["alpha", "beta"]
     assert intent.authors == ["jane"]
     assert "Body text" in intent.body
-    assert "design.png" in intent.file_references
+    assert "./design.png" in intent.file_references
     assert intent.source_path == path
 
 

@@ -525,14 +525,3 @@ class TestCompare:
         result = runner.invoke(main.app, ["compare", "does-not-exist-a", "does-not-exist-b"])
         assert result.exit_code == 2
         assert "Directory not found" in result.output
-
-    def test_no_traceback_when_differencing_unavailable(self, project_dir: Path, tmp_path: Path) -> None:
-        dir_a = tmp_path / "out_a"
-        dir_b = tmp_path / "out_b"
-        dir_a.mkdir()
-        dir_b.mkdir()
-
-        result = runner.invoke(main.app, ["compare", str(dir_a), str(dir_b)])
-
-        assert result.exit_code == 2
-        assert result.exception is None or isinstance(result.exception, SystemExit)

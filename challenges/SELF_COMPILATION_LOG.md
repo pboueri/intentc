@@ -130,3 +130,50 @@ moving on.
 against the regenerated `src/`; the todo-app example builds end-to-end
 (build → validate → status → log → diff → stale rebuild → clean) with a
 CLI-provider agent.
+
+## Iteration 5 — hermetic recompile with Claude Code in auto permission mode (2026-09-05)
+
+**What was tried:** `./bootstrap.sh --skip-compare --inspect --yes` — a git
+worktree with `src/` deleted and history stripped to an orphan commit, built
+with `intentc build --force` using the real `claude` agent. The ClaudeAgent now
+defaults to `--permission-mode auto --permission-prompts none` instead of
+`--dangerously-skip-permissions` (`permission_mode: bypassPermissions` on the
+profile opts back in), which is what made the nested agent runnable in the
+build environment at all.
+
+**Result:** all 11 targets built and passed their validations in one run
+(about 85 minutes wall clock). One retry in total: `build/storage` failed its
+`storage-roundtrip` rubric because the test never exercised the
+`build_steps.log` column; the retry, prompted with that reason, fixed it. The
+intent now says explicitly how step log text is stored (`save_build_step`) and
+read back (`get_build_steps`).
+
+| target | attempts | time |
+|--------|----------|------|
+| core/specifications | 1 | 272s |
+| core/project | 1 | 393s |
+| build/agents | 1 | 342s |
+| build/storage | 2 | 120s (retry) |
+| build/state | 1 | ~470s |
+| build/validations | 1 | 551s |
+| build/builder | 1 | 724s |
+| build/end_to_end | 1 | 308s |
+| interfaces/cli | 1 | 662s |
+| differencing | 1 | 292s |
+| workflows/init | 1 | 728s |
+
+**What needed a hand after the build:** two tests written by early targets
+asserted that the differencing prompt/module was *absent* (it did not exist yet
+when `build/agents` and `interfaces/cli` were built). They broke once
+`differencing` landed. Both were removed and the build prompt now tells the
+agent not to test for the absence of features later intents will add.
+Otherwise the generated tree was accepted as-is: 241 tests pass, `intentc
+check` is clean, and the deterministic validations in `intent/` pass against it.
+
+A second underspecification surfaced when running the rebuilt `intentc check`
+on the repo itself: the spec never said what counts as a file reference, so the
+agent's extractor flagged `e.g`, `0.0` and `args.rubric` as missing files (72
+warnings). The rule is now written down in core/specifications (a path needs a
+separator and an extension or glob; layout descriptions under `intent/` and
+`.intentc/` are not existence-checked) and the generated extractor was patched
+to match. `intentc check` on the repo is clean again.

@@ -346,7 +346,7 @@ def test_write_project_copies_referenced_supporting_files(tmp_path):
         """---
 name: a
 ---
-See `design.png` for details.
+See `./design.png` for details.
 """,
     )
     _write(tmp_path / "a" / "design.png", "fake-png-bytes")
@@ -388,3 +388,18 @@ def _impl(name: str):
     from intentc.core import Implementation
 
     return Implementation(name=name, body="body")
+
+
+def test_check_project_skips_layout_descriptions(tmp_path):
+    intent_dir = tmp_path / "intent"
+    _write(intent_dir / "project.ic", "---\nname: p\n---\n\nProject.\n")
+    _write(intent_dir / "implementations" / "default.ic", "---\nname: default\n---\n\nPython.\n")
+    _write(
+        intent_dir / "a" / "a.ic",
+        "---\nname: a\n---\n\nWrites `intent/project.ic`, `.intentc/config.yaml` and reads `./missing.png`.\n",
+    )
+    _write(intent_dir / "a" / "validation.icv", "target: a\nvalidations:\n  - name: x\n    type: file_exists\n    args:\n      paths: ['*']\n")
+    issues = check_project(load_project(intent_dir))
+    messages = [i.message for i in issues]
+    assert any("./missing.png" in m for m in messages)
+    assert not any("intent/project.ic" in m or ".intentc/config.yaml" in m for m in messages)

@@ -29,6 +29,7 @@ Read the feature carefully, understand everything and then go ahead and implemen
 - Do not modify files that belong to other features unless the intent explicitly says to patch them.
 - Do not use git history, git log, git blame, or any git commands to look at previous implementations. Build from the intent only.
 - Run the deterministic validations (and the feature's tests) yourself before finishing.
+- Features are built incrementally: later intents will add modules, prompts and commands. Never write a test that asserts something is *absent* or *unavailable* (a missing module, an empty prompt template, an import that fails) — such tests break as soon as the next feature lands.
 {previous_errors}
 
 ### Response

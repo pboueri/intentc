@@ -216,11 +216,6 @@ def test_load_default_prompts_reads_bundled_files():
     assert "{seed_prompt}" in templates.plan
 
 
-def test_load_default_prompts_missing_difference_prompt_is_empty():
-    templates = load_default_prompts()
-    assert templates.difference == ""
-
-
 def test_load_default_prompts_reads_bundled_init_prompt():
     templates = load_default_prompts()
     assert "{project_name}" in templates.init

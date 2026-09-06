@@ -4,6 +4,7 @@ back out, creating a blank starter project, and linting an already-loaded projec
 
 from __future__ import annotations
 
+import re
 import fnmatch
 import os
 import shutil
@@ -341,6 +342,9 @@ def load_project(intent_dir: Path) -> Project:
     )
 
 
+_LAYOUT_PREFIXES = {"intent", ".intentc"}
+
+
 def _copy_file_references(intent: IntentFile | ProjectIntent | Implementation, dest_dir: Path) -> None:
     if intent.source_path is None:
         return
@@ -552,6 +556,10 @@ def check_project(project: Project) -> list[ProjectIssue]:
                 base = intent.source_path.parent
                 for ref in intent.file_references:
                     if _is_wildcard(ref):
+                        continue
+                    # Intents routinely describe the project layout (intent/..., .intentc/...);
+                    # those are descriptions, not supporting files.
+                    if re.sub(r"^(\.\.?/)+", "", ref).split("/", 1)[0] in _LAYOUT_PREFIXES:
                         continue
                     if not (base / ref).exists():
                         issues.append(
