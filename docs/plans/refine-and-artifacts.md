@@ -93,6 +93,13 @@ Second round (after rebuilding `workflows/refine` with the fixes above and re-ba
 - Upgrading intentc marked nine existing targets outdated because inline references were being hashed and because `source_files` mixed relative and absolute paths (the hash depended on how the project was loaded). Staleness now covers declared artifacts only, `source_files` returns absolute paths, and the linter warns about undeclared inline references.
 - Terminal output ate a literal `[x]` in a generalisation; agent-authored text is now escaped before rendering.
 
+Third round (after rebuilding `differencing`, `constraints/artifacts` and `workflows/refine`), re-baking the same session:
+
+- **The whole loop closed.** Attempt 1 rebuilt `cli` (4/4) and the compare ran to a verdict: *divergent* on `runtime_behavior`, because the rebuild printed nothing for an empty store and laid the `list` line out differently — details the journal never captured. Attempt 2 received that rationale, pinned both behaviours in `cli.ic` (exact `No tasks found.` message, exact `<id>  <marker>  <title>` layout), added a check script for each as `kind: test` artifacts, committed as `refine cli: attempt 2`, rebuilt `cli` (6/6) and the compare came back *equivalent*. Session `baked`, exit 0, four generalisations, all markers rendered intact.
+- Follow-up folded into the intents: links from one intent to another `.ic`/`.icv` file are cross-references, not artifacts (they were being inlined into `{artifacts}` and warned about), and divergence rationales in log lines are escaped like everything else.
+
+Cost of the trial for reference: each bake attempt is one intent rewrite (~1 min), one rebuild of the target (~1 min for this tiny project) and one compare (~2.5 min).
+
 ## Build
 
 Both features are built with intentc itself, in order: `intentc build constraints/artifacts`, then `intentc build workflows/refine`. No hand-written implementation.
