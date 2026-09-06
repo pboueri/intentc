@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from intentc.build.agents import (
-    AgentError,
     AgentProfile,
     DifferencingContext,
     DifferencingResponse,
+    LogFn,
     create_from_profile,
 )
 from intentc.core import Project
@@ -24,11 +23,14 @@ def run_differencing(
     project: Project,
     profile: AgentProfile,
     implementation: Optional[str] = None,
+    log: Optional[LogFn] = None,
 ) -> DifferencingResponse:
     """Evaluate whether `output_dir_a` and `output_dir_b` are functionally equivalent.
 
-    Pure evaluation: no build state is read or modified. Raises `AgentError` if the
-    agent's response file is missing, empty, or malformed.
+    Pure evaluation: no build state is read or modified. The agent owns the
+    response-file lifecycle (read, validate, delete) and returns the parsed
+    `DifferencingResponse` directly; a missing, empty, or malformed response
+    file surfaces as the `AgentError` the agent raises, propagated unchanged.
     """
     resolved_implementation = project.resolve_implementation(implementation)
 
@@ -46,26 +48,5 @@ def run_differencing(
         response_file_path=response_file_path,
     )
 
-    agent = create_from_profile(profile)
-    agent.difference(ctx)
-
-    return _read_differencing_response(response_file_path)
-
-
-def _read_differencing_response(response_file_path: str) -> DifferencingResponse:
-    path = Path(response_file_path)
-    if not path.is_file():
-        raise AgentError(f"Differencing response file not found: {response_file_path}")
-
-    raw_text = path.read_text(encoding="utf-8")
-    if not raw_text.strip():
-        raise AgentError(f"Differencing response file is empty: {response_file_path}")
-
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise AgentError(
-            f"Malformed JSON in differencing response file {response_file_path}: {exc}"
-        ) from exc
-
-    return DifferencingResponse(**data)
+    agent = create_from_profile(profile, log=log)
+    return agent.difference(ctx)
