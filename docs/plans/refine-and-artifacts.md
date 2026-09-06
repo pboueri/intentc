@@ -42,7 +42,7 @@ intentc refine api "make 404s return JSON"
 
 ## Sequencing
 
-1. **Review this draft** (you). Settle the open questions below; I will fold the answers into the `.ic` files.
+1. **Review this draft** — done; decisions recorded below.
 2. **Build `constraints/artifacts`** — `intentc build constraints/artifacts`. Expected touch points in `src/`: `core/models.py` (Artifact type, `artifacts` fields), `core/parser.py` (frontmatter parsing, write-back), `core/project.py` (`artifacts_for`, `source_files`, lint, `write_project`), `build/agents/agent.py` (`BuildContext.artifacts`, `{artifacts}`), the three prompt templates, `build/validations.py` (`{intent_dir}`, context fields), `build/builder/builder.py` (sandbox read paths, hash). All existing tests must keep passing; new tests next to each.
 3. **Dogfood artifacts on intentc itself** — after step 2, declare the existing prompt files in `build/agents/agents.ic`, `differencing/differencing.ic` and `workflows/init/init.ic` under `artifacts:` with `kind: prompt`, and add a `cmp` validation like the one in `workflows/refine/validations.icv` so bundled prompts are byte-identical to the intent copies. This is a deliberate outdating of those features; do it when a recompile is planned anyway.
 4. **Build `workflows/refine`** — `intentc build workflows/refine`. New package `intentc/refine/`, new storage table, two agent methods, two prompt templates, CLI command plus `status`/`log`/`build`/`clean` integration.
@@ -51,7 +51,7 @@ intentc refine api "make 404s return JSON"
 
 ## Design decisions already taken (push back if you disagree)
 
-- **Journal, not transcript, is the contract.** The agent writes a structured journal file (like the response-file protocol). It is agent-agnostic and forces the agent to state the *rule* at the moment it knows it. With Claude Code the raw conversation is additionally kept by passing `--session-id`, which also gives free resume with memory.
+- **Journal, not transcript, is the contract.** The agent writes a structured journal file (like the response-file protocol). It is agent-agnostic and forces the agent to state the *rule* at the moment it knows it. No agent-specific transcript, session id or resume mechanism is assumed; resume re-feeds the journal.
 - **Bake rewrites only the target's intent.** Changes to files owned by upstream features are expressed as patch instructions inside the target's intent (already permitted by the build prompt). Rewriting upstream intents from a downstream chat is too much blast radius for v1.
 - **Rebuild = clean + build --force**, so "from scratch" reuses existing builder semantics, including descendants going `outdated`. Refine does not rebuild descendants; the user runs `intentc build` after.
 - **Refined trees never enter the linear history.** They live under `refs/intentc/refinements/<session>` via a side-ref snapshot, so history stays a sequence of intent-derived checkpoints.
@@ -59,15 +59,21 @@ intentc refine api "make 404s return JSON"
 - **Artifacts of the target only feed its staleness hash.** Ancestor/project/implementation artifacts are in the sandbox and the prompt but do not invalidate downstream targets automatically.
 - **Both features are patch features** (like `workflows/init`), not edits to core intents, so nothing already built goes outdated until you choose to.
 
-## Open questions
+## Decisions on the review questions
 
-1. **Bake on exit.** Default is a `[Y/n]` prompt when the session ends. Would you rather bake always (`--no-bake` to opt out) or never (explicit `--bake`)?
-2. **Equivalence check cost.** `compare` after every bake attempt is an agent round-trip on top of the rebuild. Keep it default-on with `--no-compare`, or default-off with `--compare`?
-3. **Retry budget.** Bake attempts reuse `profile.retries` (default 3), each including a full rebuild. Separate `--max-bakes` (default 2)?
-4. **Cross-feature edits.** Patch instructions in the target's intent (chosen) vs. letting the bake edit ancestor intents too (with the whole subtree outdated afterwards). Or forbid the session from touching other features' files at all?
-5. **Where the refined snapshot lives.** Side ref under `refs/intentc/` (chosen) vs. a real branch `intentc/refine/<target>` you can check out, vs. a plain tarball under `.intentc/state/`.
-6. **Raw transcript.** Beyond `--session-id`, should the bake also be handed Claude's raw JSONL transcript? It would help with things the agent forgot to journal, at the cost of being Claude-specific and noisy.
-7. **Artifacts as a patch feature vs. folding into core.** The typed `artifacts:` field arguably belongs in `core/specifications` proper. Folding it in outdates the whole DAG; the patch feature keeps it incremental. Which do you want for this branch?
-8. **Ancestor artifact staleness.** Should editing a project-level design system outdate every built target automatically? I chose no (explicit `--force`), but "the design changed, everything is stale" is also a defensible default.
-9. **Inline size limit** for artifact content in prompts: 16 KB per file. Also cap the total?
-10. **`{intent_dir}` in validations** lets deterministic checks reach schemas. Is exposing the intent directory to validation commands acceptable given the isolation philosophy (they already run with `cwd: "."`)?
+Settled at review; the intents reflect them.
+
+1. Bake on exit: `[Y/n]` prompt at the terminal; `--bake` / `--no-bake` skip it.
+2. `compare` runs after every bake attempt by default; `--no-compare` opts out.
+3. Bake attempts reuse `profile.retries`; no separate flag.
+4. Cross-feature edits become patch instructions inside the target's intent.
+5. Refined trees live under `refs/intentc/refinements/<session>`.
+6. No agent-specific transcript or session mechanism. The journal is the only memory the workflow relies on.
+7. Artifacts stay a patch feature on this branch.
+8. Ancestor / project / implementation artifacts do not invalidate targets automatically; `--force` does.
+9. 16 KB per-file inline limit, no total cap.
+10. `{intent_dir}` is available to validation commands.
+
+## Build
+
+Both features are built with intentc itself, in order: `intentc build constraints/artifacts`, then `intentc build workflows/refine`. No hand-written implementation.

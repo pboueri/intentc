@@ -57,7 +57,7 @@ The command is a thin wrapper: it wires project, config, profile, implementation
 
 ### Resume
 
-If a session with `status: recording` exists for this target and output directory, `intentc refine <target> [prompt]` resumes it instead of starting a new one: the same journal is appended to, the seed prompt (if any) is added as a new ask, and the agent is relaunched with the journal so far in its context. With Claude Code the first launch passes `--session-id <session_id>` and every resume passes `--resume <session_id>`, so the agent keeps its own memory of the conversation; other agents get the journal text and start fresh.
+If a session with `status: recording` exists for this target and output directory, `intentc refine <target> [prompt]` resumes it instead of starting a new one: the same journal is appended to, the seed prompt (if any) is added as a new ask, and the agent is relaunched with the journal so far in its context (`RefineContext.journal`). The journal is the **only** memory the workflow relies on: no agent-specific conversation state, transcript or session identifier is assumed, so any agent that can read a prompt and edit files can run a refinement session. An agent implementation may additionally restore its own native conversation state if it has one, but nothing in the workflow depends on it.
 
 ### Snapshot
 
@@ -159,7 +159,7 @@ Interface Agent:
 
 Template variables, all always supplied: `{project}`, `{implementation}`, `{feature}`, `{feature_name}`, `{validations}`, `{artifacts}`, `{output_dir}`, `{journal_path}`, `{journal}`, `{seed_prompt}`, `{snapshot_dir}`, `{diff}`, `{files_by_owner}` (bulleted `feature: file, file`), `{previous_errors}`, `{response_file}`, `{intent_path}` (the `.ic` path), `{validation_path}` (the `.icv` path, or the path to create), `{feature_dir}`.
 
-`ClaudeAgent.refine` launches the REPL like `plan` does, adding `--session-id <session_id>` on first launch and `--resume <session_id>` on resume (the prompt is still passed as the positional argument, so a resumed session opens with the new ask). `ClaudeAgent.refine_bake` is a normal `-p` invocation with the response-file protocol; a missing or malformed response file is an `AgentError` (no synthesis — the bake must be explicit). `CLIAgent` renders the same templates and passes them to its command. `MockAgent` records `refine_calls` and `refine_bake_calls` and returns a configurable `RefineBakeResponse`; its `refine` may be given a callable that writes journal text, so tests can simulate a session.
+`refine` is interactive in exactly the way `plan` is: `ClaudeAgent.refine` launches the REPL as `plan` does with the rendered refine prompt as the positional argument (a resumed session therefore opens with the journal so far and the new ask); `CLIAgent.refine` renders the same template and passes it to its command, and if that command is not interactive the session degenerates to a single-shot invocation, the same fallback `plan` has. `refine_bake` is non-interactive for every agent and uses the response-file protocol; a missing or malformed response file is an `AgentError` (no synthesis — the bake must be explicit). `MockAgent` records `refine_calls` and `refine_bake_calls` and returns a configurable `RefineBakeResponse`; its `refine` may be given a callable that writes journal text, so tests can simulate a session.
 
 ## Storage (build/storage)
 
