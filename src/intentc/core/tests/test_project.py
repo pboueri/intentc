@@ -1,352 +1,405 @@
-"""Tests for intentc.core.project — Project, FeatureNode, load/write/blank."""
-
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
 
-from intentc.core.models import (
-    Implementation,
-    IntentFile,
+from intentc.core import (
     ParseErrors,
-    ProjectIntent,
-    ValidationFile,
-)
-from intentc.core.project import (
-    FeatureNode,
-    Project,
     blank_project,
+    check_project,
     load_project,
     write_project,
 )
 
 
-# ---------------------------------------------------------------------------
-# FeatureNode
-# ---------------------------------------------------------------------------
+def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
-class TestFeatureNode:
-    def test_depends_on_empty(self):
-        node = FeatureNode(path="core/foo")
-        assert node.depends_on == []
-
-    def test_depends_on_combined(self):
-        node = FeatureNode(
-            path="build/runner",
-            intents=[
-                IntentFile(name="a", depends_on=["core/foo", "core/bar"]),
-                IntentFile(name="b", depends_on=["core/bar", "core/baz"]),
-            ],
-        )
-        assert node.depends_on == ["core/foo", "core/bar", "core/baz"]
-
-    def test_depends_on_order_preserved(self):
-        node = FeatureNode(
-            path="x",
-            intents=[
-                IntentFile(name="i1", depends_on=["z", "a", "m"]),
-            ],
-        )
-        assert node.depends_on == ["z", "a", "m"]
-
-
-# ---------------------------------------------------------------------------
-# Project.resolve_implementation
-# ---------------------------------------------------------------------------
-
-
-class TestResolveImplementation:
-    def test_no_implementations(self):
-        proj = Project(project_intent=ProjectIntent(name="p"))
-        assert proj.resolve_implementation() is None
-
-    def test_single_implementation(self):
-        impl = Implementation(name="only")
-        proj = Project(
-            project_intent=ProjectIntent(name="p"),
-            implementations={"only": impl},
-        )
-        assert proj.resolve_implementation() is impl
-
-    def test_default_chosen_when_multiple(self):
-        default = Implementation(name="default")
-        other = Implementation(name="other")
-        proj = Project(
-            project_intent=ProjectIntent(name="p"),
-            implementations={"default": default, "other": other},
-        )
-        assert proj.resolve_implementation() is default
-
-    def test_ambiguous_raises(self):
-        proj = Project(
-            project_intent=ProjectIntent(name="p"),
-            implementations={
-                "a": Implementation(name="a"),
-                "b": Implementation(name="b"),
-            },
-        )
-        with pytest.raises(ValueError, match="Ambiguous"):
-            proj.resolve_implementation()
-
-    def test_named_lookup(self):
-        impl = Implementation(name="rust")
-        proj = Project(
-            project_intent=ProjectIntent(name="p"),
-            implementations={"rust": impl},
-        )
-        assert proj.resolve_implementation("rust") is impl
-
-    def test_named_not_found(self):
-        proj = Project(
-            project_intent=ProjectIntent(name="p"),
-            implementations={"py": Implementation(name="py")},
-        )
-        with pytest.raises(KeyError, match="not found"):
-            proj.resolve_implementation("go")
-
-
-# ---------------------------------------------------------------------------
-# DAG Traversal
-# ---------------------------------------------------------------------------
-
-
-def _dag_project() -> Project:
-    """Build a diamond-shaped DAG: d -> b,c -> a."""
-    return Project(
-        project_intent=ProjectIntent(name="dag"),
-        features={
-            "a": FeatureNode(
-                path="a", intents=[IntentFile(name="a")]
-            ),
-            "b": FeatureNode(
-                path="b", intents=[IntentFile(name="b", depends_on=["a"])]
-            ),
-            "c": FeatureNode(
-                path="c", intents=[IntentFile(name="c", depends_on=["a"])]
-            ),
-            "d": FeatureNode(
-                path="d", intents=[IntentFile(name="d", depends_on=["b", "c"])]
-            ),
-        },
+def _write_project_ic(intent_dir: Path, name: str = "demo") -> None:
+    _write(
+        intent_dir / "project.ic",
+        f"""---
+name: {name}
+---
+A demo project.
+""",
     )
 
 
-class TestDAGTraversal:
-    def test_require_feature_missing(self):
-        proj = _dag_project()
-        with pytest.raises(KeyError, match="not found"):
-            proj.parents("nope")
+def _write_default_impl(intent_dir: Path) -> None:
+    _write(
+        intent_dir / "implementations" / "default.ic",
+        """---
+name: default
+---
+Python 3.11, uv, pydantic.
+""",
+    )
 
-    def test_parents(self):
-        proj = _dag_project()
-        assert proj.parents("d") == ["b", "c"]
-        assert proj.parents("a") == []
 
-    def test_ancestors(self):
-        proj = _dag_project()
-        assert proj.ancestors("d") == {"a", "b", "c"}
-        assert proj.ancestors("a") == set()
-
-    def test_children(self):
-        proj = _dag_project()
-        assert sorted(proj.children("a")) == ["b", "c"]
-        assert proj.children("d") == []
-
-    def test_descendants(self):
-        proj = _dag_project()
-        assert proj.descendants("a") == {"b", "c", "d"}
-        assert proj.descendants("d") == set()
-
-    def test_topological_order(self):
-        proj = _dag_project()
-        order = proj.topological_order()
-        assert order.index("a") < order.index("b")
-        assert order.index("a") < order.index("c")
-        assert order.index("b") < order.index("d")
-        assert order.index("c") < order.index("d")
-
-    def test_topological_order_cycle(self):
-        proj = Project(
-            project_intent=ProjectIntent(name="cyc"),
-            features={
-                "x": FeatureNode(
-                    path="x", intents=[IntentFile(name="x", depends_on=["y"])]
-                ),
-                "y": FeatureNode(
-                    path="y", intents=[IntentFile(name="y", depends_on=["x"])]
-                ),
-            },
+def _write_feature(
+    intent_dir: Path,
+    feature_path: str,
+    depends_on: list[str] | None = None,
+    name: str | None = None,
+    body: str = "Do the thing.",
+    with_validation: bool = True,
+) -> None:
+    deps_yaml = ""
+    if depends_on:
+        deps_yaml = "depends_on:\n" + "\n".join(f"  - {d}" for d in depends_on) + "\n"
+    intent_name = name if name is not None else feature_path.rsplit("/", 1)[-1]
+    _write(
+        intent_dir / feature_path / f"{feature_path.rsplit('/', 1)[-1]}.ic",
+        f"""---
+name: {intent_name}
+{deps_yaml}---
+{body}
+""",
+    )
+    if with_validation:
+        _write(
+            intent_dir / feature_path / "validation.icv",
+            f"""target: {feature_path.rsplit('/', 1)[-1]}
+version: 1
+validations:
+  - name: {feature_path.rsplit('/', 1)[-1]}-exists
+    type: file_exists
+    severity: error
+    args:
+      paths: ["out.txt"]
+""",
         )
-        with pytest.raises(ValueError, match="cycle"):
-            proj.topological_order()
+
+
+def _three_feature_chain(intent_dir: Path) -> None:
+    _write_project_ic(intent_dir)
+    _write_default_impl(intent_dir)
+    _write_feature(intent_dir, "a")
+    _write_feature(intent_dir, "b", depends_on=["a"])
+    _write_feature(intent_dir, "c", depends_on=["b"])
 
 
 # ---------------------------------------------------------------------------
-# load_project
+# DAG traversal
 # ---------------------------------------------------------------------------
 
 
-def _write_file(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+def test_dag_traversal_on_three_feature_chain(tmp_path):
+    _three_feature_chain(tmp_path)
+    project = load_project(tmp_path)
+
+    assert project.parents("c") == ["b"]
+    assert project.parents("a") == []
+    assert project.ancestors("c") == {"a", "b"}
+    assert project.ancestors("a") == set()
+    assert project.children("a") == ["b"]
+    assert project.descendants("a") == {"b", "c"}
+    assert project.descendants("c") == set()
+
+    order = project.topological_order()
+    assert order.index("a") < order.index("b") < order.index("c")
 
 
-class TestLoadProject:
-    def test_missing_project_ic(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        intent_dir.mkdir()
-        with pytest.raises(ParseErrors, match="not found"):
-            load_project(intent_dir)
+def test_topological_order_raises_on_cycle_at_load_time(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", depends_on=["b"])
+    _write_feature(tmp_path, "b", depends_on=["a"])
 
-    def test_minimal_project(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: test\n---\nHello")
-        proj = load_project(intent_dir)
-        assert proj.project_intent.name == "test"
-        assert proj.intent_dir == intent_dir
-        assert proj.features == {}
-        assert proj.implementations == {}
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+    assert any("cycle" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_loads_implementations(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "implementations" / "default.ic",
-            "---\nname: default\n---\nPython",
-        )
-        proj = load_project(intent_dir)
-        assert "default" in proj.implementations
-        assert proj.implementations["default"].name == "default"
 
-    def test_loads_assertions(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "assertions" / "smoke.icv",
-            "target: all\n",
-        )
-        proj = load_project(intent_dir)
-        assert len(proj.assertions) == 1
+def test_buildable_after_returns_only_features_with_built_dependencies(tmp_path):
+    _three_feature_chain(tmp_path)
+    project = load_project(tmp_path)
 
-    def test_loads_features(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "core" / "models" / "models.ic",
-            "---\nname: models\n---\nModels feature.",
-        )
-        _write_file(
-            intent_dir / "core" / "models" / "tests.icv",
-            "target: core/models\n",
-        )
-        proj = load_project(intent_dir)
-        assert "core/models" in proj.features
-        node = proj.features["core/models"]
-        assert len(node.intents) == 1
-        assert len(node.validations) == 1
+    assert project.buildable_after(set()) == ["a"]
+    assert project.buildable_after({"a"}) == ["b"]
+    assert project.buildable_after({"a", "b"}) == ["c"]
+    assert project.buildable_after({"a", "b", "c"}) == []
 
-    def test_wildcard_expansion(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "core" / "a" / "a.ic",
-            "---\nname: a\n---\n",
-        )
-        _write_file(
-            intent_dir / "core" / "b" / "b.ic",
-            "---\nname: b\n---\n",
-        )
-        _write_file(
-            intent_dir / "top" / "all" / "all.ic",
-            "---\nname: all\ndepends_on:\n  - core/*\n---\n",
-        )
-        proj = load_project(intent_dir)
-        deps = proj.features["top/all"].depends_on
-        assert sorted(deps) == ["core/a", "core/b"]
 
-    def test_wildcard_no_match_errors(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "feat" / "x" / "x.ic",
-            "---\nname: x\ndepends_on:\n  - missing/*\n---\n",
-        )
-        with pytest.raises(ParseErrors, match="matched no features"):
-            load_project(intent_dir)
+def test_require_feature_raises_key_error_for_all_dag_methods(tmp_path):
+    _three_feature_chain(tmp_path)
+    project = load_project(tmp_path)
 
-    def test_accumulates_errors(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        # Two bad intent files (missing name)
-        _write_file(intent_dir / "a" / "x" / "bad1.ic", "---\n---\n")
-        _write_file(intent_dir / "b" / "y" / "bad2.ic", "---\n---\n")
-        with pytest.raises(ParseErrors) as exc_info:
-            load_project(intent_dir)
-        assert len(exc_info.value.errors) >= 2
-
-    def test_nested_features(self, tmp_path: Path):
-        intent_dir = tmp_path / "intent"
-        _write_file(intent_dir / "project.ic", "---\nname: p\n---\n")
-        _write_file(
-            intent_dir / "a" / "b" / "c" / "deep.ic",
-            "---\nname: deep\n---\n",
-        )
-        proj = load_project(intent_dir)
-        assert "a/b/c" in proj.features
+    with pytest.raises(KeyError):
+        project.parents("nope")
+    with pytest.raises(KeyError):
+        project.ancestors("nope")
+    with pytest.raises(KeyError):
+        project.children("nope")
+    with pytest.raises(KeyError):
+        project.descendants("nope")
 
 
 # ---------------------------------------------------------------------------
-# write_project
+# load_project error accumulation
 # ---------------------------------------------------------------------------
 
 
-class TestWriteProject:
-    def test_round_trip(self, tmp_path: Path):
-        proj = blank_project("roundtrip")
-        dest = tmp_path / "output"
-        result = write_project(proj, dest)
-        assert result == dest
-        assert (dest / "project.ic").exists()
-        assert (dest / "implementations" / "default.ic").exists()
-        assert (dest / "starter").is_dir()
+def test_load_project_raises_parse_errors_for_unknown_dependency(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", depends_on=["does-not-exist"])
 
-    def test_round_trip_reload(self, tmp_path: Path):
-        proj = blank_project("rt")
-        dest = tmp_path / "output"
-        write_project(proj, dest)
-        loaded = load_project(dest)
-        assert loaded.project_intent.name == "rt"
-        assert "starter" in loaded.features
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+
+    messages = [str(e) for e in exc_info.value.errors]
+    assert any("unknown dependency 'does-not-exist'" in m for m in messages)
+    assert any("available: a" in m for m in messages)
+
+
+def test_load_project_raises_parse_errors_for_wildcard_matching_nothing(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", depends_on=["nomatch/*"])
+
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+
+    assert any("matches no features" in str(e) for e in exc_info.value.errors)
+
+
+def test_load_project_accumulates_multiple_errors_at_once(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", depends_on=["missing-one"])
+    _write_feature(tmp_path, "b", depends_on=["missing-two"])
+
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+
+    assert len(exc_info.value.errors) >= 2
+
+
+def test_load_project_raises_for_self_dependency(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", depends_on=["a"])
+
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+    assert any("cannot depend on itself" in str(e) for e in exc_info.value.errors)
+
+
+def test_wildcard_dependency_expands_in_place(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "core/one")
+    _write_feature(tmp_path, "core/two")
+    _write_feature(tmp_path, "downstream", depends_on=["core/*"])
+
+    project = load_project(tmp_path)
+    assert set(project.parents("downstream")) == {"core/one", "core/two"}
+
+
+def test_load_project_missing_project_ic_raises_parse_errors(tmp_path):
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a")
+
+    with pytest.raises(ParseErrors) as exc_info:
+        load_project(tmp_path)
+    assert any("project.ic" in str(e) for e in exc_info.value.errors)
 
 
 # ---------------------------------------------------------------------------
-# blank_project
+# check_project
 # ---------------------------------------------------------------------------
 
 
-class TestBlankProject:
-    def test_has_project_intent(self):
-        proj = blank_project("my-app")
-        assert proj.project_intent.name == "my-app"
+def test_check_project_empty_for_well_formed_project(tmp_path):
+    _three_feature_chain(tmp_path)
+    project = load_project(tmp_path)
+    assert check_project(project) == []
 
-    def test_has_default_implementation(self):
-        proj = blank_project("my-app")
-        assert "default" in proj.implementations
 
-    def test_has_starter_feature(self):
-        proj = blank_project("my-app")
-        assert "starter" in proj.features
-        node = proj.features["starter"]
-        assert len(node.intents) == 1
-        assert node.intents[0].name == "starter"
+def test_check_project_flags_icv_target_mismatch(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "store", with_validation=False)
+    _write(
+        tmp_path / "store" / "validation.icv",
+        """target: models
+version: 1
+validations:
+  - name: models-exists
+    type: file_exists
+    severity: error
+    args:
+      paths: ["out.txt"]
+""",
+    )
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning" and "differs from the directory" in issue.message for issue in issues
+    )
 
-    def test_write_and_load(self, tmp_path: Path):
-        proj = blank_project("new")
-        dest = tmp_path / "new_project"
-        write_project(proj, dest)
-        loaded = load_project(dest)
-        assert loaded.project_intent.name == "new"
-        assert "default" in loaded.implementations
-        assert "starter" in loaded.features
+
+def test_check_project_flags_assertion_target_that_does_not_exist(tmp_path):
+    _three_feature_chain(tmp_path)
+    _write(
+        tmp_path / "assertions" / "top_level.icv",
+        """target: no-such-feature
+version: 1
+validations:
+  - name: top-level-check
+    type: file_exists
+    severity: error
+    args:
+      paths: ["out.txt"]
+""",
+    )
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "error" and "does not name an existing feature" in issue.message for issue in issues
+    )
+
+
+def test_check_project_flags_feature_with_no_validations(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", with_validation=False)
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(issue.level == "warning" and "no validations" in issue.message for issue in issues)
+
+
+def test_check_project_flags_intent_name_mismatch(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write_feature(tmp_path, "a", name="totally-different")
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(
+        issue.level == "warning" and "differs from its directory" in issue.message for issue in issues
+    )
+
+
+def test_check_project_flags_icv_without_ic(tmp_path):
+    _three_feature_chain(tmp_path)
+    _write(
+        tmp_path / "orphan" / "validation.icv",
+        """target: orphan
+version: 1
+validations:
+  - name: orphan-exists
+    type: file_exists
+    severity: error
+    args:
+      paths: ["out.txt"]
+""",
+    )
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert any(issue.level == "error" and "no accompanying .ic file" in issue.message for issue in issues)
+
+
+def test_check_project_never_invokes_agent(tmp_path, monkeypatch):
+    _three_feature_chain(tmp_path)
+    project = load_project(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("check_project must not invoke an agent")
+
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    monkeypatch.setattr(subprocess, "Popen", _boom)
+    check_project(project)
+
+
+# ---------------------------------------------------------------------------
+# blank_project / write_project roundtrip
+# ---------------------------------------------------------------------------
+
+
+def test_blank_project_roundtrip(tmp_path):
+    project = blank_project("x")
+    dest = write_project(project, tmp_path / "intent")
+    assert dest == tmp_path / "intent"
+
+    loaded = load_project(dest)
+    assert list(loaded.features.keys()) == ["starter"]
+    assert len(loaded.features["starter"].validations) == 1
+    assert len(loaded.features["starter"].validations[0].validations) == 1
+    assert loaded.resolve_implementation() is not None
+    assert loaded.resolve_implementation().name == "default"
+    assert loaded.resolve_implementation("default").name == "default"
+
+    assert check_project(loaded) == []
+
+
+def test_write_project_copies_referenced_supporting_files(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+---
+See `./design.png` for details.
+""",
+    )
+    _write(tmp_path / "a" / "design.png", "fake-png-bytes")
+    _write(
+        tmp_path / "a" / "validation.icv",
+        """target: a
+version: 1
+validations:
+  - name: a-exists
+    type: file_exists
+    severity: error
+    args:
+      paths: ["out.txt"]
+""",
+    )
+    project = load_project(tmp_path)
+
+    dest = tmp_path.parent / "written_out" / "intent"
+    write_project(project, dest)
+
+    assert (dest / "a" / "a.ic").exists()
+    assert (dest / "a" / "design.png").exists()
+    assert (dest / "a" / "design.png").read_text() == "fake-png-bytes"
+
+
+def test_resolve_implementation_raises_key_error_and_value_error(tmp_path):
+    project = blank_project("x")
+    with pytest.raises(KeyError):
+        project.resolve_implementation("nonexistent")
+
+    del project.implementations["default"]
+    project.implementations["one"] = _impl("one")
+    project.implementations["two"] = _impl("two")
+    with pytest.raises(ValueError):
+        project.resolve_implementation()
+
+
+def _impl(name: str):
+    from intentc.core import Implementation
+
+    return Implementation(name=name, body="body")
+
+
+def test_check_project_skips_layout_descriptions(tmp_path):
+    intent_dir = tmp_path / "intent"
+    _write(intent_dir / "project.ic", "---\nname: p\n---\n\nProject.\n")
+    _write(intent_dir / "implementations" / "default.ic", "---\nname: default\n---\n\nPython.\n")
+    _write(
+        intent_dir / "a" / "a.ic",
+        "---\nname: a\n---\n\nWrites `intent/project.ic`, `.intentc/config.yaml` and reads `./missing.png`.\n",
+    )
+    _write(intent_dir / "a" / "validation.icv", "target: a\nvalidations:\n  - name: x\n    type: file_exists\n    args:\n      paths: ['*']\n")
+    issues = check_project(load_project(intent_dir))
+    messages = [i.message for i in issues]
+    assert any("./missing.png" in m for m in messages)
+    assert not any("intent/project.ic" in m or ".intentc/config.yaml" in m for m in messages)

@@ -1,4 +1,5 @@
-"""Storage sub-package: persistent build state backed by pluggable databases."""
+"""Persistent, backend-agnostic storage for build state, results, logs, and
+agent responses."""
 
 from intentc.build.storage.backend import (
     BuildResult,

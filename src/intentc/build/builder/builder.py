@@ -1,15 +1,21 @@
-"""Builder: core workflow engine for intentc builds."""
+"""The core workflow engine of intentc: walks the project DAG, invokes agents to
+build each target, runs validations, checkpoints successful builds, and manages
+all project state through the `StateManager`.
+
+A target is only marked `built` and checkpointed after both the agent invocation
+and all validations succeed. If anything fails, the target is marked `failed`
+and the DAG walk stops immediately -- failed output is left on disk, uncommitted.
+"""
 
 from __future__ import annotations
 
-import json
-import os
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 
 from intentc.build.agents import (
     Agent,
@@ -19,25 +25,22 @@ from intentc.build.agents import (
     BuildResponse,
     create_from_profile,
 )
-from intentc.build.state import (
-    BuildResult,
-    BuildStep,
-    StateManager,
-    TargetStatus,
-    VersionControl,
-)
-from intentc.build.storage import StorageBackend
-from intentc.build.storage.backend import GenerationStatus
+from intentc.build.state import BuildResult, BuildStep, StateManager, TargetStatus, VersionControl
+from intentc.build.state.state import response_file_name
+from intentc.build.storage import GenerationStatus, StorageBackend
 from intentc.build.validations import ValidationSuite, ValidationSuiteResult
-from intentc.core.models import IntentFile, ValidationFile
-from intentc.core.project import Project
-
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
+from intentc.core import Implementation, IntentFile, Project, content_hash
 
 LogFn = Callable[[str], None]
-_NOOP_LOG: LogFn = lambda _msg: None
+
+
+def _noop_log(_message: str) -> None:
+    return None
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat()
+
 
 # ---------------------------------------------------------------------------
 # BuildOptions
@@ -45,7 +48,9 @@ _NOOP_LOG: LogFn = lambda _msg: None
 
 
 class BuildOptions(BaseModel):
-    """Options controlling a build invocation."""
+    """Options controlling a single `Builder.build()` invocation."""
+
+    model_config = ConfigDict(extra="ignore")
 
     target: str = ""
     force: bool = False
@@ -59,9 +64,11 @@ class BuildOptions(BaseModel):
 # Builder
 # ---------------------------------------------------------------------------
 
+_ACTIVE_STATUSES = (TargetStatus.PENDING, TargetStatus.OUTDATED, TargetStatus.FAILED)
+
 
 class Builder:
-    """Core workflow engine: builds targets along the DAG."""
+    """Orchestrates incremental builds along the project DAG."""
 
     def __init__(
         self,
@@ -69,663 +76,423 @@ class Builder:
         state_manager: StateManager,
         version_control: VersionControl,
         agent_profile: AgentProfile,
-        log: LogFn | None = None,
-        create_agent: Callable[[AgentProfile], Agent] | None = None,
+        create_agent: Optional[Callable[[AgentProfile], Agent]] = None,
+        log: Optional[LogFn] = None,
     ) -> None:
         self._project = project
         self._state_manager = state_manager
         self._version_control = version_control
         self._agent_profile = agent_profile
-        self._log = log or _NOOP_LOG
         self._storage: StorageBackend = state_manager.backend
-
+        self.log: LogFn = log or _noop_log
         if create_agent is not None:
             self._create_agent = create_agent
         else:
-            # Wrap the default factory to pass our log callback
-            _log = self._log
+            self._create_agent = lambda profile: create_from_profile(profile, log=self.log)
 
-            def _default_factory(profile: AgentProfile) -> Agent:
-                return create_from_profile(profile, log=_log)
+    # -- Build ----------------------------------------------------------------
 
-            self._create_agent = _default_factory
+    def build(self, opts: BuildOptions) -> tuple[list[BuildResult], Optional[Exception]]:
+        self.refresh_outdated()
 
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
-
-    def build(
-        self, opts: BuildOptions
-    ) -> tuple[list[BuildResult], RuntimeError | None]:
-        """Execute the build pipeline.
-
-        Returns (results, error). Error is non-null if any target failed.
-        """
-        # 1. Determine build set
-        build_set = self._determine_build_set(opts)
+        build_set = self._determine_build_set(opts.target, opts.force)
         if not build_set:
-            return ([], None)
+            self.log("Nothing to build — all targets are up to date.")
+            return [], None
 
-        self._log(
-            f"Build plan: {len(build_set)} target(s) [{', '.join(build_set)}]"
-        )
-
-        # 2. Dry run check
         if opts.dry_run:
-            results = [
-                BuildResult(
-                    target=t,
-                    status=self._state_manager.get_status(t).value,
-                )
-                for t in build_set
-            ]
-            return (results, None)
+            return [
+                BuildResult(target=target, status=self._state_manager.get_status(target))
+                for target in build_set
+            ], None
 
-        # 3. Resolve implementation
-        impl_name = opts.implementation or None
-        implementation = self._project.resolve_implementation(impl_name)
+        implementation = self._project.resolve_implementation(
+            opts.implementation if opts.implementation else None
+        )
 
-        # 4. Generate generation ID
         generation_id = str(uuid.uuid4())
-        profile = self._resolve_profile(opts.profile_override)
-        opts_dict = opts.model_dump()
         self._storage.create_generation(
-            generation_id,
-            opts.output_dir,
-            profile.name,
-            opts_dict,
+            generation_id, opts.output_dir, self._agent_profile.name, opts.model_dump()
         )
 
-        self._storage.log_generation_event(
-            generation_id,
-            f"Build started: {len(build_set)} target(s) in topological order",
-        )
+        output_path = Path(opts.output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
 
-        # 5. Resolve output directory
-        output_dir = opts.output_dir
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-
-        # 6. Build each target
         results: list[BuildResult] = []
-        error: RuntimeError | None = None
+        total = len(build_set)
+        self.log(f"Build plan: {total} target(s) -> {', '.join(build_set)}")
+        self._storage.log_generation_event(generation_id, f"Build plan: {', '.join(build_set)}")
 
-        for idx, target in enumerate(build_set):
-            self._log(
-                f"[{idx + 1}/{len(build_set)}] Building target '{target}'..."
-            )
-
-            # Skip check
+        for index, target in enumerate(build_set, start=1):
             status = self._state_manager.get_status(target)
             if status == TargetStatus.BUILT and not opts.force:
-                self._log(f"  Skipping '{target}' (already built)")
-                self._storage.log_generation_event(
-                    generation_id, f"Skipped '{target}': already built"
-                )
+                self.log(f"[{index}/{total}] Skipping '{target}' (already built)")
+                self._storage.log_generation_event(generation_id, f"Skipped '{target}': already built")
                 continue
 
-            result, target_error = self._build_target(
-                target=target,
-                generation_id=generation_id,
-                output_dir=output_dir,
-                profile_override=opts.profile_override,
-                implementation=implementation,
-            )
+            self.log(f"[{index}/{total}] Building '{target}'...")
+            result, error = self._build_target(target, opts, generation_id, implementation, output_path)
             results.append(result)
 
-            # Save result
-            self._state_manager.save_build_result(target, result)
+            if error is not None:
+                self._storage.log_generation_event(generation_id, str(error))
+                self._storage.complete_generation(generation_id, GenerationStatus.FAILED)
+                return results, error
 
-            # Read and store agent response, then delete from disk
-            self._save_and_cleanup_response(target, result, generation_id)
+            self.log(
+                f"  ✓ '{target}' built in {result.total_duration_secs:.1f}s "
+                f"({result.attempts} attempt(s))"
+            )
 
-            if target_error is not None:
-                self._storage.log_generation_event(
-                    generation_id,
-                    f"Build failed for target '{target}': {target_error}",
-                )
-                error = target_error
-                break
+        self._storage.complete_generation(generation_id, GenerationStatus.COMPLETED)
+        return results, None
 
-            self._log(f"  Target '{target}' completed successfully.")
+    def next_targets(self) -> list[str]:
+        """Features the user can build next: not yet built, all dependencies built."""
+        built = {target for target, status in self._state_manager.list_targets() if status == TargetStatus.BUILT}
+        return self._project.buildable_after(built)
 
-        # 6. Complete generation
-        gen_status = (
-            GenerationStatus.FAILED if error else GenerationStatus.COMPLETED
-        )
-        self._storage.complete_generation(generation_id, gen_status)
-
-        return (results, error)
-
-    # ------------------------------------------------------------------
-    # Clean
-    # ------------------------------------------------------------------
+    # -- Clean ------------------------------------------------------------------
 
     def clean(self, target: str, output_dir: str) -> None:
-        """Revert a target's generated code and reset its state."""
+        """Revert a target's generated code and reset its state. Not destructive:
+        creates a new revert commit rather than rewriting history."""
         result = self._state_manager.get_build_result(target)
         if result is None:
             return
-
         if result.commit_id:
-            self._version_control.restore(result.commit_id)
-            # Do NOT checkpoint — restored files are left unstaged
-
+            self.log(f"Reverting '{target}' to the state before commit {result.commit_id}")
+            self._version_control.restore(f"{result.commit_id}~1")
         self._state_manager.reset(target)
         self._state_manager.mark_dependents_outdated(target, self._project)
+        self.log(f"Cleaned '{target}'; descendants marked outdated")
 
     def clean_all(self, output_dir: str) -> None:
-        """Reset all state. Does not modify files."""
+        """Reset all state for the output directory. Does not modify files."""
         self._state_manager.reset_all()
+        self.log(f"Cleared all build state for output directory '{output_dir}'")
 
-    # ------------------------------------------------------------------
-    # Validate
-    # ------------------------------------------------------------------
+    # -- Validate ---------------------------------------------------------------
 
     def validate(
-        self, target: str | None, output_dir: str
-    ) -> ValidationSuiteResult | list[ValidationSuiteResult]:
-        """Run validations independently of the build pipeline."""
-        profile = self._resolve_profile("")
+        self, target: str, output_dir: str
+    ) -> Union[ValidationSuiteResult, list[ValidationSuiteResult]]:
+        """Run validations independently of the build pipeline. Does not modify state."""
+        implementation = self._project.resolve_implementation(None)
         suite = ValidationSuite(
             project=self._project,
-            agent_profile=profile,
+            agent_profile=self._agent_profile,
             output_dir=output_dir,
-            val_response_dir=self._state_manager.val_response_dir,
             storage_backend=self._storage,
-            log=self._log,
+            val_response_dir=self._state_manager.val_response_dir,
+            log=self.log,
+            implementation=implementation,
+            create_agent=self._create_agent,
         )
-
         if target:
             return suite.validate_feature(target)
         return suite.validate_project()
 
-    # ------------------------------------------------------------------
-    # Invalidation
-    # ------------------------------------------------------------------
+    # -- Invalidation -------------------------------------------------------------
 
     def detect_outdated(self) -> list[str]:
-        """Walk all built targets and check if source files are newer."""
-        outdated: list[str] = []
-
-        for target_name, status in self._state_manager.list_targets():
-            if status != TargetStatus.BUILT:
+        """Directly-stale built targets, in topological order. Does not modify state."""
+        stale: list[str] = []
+        for target, status in self._state_manager.list_targets():
+            if status != TargetStatus.BUILT or target not in self._project.features:
                 continue
-
-            result = self._state_manager.get_build_result(target_name)
-            if result is None or not result.timestamp:
+            result = self._state_manager.get_build_result(target)
+            if result is None:
                 continue
+            source_paths = self._source_files(target)
+            if result.source_hash:
+                if content_hash(source_paths) != result.source_hash:
+                    stale.append(target)
+            elif self._sources_newer_than(source_paths, result.timestamp):
+                stale.append(target)
 
-            build_time = datetime.fromisoformat(result.timestamp)
+        order = self._project.topological_order()
+        order_index = {feature: index for index, feature in enumerate(order)}
+        stale.sort(key=lambda feature: order_index.get(feature, len(order)))
+        return stale
 
-            if target_name not in self._project.features:
-                continue
+    def refresh_outdated(self) -> list[str]:
+        """Mark stale targets and their descendants outdated. Called at the start of
+        every build() so an edited intent is rebuilt without --force."""
+        changed: list[str] = []
+        for target in self.detect_outdated():
+            self._state_manager.set_status(target, TargetStatus.OUTDATED)
+            self.log(f"  Marked '{target}' outdated: intent changed")
+            changed.append(target)
+            for descendant in self._project.descendants(target):
+                descendant_status = self._state_manager.get_status(descendant)
+                if descendant_status in (TargetStatus.PENDING, TargetStatus.FAILED):
+                    continue
+                if descendant_status != TargetStatus.OUTDATED:
+                    self._state_manager.set_status(descendant, TargetStatus.OUTDATED)
+                    self.log(f"  Marked '{descendant}' outdated: dependency '{target}' changed")
+                    changed.append(descendant)
+        return changed
 
-            node = self._project.features[target_name]
-            is_outdated = False
+    # -- Internals: build set ----------------------------------------------------
 
-            # Check .ic files
-            for intent in node.intents:
-                if intent.source_path and intent.source_path.exists():
-                    mtime = datetime.fromtimestamp(
-                        intent.source_path.stat().st_mtime
-                    )
-                    if mtime > build_time:
-                        is_outdated = True
-                        break
-
-            # Check .icv files
-            if not is_outdated:
-                for vf in node.validations:
-                    if vf.source_path and vf.source_path.exists():
-                        mtime = datetime.fromtimestamp(
-                            vf.source_path.stat().st_mtime
-                        )
-                        if mtime > build_time:
-                            is_outdated = True
-                            break
-
-            if is_outdated:
-                outdated.append(target_name)
-
-        return outdated
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _determine_build_set(self, opts: BuildOptions) -> list[str]:
-        """Determine which targets to build, in topological order."""
-        topo = self._project.topological_order()
-        buildable_statuses = {
-            TargetStatus.PENDING,
-            TargetStatus.OUTDATED,
-            TargetStatus.FAILED,
-        }
-
-        if opts.target:
-            # Specific target: collect it and its ancestors
-            ancestors = self._project.ancestors(opts.target)
-            candidates = ancestors | {opts.target}
-
-            if not opts.force:
-                candidates = {
-                    t
-                    for t in candidates
-                    if self._state_manager.get_status(t) in buildable_statuses
-                }
-            # Maintain topological order
-            return [t for t in topo if t in candidates]
+    def _determine_build_set(self, target: str, force: bool) -> list[str]:
+        order = self._project.topological_order()
+        if target:
+            candidates = self._project.ancestors(target) | {target}
         else:
-            # All targets
-            if opts.force:
-                return topo
-            return [
-                t
-                for t in topo
-                if self._state_manager.get_status(t) in buildable_statuses
-            ]
+            candidates = set(self._project.features.keys())
+        if not force:
+            candidates = {
+                feature
+                for feature in candidates
+                if self._state_manager.get_status(feature) in _ACTIVE_STATUSES
+            }
+        return [feature for feature in order if feature in candidates]
 
-    def _resolve_profile(self, override: str) -> AgentProfile:
-        """Resolve agent profile: override > builder's profile."""
-        if override:
-            return AgentProfile(name=override, provider=self._agent_profile.provider)
+    def _source_files(self, target: str) -> list[Path]:
+        node = self._project.features.get(target)
+        if node is None:
+            return []
+        paths: list[Path] = []
+        for intent in node.intents:
+            if intent.source_path is not None:
+                paths.append(Path(intent.source_path))
+        for validation_file in node.validations:
+            if validation_file.source_path is not None:
+                paths.append(Path(validation_file.source_path))
+        return paths
+
+    @staticmethod
+    def _sources_newer_than(paths: list[Path], timestamp: str) -> bool:
+        if not timestamp:
+            return False
+        try:
+            build_time = datetime.fromisoformat(timestamp)
+        except ValueError:
+            return False
+        for path in paths:
+            if not path.exists():
+                continue
+            if datetime.fromtimestamp(path.stat().st_mtime) > build_time:
+                return True
+        return False
+
+    # -- Internals: per-target build ---------------------------------------------
+
+    def _resolve_profile(self, opts: BuildOptions) -> AgentProfile:
+        if opts.profile_override:
+            return self._agent_profile.model_copy(update={"name": opts.profile_override})
         return self._agent_profile
 
-    def _apply_sandbox_paths(
-        self,
-        profile: AgentProfile,
-        target: str,
-        output_dir: str,
-    ) -> AgentProfile:
-        """Scope agent filesystem access based on the project DAG.
-
-        All sandbox paths are absolute (resolved via Path.resolve()).
-        """
-        output_path = Path(output_dir).resolve()
-        build_response_path = self._state_manager.build_response_dir.resolve()
-        val_response_path = self._state_manager.val_response_dir.resolve()
-
+    def _apply_sandbox_paths(self, profile: AgentProfile, target: str, output_dir: Path) -> AgentProfile:
         write_paths = [
-            str(output_path),
-            str(build_response_path),
-            str(val_response_path),
+            str(output_dir.resolve()),
+            str(self._state_manager.build_response_dir.resolve()),
+            str(self._state_manager.val_response_dir.resolve()),
         ]
 
-        read_paths = [str(output_path)]
-
-        # Add intent files for target and ancestors
-        if target in self._project.features:
-            node = self._project.features[target]
+        read_paths = [str(output_dir.resolve())]
+        for feature in [target, *sorted(self._project.ancestors(target))]:
+            node = self._project.features.get(feature)
+            if node is None:
+                continue
             for intent in node.intents:
-                if intent.source_path:
-                    read_paths.append(str(intent.source_path.resolve()))
+                if intent.source_path is not None:
+                    read_paths.append(str(Path(intent.source_path).resolve()))
 
-        ancestors = self._project.ancestors(target) if target in self._project.features else set()
-        for anc in ancestors:
-            if anc in self._project.features:
-                for intent in self._project.features[anc].intents:
-                    if intent.source_path:
-                        read_paths.append(str(intent.source_path.resolve()))
+        project_intent = self._project.project_intent
+        if project_intent.source_path is not None:
+            read_paths.append(str(Path(project_intent.source_path).resolve()))
 
-        # Project intent file
-        if self._project.project_intent.source_path:
-            read_paths.append(
-                str(self._project.project_intent.source_path.resolve())
-            )
-
-        # Implementations directory
-        if self._project.intent_dir:
-            impl_dir = self._project.intent_dir / "implementations"
+        intent_dir = self._project.intent_dir
+        if intent_dir is not None:
+            impl_dir = Path(intent_dir) / "implementations"
             if impl_dir.exists():
                 read_paths.append(str(impl_dir.resolve()))
-
-            # Legacy implementation.ic
-            legacy = self._project.intent_dir / "implementation.ic"
-            if legacy.exists():
-                read_paths.append(str(legacy.resolve()))
+            legacy_impl = Path(intent_dir) / "implementation.ic"
+            if legacy_impl.exists():
+                read_paths.append(str(legacy_impl.resolve()))
 
         return profile.model_copy(
-            update={
-                "sandbox_write_paths": write_paths,
-                "sandbox_read_paths": read_paths,
-            }
+            update={"sandbox_write_paths": write_paths, "sandbox_read_paths": read_paths}
         )
+
+    def _record_source_versions(self, target: str) -> None:
+        node = self._project.features[target]
+        for intent in node.intents:
+            if intent.source_path is None:
+                continue
+            self._storage.record_intent_version(
+                intent.name, str(intent.source_path), content_hash([intent.source_path])
+            )
+        for validation_file in node.validations:
+            if validation_file.source_path is None:
+                continue
+            self._storage.record_validation_version(
+                target, str(validation_file.source_path), content_hash([validation_file.source_path])
+            )
 
     def _build_target(
         self,
         target: str,
+        opts: BuildOptions,
         generation_id: str,
-        output_dir: str,
-        profile_override: str,
-        implementation: object | None,
-    ) -> tuple[BuildResult, RuntimeError | None]:
-        """Build a single target through the step pipeline."""
-        steps: list[BuildStep] = []
-        commit_id = ""
-        git_diff = ""
+        implementation: Optional[Implementation],
+        output_path: Path,
+    ) -> tuple[BuildResult, Optional[Exception]]:
+        node = self._project.features[target]
+        self._record_source_versions(target)
+        source_hash = content_hash(self._source_files(target))
+
+        profile = self._resolve_profile(opts)
+        sandboxed_profile = self._apply_sandbox_paths(profile, target, output_path)
+        agent = self._create_agent(sandboxed_profile)
+
+        dependency_names = node.depends_on
+        feature_intent = node.intents[0] if node.intents else IntentFile(name=target, body="")
+        has_validations = any(vf.validations for vf in node.validations)
+
         previous_errors: list[str] = []
-        build_response: BuildResponse | None = None
+        steps: list[BuildStep] = []
+        final_build_response: Optional[BuildResponse] = None
+        commit_id = ""
+        git_diff: Optional[str] = None
+        attempts = 0
+        target_failed = True
 
-        profile = self._resolve_profile(profile_override)
-        node = self._project.features.get(target)
-        intent = (
-            node.intents[0]
-            if node and node.intents
-            else IntentFile(name=target, body="")
-        )
-        validations = node.validations if node else []
+        for attempt in range(1, profile.retries + 1):
+            attempts = attempt
+            steps = []
+            target_failed = False
 
-        retries = profile.retries or 1  # total attempts
-
-        for attempt in range(retries):
-            steps_this_attempt: list[BuildStep] = []
-            failed = False
-
-            if attempt > 0:
-                self._log(
-                    f"  Retry {attempt}/{retries - 1} for target '{target}'..."
+            deps_start = time.monotonic()
+            steps.append(
+                BuildStep(
+                    phase="resolve_deps",
+                    status="success",
+                    duration_secs=time.monotonic() - deps_start,
+                    summary=f"{len(dependency_names)} dependency(ies)",
                 )
-
-            # Step 1: resolve_deps
-            dep_step, dep_names = self._step_resolve_deps(target)
-            steps_this_attempt.append(dep_step)
-
-            # Step 2: build
-            sandboxed_profile = self._apply_sandbox_paths(
-                profile, target, output_dir
-            )
-            agent = self._create_agent(sandboxed_profile)
-
-            response_file = str(
-                self._state_manager.build_response_dir
-                / f"response-{target.replace('/', '_')}-{generation_id[:8]}.json"
             )
 
-            build_ctx = BuildContext(
-                intent=intent,
-                validations=validations,
-                output_dir=output_dir,
+            ctx = BuildContext(
+                intent=feature_intent,
+                validations=node.validations,
+                output_dir=str(output_path),
                 generation_id=generation_id,
-                dependency_names=dep_names,
+                dependency_names=dependency_names,
                 project_intent=self._project.project_intent,
                 implementation=implementation,
-                response_file_path=response_file,
-                previous_errors=previous_errors,
+                response_file_path=str(self._state_manager.build_response_dir / response_file_name(target)),
+                previous_errors=list(previous_errors),
+                feature_path=target,
             )
 
-            build_step, build_response = self._step_build(agent, build_ctx)
-            steps_this_attempt.append(build_step)
-
-            if build_step.status != "success":
-                previous_errors.append(build_step.summary)
-                steps = steps_this_attempt
-                failed = True
-                if attempt < retries - 1:
-                    continue
-                # Last attempt failed
-                return self._make_result(
-                    target, generation_id, "failed", steps, commit_id, git_diff
-                ), RuntimeError(
-                    f"Build failed for target '{target}': {build_step.summary}"
-                )
-
-            # Step 3: validate
-            if validations:
-                val_step = self._step_validate(
-                    target, profile, output_dir
-                )
-                steps_this_attempt.append(val_step)
-
-                if val_step.status != "success":
-                    previous_errors.append(val_step.summary)
-                    steps = steps_this_attempt
-                    failed = True
-                    if attempt < retries - 1:
-                        continue
-                    # Last attempt failed
-                    return self._make_result(
-                        target, generation_id, "failed", steps, commit_id, git_diff
-                    ), RuntimeError(
-                        f"Build failed for target '{target}': {val_step.summary}"
-                    )
-
-            # All steps succeeded
-            steps = steps_this_attempt
-
-            # Step 4: checkpoint
-            ckpt_step, commit_id, git_diff = self._step_checkpoint(
-                target, generation_id
-            )
-            steps.append(ckpt_step)
-            break
-
-        result, _ = self._make_result(
-            target, generation_id, "built", steps, commit_id, git_diff
-        ), None
-
-        # Store file manifest from build response
-        result._build_response = build_response  # type: ignore[attr-defined]
-        result._git_diff = git_diff  # type: ignore[attr-defined]
-
-        return result, None
-
-    def _step_resolve_deps(
-        self, target: str
-    ) -> tuple[BuildStep, list[str]]:
-        """Resolve dependency names for a target."""
-        start = datetime.now()
-        dep_names: list[str] = []
-        if target in self._project.features:
-            node = self._project.features[target]
-            dep_names = list(node.depends_on)
-
-        self._log(f"  resolve_deps: {dep_names or '(none)'}")
-        duration = (datetime.now() - start).total_seconds()
-        return (
-            BuildStep(
-                phase="resolve_deps",
-                status="success",
-                duration_secs=duration,
-                summary=f"Dependencies: {dep_names or '(none)'}",
-            ),
-            dep_names,
-        )
-
-    def _step_build(
-        self, agent: Agent, ctx: BuildContext
-    ) -> tuple[BuildStep, BuildResponse | None]:
-        """Invoke the agent to build."""
-        start = datetime.now()
-        self._log(f"  build: invoking agent...")
-
-        try:
-            response = agent.build(ctx)
-            duration = (datetime.now() - start).total_seconds()
-
-            if response.status == "success":
-                return (
-                    BuildStep(
-                        phase="build",
-                        status="success",
-                        duration_secs=duration,
-                        summary=response.summary,
-                    ),
-                    response,
-                )
-            else:
-                return (
+            build_start = time.monotonic()
+            try:
+                build_response = agent.build(ctx)
+            except AgentError as exc:
+                summary = f"agent error: {exc}"
+                steps.append(
                     BuildStep(
                         phase="build",
                         status="failed",
-                        duration_secs=duration,
-                        summary=response.summary,
-                    ),
-                    response,
+                        duration_secs=time.monotonic() - build_start,
+                        summary=summary,
+                    )
                 )
-        except AgentError as exc:
-            duration = (datetime.now() - start).total_seconds()
-            self._log(f"  build: agent error: {exc}")
-            return (
+                previous_errors.append(summary)
+                target_failed = True
+                self.log(f"  Build step failed for '{target}': {summary}")
+                continue
+
+            final_build_response = build_response
+            steps.append(
                 BuildStep(
                     phase="build",
-                    status="failed",
-                    duration_secs=duration,
-                    summary=str(exc),
-                ),
-                None,
-            )
-
-    def _step_validate(
-        self,
-        target: str,
-        profile: AgentProfile,
-        output_dir: str,
-    ) -> BuildStep:
-        """Run validations for a target."""
-        start = datetime.now()
-        self._log(f"  validate: running validations...")
-
-        suite = ValidationSuite(
-            project=self._project,
-            agent_profile=profile,
-            output_dir=output_dir,
-            val_response_dir=self._state_manager.val_response_dir,
-            storage_backend=self._storage,
-            log=self._log,
-        )
-        result = suite.validate_feature(target)
-        duration = (datetime.now() - start).total_seconds()
-
-        if result.passed:
-            self._log(f"  validate: passed ({result.summary})")
-            return BuildStep(
-                phase="validate",
-                status="success",
-                duration_secs=duration,
-                summary=result.summary,
-            )
-        else:
-            self._log(f"  validate: failed ({result.summary})")
-            return BuildStep(
-                phase="validate",
-                status="failed",
-                duration_secs=duration,
-                summary=result.summary,
-            )
-
-    def _step_checkpoint(
-        self, target: str, generation_id: str
-    ) -> tuple[BuildStep, str, str]:
-        """Checkpoint via version control."""
-        start = datetime.now()
-        message = f"build {target} [gen:{generation_id}]"
-        self._log(f"  checkpoint: committing '{message}'")
-
-        try:
-            commit_id = self._version_control.checkpoint(message)
-            git_diff = ""
-            try:
-                git_diff = self._version_control.diff(
-                    f"{commit_id}~1", commit_id
+                    status="success",
+                    duration_secs=time.monotonic() - build_start,
+                    summary=build_response.summary,
                 )
-            except Exception:
-                pass  # diff may fail if first commit
+            )
+            self.log(f"  Build step succeeded for '{target}'")
 
-            duration = (datetime.now() - start).total_seconds()
-            self._log(f"  checkpoint: {commit_id[:8]}")
+            if has_validations:
+                validate_start = time.monotonic()
+                suite = ValidationSuite(
+                    project=self._project,
+                    agent_profile=profile,
+                    output_dir=str(output_path),
+                    val_response_dir=self._state_manager.val_response_dir,
+                    storage_backend=self._storage,
+                    log=self.log,
+                    implementation=implementation,
+                    generation_id=generation_id,
+                    create_agent=self._create_agent,
+                )
+                self.log(f"  Validating '{target}'...")
+                suite_result = suite.validate_feature(target)
+                duration = time.monotonic() - validate_start
+                if suite_result.passed:
+                    steps.append(
+                        BuildStep(
+                            phase="validate", status="success", duration_secs=duration, summary=suite_result.summary
+                        )
+                    )
+                    self.log(f"  Validation passed for '{target}': {suite_result.summary}")
+                else:
+                    summary = f"validation failed: {suite_result.summary}"
+                    steps.append(
+                        BuildStep(phase="validate", status="failed", duration_secs=duration, summary=summary)
+                    )
+                    previous_errors.append(summary)
+                    target_failed = True
+                    self.log(f"  Validation failed for '{target}': {summary}")
+                    continue
 
-            return (
+            checkpoint_start = time.monotonic()
+            commit_id = self._version_control.checkpoint(f"build: {target} (generation {generation_id})")
+            git_diff = self._version_control.diff(f"{commit_id}~1", commit_id)
+            steps.append(
                 BuildStep(
                     phase="checkpoint",
                     status="success",
-                    duration_secs=duration,
-                    summary=f"Committed {commit_id[:8]}",
-                ),
-                commit_id,
-                git_diff,
+                    duration_secs=time.monotonic() - checkpoint_start,
+                    summary=f"commit {commit_id}",
+                )
             )
-        except Exception as exc:
-            duration = (datetime.now() - start).total_seconds()
-            self._log(f"  checkpoint: failed: {exc}")
-            return (
-                BuildStep(
-                    phase="checkpoint",
-                    status="failed",
-                    duration_secs=duration,
-                    summary=str(exc),
-                ),
-                "",
-                "",
-            )
+            self.log(f"  Checkpointed '{target}' at {commit_id}")
+            break
 
-    def _make_result(
-        self,
-        target: str,
-        generation_id: str,
-        status: str,
-        steps: list[BuildStep],
-        commit_id: str,
-        git_diff: str,
-    ) -> BuildResult:
-        """Build a BuildResult from steps."""
-        total_duration = sum(s.duration_secs for s in steps)
-        return BuildResult(
+        total_duration = sum(step.duration_secs for step in steps)
+        result = BuildResult(
             target=target,
             generation_id=generation_id,
-            status=status,
+            status=TargetStatus.FAILED if target_failed else TargetStatus.BUILT,
+            steps=steps,
             commit_id=commit_id,
             total_duration_secs=total_duration,
-            timestamp=datetime.now().isoformat(),
-            steps=steps,
+            timestamp=_now_iso(),
+            source_hash=source_hash,
+            files_created=final_build_response.files_created if final_build_response else [],
+            files_modified=final_build_response.files_modified if final_build_response else [],
+            attempts=attempts,
         )
 
-    def _save_and_cleanup_response(
-        self,
-        target: str,
-        result: BuildResult,
-        generation_id: str,
-    ) -> None:
-        """Read the build agent response file, store it, then delete."""
-        build_response: BuildResponse | None = getattr(
-            result, "_build_response", None
-        )
-        git_diff: str = getattr(result, "_git_diff", "")
+        build_result_id = self._state_manager.save_build_result(target, result, git_diff=git_diff)
+        if final_build_response is not None:
+            self._storage.save_agent_response(
+                build_result_id=build_result_id,
+                validation_result_id=None,
+                response_type="build",
+                response_json=final_build_response.model_dump(),
+            )
 
-        files_created: list[str] = []
-        files_modified: list[str] = []
-        if build_response:
-            files_created = build_response.files_created
-            files_modified = build_response.files_modified
+        if target_failed:
+            failing_step = next((step for step in steps if step.status == "failed"), None)
+            summary = failing_step.summary if failing_step is not None else "unknown error"
+            error = RuntimeError(f"Build failed for target '{target}': {summary}")
+            return result, error
 
-        # Save build result with extra metadata
-        self._storage.save_build_result(
-            target,
-            result,
-            git_diff=git_diff,
-            files_created=files_created,
-            files_modified=files_modified,
-        )
-
-        # Read response file from disk, persist, and clean up
-        response_file = (
-            self._state_manager.build_response_dir
-            / f"response-{target.replace('/', '_')}-{generation_id[:8]}.json"
-        )
-        if response_file.exists():
-            try:
-                with open(response_file, "r", encoding="utf-8") as f:
-                    response_json = json.load(f)
-                self._storage.save_agent_response(
-                    build_result_id=None,
-                    validation_result_id=None,
-                    response_type="build",
-                    response_json=response_json,
-                )
-            except (json.JSONDecodeError, OSError):
-                pass
-            finally:
-                try:
-                    os.remove(response_file)
-                except OSError:
-                    pass
+        return result, None

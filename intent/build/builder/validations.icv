@@ -1,6 +1,13 @@
 target: build/builder
 version: 1
 validations:
+  - name: builder-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/build/builder -q"
+
   - name: builder-module-exists
     type: agent_validation
     severity: error
@@ -21,11 +28,12 @@ validations:
         4. Emits BuildStep entries with timing for each phase
         5. Collects steps into BuildResult with total duration, generation ID, and timestamp
         6. Checkpoint only occurs after both build and validation succeed (atomicity)
-        7. On agent errors (crash, timeout, malformed response), retries up to AgentProfile.Retries times; validation failures are NOT retried
-        8. Resolves agent profile per-target (profileOverride > builder's agentProfile)
+        7. On agent errors AND on validation failures, retries from the build step up to AgentProfile.retries total attempts, with previous_errors passed into the next BuildContext
+        8. Resolves agent profile per-target (profile_override > builder's agent_profile)
         9. Stops DAG walk on first failure, marks target as failed, does not roll back files
         10. Supports dry run mode
-        11. Generation ID is a UUID shared across all targets in a single Build() invocation
+        11. Generation ID is a UUID shared across all targets in a single build() invocation
+        13. An unknown target raises KeyError; next_targets() returns buildable features
         12. Tests use mock agent and verify pipeline ordering
 
   - name: builder-clean-defined
@@ -58,13 +66,6 @@ validations:
       rubric: |
         Verify the builder's DetectOutdated method:
         1. Walks all targets tracked by state manager with status "built"
-        2. Compares BuildResult.timestamp against modification times of .ic and .icv files
+        2. Compares the content hash of the target's .ic and .icv files against BuildResult.source_hash (mtime fallback only when source_hash is empty)
         3. Returns list of outdated targets without modifying state
-
-  - name: builder-tests-pass
-    type: agent_validation
-    severity: error
-    args:
-      rubric: |
-        Run the test suite for the builder module and verify all tests pass with exit code 0.
-        Use the implementation's test runner (e.g., pytest for Python, go test for Go).
+        4. refresh_outdated marks those targets and their descendants outdated, and build() calls it first so an edited intent is rebuilt without --force (tests should edit an intent file after a build and assert the next build rebuilds it and its dependents)

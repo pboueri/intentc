@@ -1,373 +1,454 @@
-"""Validation suite: runners, orchestration, and results for intentc validations."""
+"""Validation suite: runs `.icv` validation entries against generated code.
+
+Deterministic runners (`command_validation`, `file_exists`) are preferred over
+agent judgement wherever possible; `agent_validation` is the fallback for
+checks that require natural-language judgement. This module is independent of
+the build pipeline -- it can be invoked directly against a feature or the
+whole project.
+"""
 
 from __future__ import annotations
 
-import abc
-import json
-import os
+import glob
+import re
 import secrets
+import subprocess
+import time
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from intentc.build.agents import (
     Agent,
+    AgentError,
     AgentProfile,
     BuildContext,
     ValidationResponse,
     create_from_profile,
 )
-from intentc.core.models import (
-    Implementation,
-    IntentFile,
-    ProjectIntent,
-    Severity,
-    Validation,
-    ValidationFile,
-)
-from intentc.core.project import Project
-
-
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
+from intentc.build.storage import StorageBackend
+from intentc.core import Implementation, IntentFile, Project, ProjectIntent, Severity, Validation
 
 LogFn = Callable[[str], None]
 
+_DETERMINISTIC_TYPES = {"command_validation", "file_exists"}
+_SLASH_RE = re.compile(r"[\\/]")
+
+
+def _noop_log(_message: str) -> None:
+    return None
+
+
+def _response_file_name(target: str, validation_name: str) -> str:
+    safe_target = _SLASH_RE.sub("_", target)
+    safe_name = _SLASH_RE.sub("_", validation_name)
+    return f"{safe_target}-{safe_name}-{secrets.token_hex(4)}.json"
+
+
+def _resolve_output_path(entry: str, output_dir: str) -> str:
+    resolved = entry.replace("{output_dir}", output_dir)
+    prefix = output_dir.rstrip("/") + "/"
+    if resolved == output_dir or resolved.startswith(prefix):
+        return resolved
+    return str(Path(output_dir) / resolved)
+
 
 # ---------------------------------------------------------------------------
-# ValidationContext
+# Context and result types
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ValidationContext:
-    """What the runner needs to evaluate a validation."""
+class ValidationContext(BaseModel):
+    """Everything a runner needs to evaluate a single validation entry."""
+
+    model_config = ConfigDict(extra="ignore")
 
     project_intent: ProjectIntent
-    implementation: Implementation | None
+    implementation: Optional[Implementation] = None
     feature_intent: IntentFile
     output_dir: str
     response_file_path: str
+    project_root: str = ""
 
 
-# ---------------------------------------------------------------------------
-# ValidationSuiteResult
-# ---------------------------------------------------------------------------
+class ValidationSuiteResult(BaseModel):
+    """The rolled-up outcome of running a set of validations against a target."""
 
-
-@dataclass
-class ValidationSuiteResult:
-    """Aggregated result of running validations against a target."""
+    model_config = ConfigDict(extra="ignore")
 
     target: str
-    results: list[ValidationResponse] = field(default_factory=list)
+    results: list[ValidationResponse] = Field(default_factory=list)
     passed: bool = True
     summary: str = ""
+    passed_count: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+    duration_secs: float = 0.0
 
 
 # ---------------------------------------------------------------------------
-# ValidationRunner interface
+# Runner interface
 # ---------------------------------------------------------------------------
 
 
-class ValidationRunner(abc.ABC):
-    """Abstract runner interface. Each runner handles one validation type."""
+class ValidationRunner(ABC):
+    """Evaluates one validation entry of a single `type`."""
 
-    @abc.abstractmethod
-    def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
-        ...
+    @abstractmethod
+    def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse: ...
 
-    @abc.abstractmethod
+    @abstractmethod
+    def type(self) -> str: ...
+
+
+class CommandValidationRunner(ValidationRunner):
+    """Runs a shell command; passes when it exits 0."""
+
     def type(self) -> str:
-        ...
+        return "command_validation"
+
+    def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
+        args = validation.args
+        command = str(args.get("command", "")).replace("{output_dir}", ctx.output_dir)
+        cwd = self._resolve_cwd(ctx, args.get("cwd"))
+        timeout = args.get("timeout", 600)
+        expect_output = args.get("expect_output")
+        if expect_output:
+            expect_output = str(expect_output).replace("{output_dir}", ctx.output_dir)
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return ValidationResponse(
+                name=validation.name, status="fail", reason=f"timed out after {timeout}s"
+            )
+        except OSError as exc:
+            return ValidationResponse(
+                name=validation.name, status="fail", reason=f"failed to run command: {exc}"
+            )
+
+        combined = (result.stdout or "") + (result.stderr or "")
+        lines = combined.strip("\n").splitlines()
+
+        if result.returncode != 0:
+            tail = "\n".join(lines[-30:])
+            reason = f"exit {result.returncode}" + (f"\n{tail}" if tail else "")
+            return ValidationResponse(name=validation.name, status="fail", reason=reason)
+
+        if expect_output and expect_output not in combined:
+            return ValidationResponse(
+                name=validation.name,
+                status="fail",
+                reason=f"expected output '{expect_output}' not found in command output",
+            )
+
+        reason = "exit 0" + (f"\n{lines[-1]}" if lines else "")
+        return ValidationResponse(name=validation.name, status="pass", reason=reason)
+
+    @staticmethod
+    def _resolve_cwd(ctx: ValidationContext, cwd_arg: Optional[str]) -> str:
+        project_root = ctx.project_root or "."
+        if not cwd_arg:
+            return ctx.output_dir
+        if cwd_arg == ".":
+            return project_root
+        return str(Path(project_root) / cwd_arg)
 
 
-# ---------------------------------------------------------------------------
-# AgentValidationRunner
-# ---------------------------------------------------------------------------
+class FileExistsRunner(ValidationRunner):
+    """Passes when every path/glob (relative to the output dir) matches something."""
+
+    def type(self) -> str:
+        return "file_exists"
+
+    def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
+        paths = validation.args.get("paths", [])
+        unmatched: list[str] = []
+        for entry in paths:
+            resolved = _resolve_output_path(str(entry), ctx.output_dir)
+            if not glob.glob(resolved):
+                unmatched.append(entry)
+        if unmatched:
+            return ValidationResponse(
+                name=validation.name,
+                status="fail",
+                reason=f"no match for: {', '.join(unmatched)}",
+            )
+        return ValidationResponse(name=validation.name, status="pass", reason="all paths matched")
 
 
 class AgentValidationRunner(ValidationRunner):
-    """Built-in runner for type 'agent_validation'. Delegates to an Agent."""
+    """Delegates judgement of a natural-language rubric to an agent."""
 
     def __init__(self, agent: Agent) -> None:
-        self._agent = agent
+        self.agent = agent
 
     def type(self) -> str:
         return "agent_validation"
 
     def run(self, validation: Validation, ctx: ValidationContext) -> ValidationResponse:
-        generation_id = f"val-{secrets.token_hex(4)}"
-
         build_ctx = BuildContext(
             intent=ctx.feature_intent,
             validations=[],
             output_dir=ctx.output_dir,
-            generation_id=generation_id,
+            generation_id=f"val-{secrets.token_hex(4)}",
             dependency_names=[],
             project_intent=ctx.project_intent,
             implementation=ctx.implementation,
             response_file_path=ctx.response_file_path,
         )
-
-        vf = ValidationFile(
-            target="",
-            validations=[validation],
-        )
-
         try:
-            response = self._agent.validate(build_ctx, vf)
-            return response
-        except Exception as exc:
-            return ValidationResponse(
-                name=validation.name,
-                status="fail",
-                reason=f"Agent error: {exc}",
-            )
+            return self.agent.validate(build_ctx, validation)
+        except AgentError as exc:
+            return ValidationResponse(name=validation.name, status="fail", reason=f"agent error: {exc}")
 
 
 # ---------------------------------------------------------------------------
 # ValidationSuite
 # ---------------------------------------------------------------------------
 
+_PROFILE_OVERRIDE_FIELDS = ("provider", "model_id", "timeout")
+
 
 class ValidationSuite:
-    """Core orchestrator for running validations."""
+    """Orchestrates running validations for a feature or the whole project."""
 
     def __init__(
         self,
         project: Project,
         agent_profile: AgentProfile,
         output_dir: str,
-        runner_registry: dict[str, ValidationRunner] | None = None,
-        val_response_dir: Path | None = None,
-        storage_backend: "StorageBackend | None" = None,
-        log: Callable[[str], None] | None = None,
+        runner_registry: Optional[dict[str, ValidationRunner]] = None,
+        val_response_dir: Optional[Path] = None,
+        storage_backend: Optional[StorageBackend] = None,
+        log: Optional[LogFn] = None,
+        implementation: Optional[Implementation] = None,
+        build_result_id: Optional[int] = None,
+        generation_id: Optional[str] = None,
+        create_agent: Optional[Callable[[AgentProfile], Agent]] = None,
     ) -> None:
-        self._project = project
-        self._agent_profile = agent_profile
-        self._output_dir = output_dir
-        self._val_response_dir = val_response_dir
-        self._storage_backend = storage_backend
-        self._log = log or (lambda _msg: None)
-
-        # Create agent and default runner
-        agent = create_from_profile(agent_profile, log=self._log)
-        default_runner = AgentValidationRunner(agent)
-
+        self.project = project
+        self.agent_profile = agent_profile
+        self.output_dir = output_dir
+        self.val_response_dir = val_response_dir
+        self.storage_backend = storage_backend
+        self.log: LogFn = log or _noop_log
+        self.implementation = implementation if implementation is not None else project.resolve_implementation()
+        self.build_result_id = build_result_id
+        self.generation_id = generation_id
+        self.create_agent = create_agent or create_from_profile
         self._runners: dict[str, ValidationRunner] = {
-            default_runner.type(): default_runner,
+            "command_validation": CommandValidationRunner(),
+            "file_exists": FileExistsRunner(),
         }
         if runner_registry:
             self._runners.update(runner_registry)
 
     def register_runner(self, runner: ValidationRunner) -> None:
-        """Register a custom runner post-construction."""
+        """Register (or replace) a runner for post-construction extensibility."""
         self._runners[runner.type()] = runner
 
+    # -- Public lifecycle ----------------------------------------------------
+
     def validate_feature(self, feature: str) -> ValidationSuiteResult:
-        """Load .icv files for a feature and run all validations."""
-        if feature not in self._project.features:
-            return ValidationSuiteResult(
-                target=feature,
-                passed=True,
-                summary="Feature not found, no validations to run.",
-            )
-
-        node = self._project.features[feature]
         entries: list[Validation] = []
-        for vf in node.validations:
-            entries.extend(vf.validations)
-
-        self._log(f"Validating feature '{feature}'... ({len(entries)} validations)")
+        node = self.project.features.get(feature)
+        if node is not None:
+            for vf in node.validations:
+                entries.extend(vf.validations)
+        self.log(f"Validating feature '{feature}'... ({len(entries)} validations)")
         return self.validate_entries(feature, entries)
 
     def validate_project(self) -> list[ValidationSuiteResult]:
-        """Run validations for every feature in topological order, plus assertions."""
-        topo = self._project.topological_order()
-        self._log(f"Validating project ({len(topo)} features)...")
-        results: list[ValidationSuiteResult] = []
+        order = self.project.topological_order()
+        self.log(f"Validating project ({len(order)} features)...")
+        results = [self.validate_feature(feature) for feature in order]
 
-        for feature_path in topo:
-            result = self.validate_feature(feature_path)
-            results.append(result)
-
-        # Project-level assertions
-        assertion_entries: list[Validation] = []
-        for vf in self._project.assertions:
-            assertion_entries.extend(vf.validations)
-
-        if assertion_entries:
-            self._log(f"Running project-level assertions ({len(assertion_entries)} entries)...")
-            assertion_result = self.validate_entries("project", assertion_entries)
-            results.append(assertion_result)
-
+        assertion_entries = [v for vf in self.project.assertions for v in vf.validations]
+        self.log(f"Running project-level assertions ({len(assertion_entries)} entries)...")
+        results.append(self.validate_entries("project", assertion_entries))
         return results
 
-    def validate_entries(
-        self, target: str, entries: list[Validation]
-    ) -> ValidationSuiteResult:
-        """Run a specific list of validation entries against a target."""
-        if not entries:
-            return ValidationSuiteResult(
-                target=target,
-                passed=True,
-                summary="0 passed out of 0 validations (0 errors, 0 warnings)",
-            )
+    def validate_entries(self, target: str, entries: list[Validation]) -> ValidationSuiteResult:
+        start = time.monotonic()
 
-        ctx_base = self._build_validation_context(target)
+        generation_id = self.generation_id
+        if generation_id is None:
+            generation_id = f"val-{secrets.token_hex(4)}"
+            if self.storage_backend is not None:
+                self.storage_backend.create_generation(generation_id, self.output_dir)
 
-        # Run in parallel, collect in original order
-        results_by_index: dict[int, ValidationResponse] = {}
+        deterministic_entries = [e for e in entries if e.type in _DETERMINISTIC_TYPES]
+        other_entries = [e for e in entries if e.type not in _DETERMINISTIC_TYPES]
 
-        def _run_one(idx: int, entry: Validation) -> tuple[int, ValidationResponse]:
-            self._log(f"  Running validation '{entry.name}' ({entry.type.value})...")
+        responses: dict[str, ValidationResponse] = {}
+        failed_deterministic_name: Optional[str] = None
 
-            runner = self._runners.get(entry.type.value)
-            if runner is None:
-                resp = ValidationResponse(
-                    name=entry.name,
-                    status="fail",
-                    reason=f"No runner registered for validation type: {entry.type.value}",
-                )
+        for entry in deterministic_entries:
+            response = self._run_entry_timed(target, entry)
+            responses[entry.name] = response
+            self._persist(target, generation_id, entry, response)
+            if failed_deterministic_name is None and response.status != "pass" and entry.severity == Severity.ERROR:
+                failed_deterministic_name = entry.name
+
+        if other_entries:
+            if failed_deterministic_name is not None:
+                for entry in other_entries:
+                    response = ValidationResponse(
+                        name=entry.name,
+                        status="fail",
+                        reason=f"skipped: deterministic validation '{failed_deterministic_name}' failed",
+                        severity=self._severity_value(entry),
+                        type=entry.type,
+                    )
+                    responses[entry.name] = response
+                    self._persist(target, generation_id, entry, response)
             else:
-                # Each validation gets its own response file path
-                response_file = self._make_response_path(entry.name)
-                ctx = ValidationContext(
-                    project_intent=ctx_base.project_intent,
-                    implementation=ctx_base.implementation,
-                    feature_intent=ctx_base.feature_intent,
-                    output_dir=ctx_base.output_dir,
-                    response_file_path=str(response_file),
-                )
-                resp = runner.run(entry, ctx)
+                with ThreadPoolExecutor(max_workers=len(other_entries)) as pool:
+                    future_map = {
+                        pool.submit(self._run_entry_timed, target, entry): entry for entry in other_entries
+                    }
+                    for future in as_completed(future_map):
+                        entry = future_map[future]
+                        response = future.result()
+                        responses[entry.name] = response
+                        self._persist(target, generation_id, entry, response)
 
-                # Persist to storage if available
-                if self._storage_backend is not None:
-                    self._persist_result(entry, resp, response_file)
+        ordered = [responses[entry.name] for entry in entries]
+        duration = time.monotonic() - start
+        return self._build_suite_result(target, ordered, duration)
 
-            self._log(f"  Validation '{entry.name}': {resp.status}")
-            if resp.status != "pass":
-                self._log(f"    Reason: {resp.reason}")
-            return idx, resp
+    # -- Internals -------------------------------------------------------------
 
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(_run_one, i, entry): i
-                for i, entry in enumerate(entries)
-            }
-            for future in as_completed(futures):
-                idx, resp = future.result()
-                results_by_index[idx] = resp
+    @staticmethod
+    def _severity_value(entry: Validation) -> str:
+        return entry.severity.value if isinstance(entry.severity, Severity) else str(entry.severity)
 
-        # Collect in original order
-        ordered_results = [results_by_index[i] for i in range(len(entries))]
-
-        # Compute suite result
-        passed_count = sum(1 for r in ordered_results if r.status == "pass")
-        failed = [
-            (r, entries[i])
-            for i, r in enumerate(ordered_results)
-            if r.status != "pass"
-        ]
-        error_count = sum(1 for _, e in failed if e.severity == Severity.ERROR)
-        warning_count = sum(1 for _, e in failed if e.severity == Severity.WARNING)
-
-        suite_passed = error_count == 0
-        summary = (
-            f"{passed_count} passed out of {len(entries)} validations "
-            f"({error_count} errors, {warning_count} warnings)"
-        )
-
-        return ValidationSuiteResult(
-            target=target,
-            results=ordered_results,
-            passed=suite_passed,
-            summary=summary,
-        )
-
-    # ---- internal helpers ----
-
-    def _build_validation_context(self, target: str) -> ValidationContext:
-        """Build a base ValidationContext for the given target."""
-        project_intent = self._project.project_intent
-        implementation = self._project.resolve_implementation()
-
-        # Resolve feature intent
-        if target == "project":
-            feature_intent = IntentFile(
-                name="project",
-                body=project_intent.body,
-            )
-        elif target in self._project.features:
-            node = self._project.features[target]
-            feature_intent = node.intents[0] if node.intents else IntentFile(
-                name=target, body=""
+    def _run_entry_timed(self, target: str, entry: Validation) -> ValidationResponse:
+        self.log(f"  Running validation '{entry.name}' ({entry.type})...")
+        start = time.monotonic()
+        runner = self._resolve_runner(entry)
+        if runner is None:
+            response = ValidationResponse(
+                name=entry.name,
+                status="fail",
+                reason=f"No runner registered for validation type '{entry.type}'",
             )
         else:
-            feature_intent = IntentFile(name=target, body="")
-
-        return ValidationContext(
-            project_intent=project_intent,
-            implementation=implementation,
-            feature_intent=feature_intent,
-            output_dir=self._output_dir,
-            response_file_path="",  # placeholder, overridden per validation
-        )
-
-    def _make_response_path(self, validation_name: str) -> Path:
-        """Create a unique response file path for a validation."""
-        base_dir = self._val_response_dir or Path(self._output_dir)
-        base_dir.mkdir(parents=True, exist_ok=True)
-        unique = secrets.token_hex(4)
-        return base_dir / f"val-response-{validation_name}-{unique}.json"
-
-    def _persist_result(
-        self,
-        entry: Validation,
-        resp: ValidationResponse,
-        response_file: Path,
-    ) -> None:
-        """Save validation result and agent response to storage, then clean up."""
-        assert self._storage_backend is not None
-
-        generation_id = f"val-{secrets.token_hex(4)}"
-
-        # Create a generation record so the FK on validation_results is satisfied.
-        self._storage_backend.create_generation(
-            generation_id=generation_id,
-            output_dir=self._output_dir,
-        )
-
-        val_result_id = self._storage_backend.save_validation_result(
-            build_result_id=None,
-            generation_id=generation_id,
-            target=entry.name,
-            validation_file_version_id=None,
-            name=resp.name,
-            type=entry.type.value,
-            severity=entry.severity.value,
-            status=resp.status,
-            reason=resp.reason,
-        )
-
-        # Read and persist agent response JSON if file exists
-        if response_file.exists():
+            ctx = self._make_context(target, entry.name)
             try:
-                with open(response_file, "r", encoding="utf-8") as f:
-                    response_json = json.load(f)
-                self._storage_backend.save_agent_response(
-                    build_result_id=None,
-                    validation_result_id=val_result_id,
-                    response_type="validation",
-                    response_json=response_json,
-                )
-            except (json.JSONDecodeError, OSError):
-                pass
-            finally:
-                try:
-                    os.remove(response_file)
-                except OSError:
-                    pass
+                response = runner.run(entry, ctx)
+            except Exception as exc:  # noqa: BLE001 - a runner failure is still a validation failure
+                response = ValidationResponse(name=entry.name, status="fail", reason=f"runner error: {exc}")
+
+        duration = time.monotonic() - start
+        response.name = entry.name
+        response.severity = self._severity_value(entry)
+        response.type = entry.type
+        response.duration_secs = duration
+
+        self.log(f"  Validation '{entry.name}': {response.status} ({duration:.1f}s)")
+        if response.status != "pass":
+            for line in response.reason.splitlines()[:5]:
+                self.log(f"    reason: {line}")
+        return response
+
+    def _resolve_runner(self, entry: Validation) -> Optional[ValidationRunner]:
+        if entry.type in self._runners:
+            return self._runners[entry.type]
+        if entry.type == "agent_validation":
+            profile = self._resolve_profile(entry)
+            agent = self.create_agent(profile)
+            return AgentValidationRunner(agent)
+        return None
+
+    def _resolve_profile(self, entry: Validation) -> AgentProfile:
+        # There is no dedicated per-validation `agent_profile` field on the core
+        # `Validation` model, so the map override described for this entry lives
+        # in `args.agent_profile` -- the one place a `.icv` author's extra keys
+        # survive parsing.
+        override = entry.args.get("agent_profile")
+        if not isinstance(override, dict) or not override:
+            return self.agent_profile
+        updates = {field: override[field] for field in _PROFILE_OVERRIDE_FIELDS if field in override}
+        if not updates:
+            return self.agent_profile
+        return self.agent_profile.model_copy(update=updates)
+
+    def _resolve_feature_intent(self, target: str) -> IntentFile:
+        if target == "project":
+            return IntentFile(name="project", body=self.project.project_intent.body)
+        node = self.project.features.get(target)
+        if node is not None and node.intents:
+            return node.intents[0]
+        return IntentFile(name=target, body="")
+
+    def _project_root(self) -> str:
+        if self.project.intent_dir is not None:
+            return str(Path(self.project.intent_dir).parent)
+        return str(Path.cwd())
+
+    def _make_context(self, target: str, validation_name: str) -> ValidationContext:
+        response_dir = Path(self.val_response_dir) if self.val_response_dir is not None else Path(self.output_dir)
+        response_dir.mkdir(parents=True, exist_ok=True)
+        response_file_path = str(response_dir / _response_file_name(target, validation_name))
+        return ValidationContext(
+            project_intent=self.project.project_intent,
+            implementation=self.implementation,
+            feature_intent=self._resolve_feature_intent(target),
+            output_dir=self.output_dir,
+            response_file_path=response_file_path,
+            project_root=self._project_root(),
+        )
+
+    def _persist(self, target: str, generation_id: str, entry: Validation, response: ValidationResponse) -> None:
+        if self.storage_backend is None:
+            return
+        validation_result_id = self.storage_backend.save_validation_result(
+            build_result_id=self.build_result_id,
+            generation_id=generation_id,
+            target=target,
+            validation_file_version_id=None,
+            name=response.name,
+            type=response.type,
+            severity=response.severity,
+            status=response.status,
+            reason=response.reason,
+            duration_secs=response.duration_secs,
+        )
+        self.storage_backend.save_agent_response(
+            build_result_id=self.build_result_id,
+            validation_result_id=validation_result_id,
+            response_type=entry.type,
+            response_json=response.model_dump(),
+        )
+
+    @staticmethod
+    def _build_suite_result(
+        target: str, ordered: list[ValidationResponse], duration: float
+    ) -> ValidationSuiteResult:
+        passed_count = sum(1 for r in ordered if r.status == "pass")
+        error_count = sum(1 for r in ordered if r.status != "pass" and r.severity == Severity.ERROR.value)
+        warning_count = sum(1 for r in ordered if r.status != "pass" and r.severity == Severity.WARNING.value)
+        total = len(ordered)
+        summary = f"{passed_count}/{total} passed, {error_count} error(s), {warning_count} warning(s)"
+        return ValidationSuiteResult(
+            target=target,
+            results=ordered,
+            passed=error_count == 0,
+            summary=summary,
+            passed_count=passed_count,
+            error_count=error_count,
+            warning_count=warning_count,
+            duration_secs=duration,
+        )

@@ -1,161 +1,301 @@
-"""Output formatting for intentc CLI using Rich."""
+"""Terminal rendering for every CLI command: tables, plans, diffs, and the
+consistent color coding used across all of them (built/pass = green,
+failed/fail = red, outdated/warning = yellow, pending = dim).
+"""
 
 from __future__ import annotations
 
-import sys
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, Callable, Optional, Sequence, Union
 
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.table import Table
 
-if TYPE_CHECKING:
-    from intentc.build.agents import DifferencingResponse
-    from intentc.build.state import BuildResult, TargetStatus
-    from intentc.build.validations import ValidationSuiteResult
+from intentc.build.agents import DifferencingResponse
+from intentc.build.storage import BuildResult
+from intentc.build.validations import ValidationSuiteResult
+from intentc.core import Project, ProjectIssue
 
-console = Console()
-error_console = Console(stderr=True)
+LogFn = Callable[[str], None]
 
-
-def print_error(message: str) -> None:
-    """Print an error message to stderr."""
-    error_console.print(f"[bold red]Error:[/bold red] {message}")
-
-
-def render_init_summary(files: list[str]) -> None:
-    """Print a summary of files created during init."""
-    console.print("[bold green]Project initialized![/bold green]")
-    console.print()
-    console.print("Created files:")
-    for f in files:
-        console.print(f"  [dim]•[/dim] {f}")
+_STATUS_STYLES = {
+    "built": "green",
+    "pass": "green",
+    "success": "green",
+    "equivalent": "green",
+    "failed": "red",
+    "fail": "red",
+    "divergent": "red",
+    "outdated": "yellow",
+    "warning": "yellow",
+    "pending": "dim",
+}
 
 
-def render_build_results(results: list[BuildResult]) -> None:
-    """Print build results as a table."""
-    if not results:
-        console.print("[dim]No targets were built.[/dim]")
-        return
+def _status_value(status: Any) -> str:
+    return status.value if hasattr(status, "value") else str(status)
 
+
+def _style_for(status: Any) -> str:
+    return _STATUS_STYLES.get(_status_value(status).lower(), "")
+
+
+def _styled(status: Any) -> str:
+    value = _status_value(status)
+    style = _style_for(value)
+    return f"[{style}]{value}[/{style}]" if style else value
+
+
+def print_error(message: str, console: Optional[Console] = None) -> None:
+    """Print an error message to stderr in red. Callers compose the exact text."""
+    (console or Console(stderr=True, soft_wrap=True)).print(f"[red]{message}[/red]")
+
+
+def print_warning(message: str, console: Optional[Console] = None) -> None:
+    """Print a warning message to stderr in yellow."""
+    (console or Console(stderr=True, soft_wrap=True)).print(f"[yellow]{message}[/yellow]")
+
+
+def timestamped_log(console: Optional[Console] = None) -> LogFn:
+    """Build a single `HH:MM:SS`-prefixed log callback threaded through the
+    builder, validation suite, and agents for one command invocation."""
+    out = console or Console()
+
+    def _log(message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        out.print(f"[dim]{timestamp}[/dim] {message}")
+
+    return _log
+
+
+# ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
+
+
+def render_build_plan(results: Sequence[BuildResult], console: Optional[Console] = None) -> None:
+    out = console or Console()
+    out.print(f"Build plan (dry run) — {len(results)} target(s):")
+    for index, result in enumerate(results, start=1):
+        out.print(f"{index}. {result.target}  ({_status_value(result.status)})")
+
+
+def render_build_results(results: Sequence[BuildResult], console: Optional[Console] = None) -> None:
+    out = console or Console()
     table = Table(title="Build Results")
-    table.add_column("Target", style="cyan")
+    table.add_column("Target")
     table.add_column("Status")
+    table.add_column("Attempts", justify="right")
     table.add_column("Duration", justify="right")
     table.add_column("Summary")
 
-    for r in results:
-        status_style = "green" if r.status == "built" else "red"
-        duration = f"{r.total_duration_secs:.1f}s" if r.total_duration_secs else "-"
-        summary_parts = [s.summary for s in r.steps if s.summary] if r.steps else []
-        summary = "; ".join(summary_parts) if summary_parts else "-"
+    built = 0
+    failed = 0
+    total_duration = 0.0
+    for result in results:
+        status = _status_value(result.status)
+        if status == "built":
+            built += 1
+        elif status == "failed":
+            failed += 1
+        total_duration += result.total_duration_secs
+        summary = result.steps[-1].summary if result.steps else ""
         table.add_row(
-            r.target,
-            f"[{status_style}]{r.status}[/{status_style}]",
-            duration,
+            result.target,
+            _styled(result.status),
+            str(result.attempts),
+            f"{result.total_duration_secs:.1f}s",
             summary,
         )
-
-    console.print(table)
-
-
-def render_validation_results(results: list[ValidationSuiteResult]) -> None:
-    """Print validation results."""
-    total_passed = 0
-    total_errors = 0
-    total_warnings = 0
-
-    for suite_result in results:
-        console.print(f"\n[bold]{suite_result.target}[/bold]")
-        for vr in suite_result.results:
-            if vr.status == "pass":
-                console.print(f"  [green]✓[/green] {vr.name}: {vr.reason}")
-                total_passed += 1
-            else:
-                console.print(f"  [red]✗[/red] {vr.name}: {vr.reason}")
-                total_errors += 1
-
-    console.print()
-    console.print(
-        f"{total_passed}/{total_passed + total_errors} passed, "
-        f"{total_errors} error(s), {total_warnings} warning(s)"
-    )
+    out.print(table)
+    out.print(f"{built} built, {failed} failed in {total_duration:.1f}s")
 
 
-def render_status_table(
-    targets: list[tuple[str, TargetStatus]],
-    build_results: dict[str, BuildResult] | None = None,
-    outdated: list[str] | None = None,
+# ---------------------------------------------------------------------------
+# validate
+# ---------------------------------------------------------------------------
+
+
+def render_validation_results(result: ValidationSuiteResult, console: Optional[Console] = None) -> None:
+    out = console or Console()
+    for entry in result.results:
+        is_warning = entry.severity == "warning"
+        if entry.status == "pass":
+            icon, style = "✓", "green"
+        elif is_warning:
+            icon, style = "!", "yellow"
+        else:
+            icon, style = "✗", "red"
+
+        label = ""
+        if entry.status != "pass":
+            label = "  [yellow]warning[/yellow]" if is_warning else "  [red]error[/red]"
+        out.print(f"[{style}]{icon}[/{style}] {entry.name}  ({entry.type})  {entry.duration_secs:.1f}s{label}")
+        if entry.status != "pass" and entry.reason:
+            for line in entry.reason.splitlines():
+                out.print(f"    {line}")
+    out.print(result.summary)
+
+
+# ---------------------------------------------------------------------------
+# check
+# ---------------------------------------------------------------------------
+
+
+def render_check_results(
+    issues: Sequence[ProjectIssue], total_features: int, console: Optional[Console] = None
 ) -> None:
-    """Print status table for all tracked targets."""
-    table = Table(title="Build Status")
-    table.add_column("Target", style="cyan")
+    out = console or Console()
+    errors = [i for i in issues if i.level == "error"]
+    warnings = [i for i in issues if i.level == "warning"]
+    for issue in errors:
+        out.print(f"[red]{issue}[/red]")
+    for issue in warnings:
+        out.print(f"[yellow]{issue}[/yellow]")
+    out.print(f"{len(errors)} error(s), {len(warnings)} warning(s) across {total_features} feature(s)")
+
+
+def render_dag(project: Project, console: Optional[Console] = None) -> None:
+    out = console or Console()
+    out.print("Dependency graph:")
+    for feature in project.topological_order():
+        deps = project.features[feature].depends_on
+        deps_str = ", ".join(deps) if deps else "(none)"
+        out.print(f"  {feature} -> {deps_str}")
+
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+StatusRow = tuple[str, str, Sequence[str], int, str, int, str]
+
+
+def render_status_table(rows: Sequence[StatusRow], console: Optional[Console] = None) -> None:
+    out = console or Console()
+    table = Table(title="Status")
+    table.add_column("Target")
     table.add_column("Status")
-    table.add_column("Last Build", justify="right")
-    table.add_column("Generation ID")
-
-    if outdated is None:
-        outdated = []
-
-    build_results = build_results or {}
-
-    for target, status in targets:
-        status_str = status.value
-        if target in outdated:
-            status_str += " [yellow](outdated)[/yellow]"
-
-        result = build_results.get(target)
-        timestamp = result.timestamp if result else "-"
-        gen_id = result.generation_id[:8] if result and result.generation_id else "-"
-
-        status_style = {
-            "built": "green",
-            "pending": "dim",
-            "building": "yellow",
-            "failed": "red",
-            "outdated": "yellow",
-        }.get(status.value, "white")
-
+    table.add_column("Depends On")
+    table.add_column("Validations", justify="right")
+    table.add_column("Last Build")
+    table.add_column("Attempts", justify="right")
+    table.add_column("Generation")
+    for target, status, deps, validations, last_build, attempts, generation_id in rows:
         table.add_row(
             target,
-            f"[{status_style}]{status_str}[/{status_style}]",
-            timestamp or "-",
-            gen_id,
+            _styled(status),
+            ", ".join(deps) if deps else "-",
+            str(validations),
+            last_build or "-",
+            str(attempts),
+            generation_id[:8] if generation_id else "-",
         )
-
-    console.print(table)
-
-
-def render_diff(diff_text: str) -> None:
-    """Print a diff with syntax highlighting."""
-    if not diff_text:
-        console.print("[dim]No diff available.[/dim]")
-        return
-    syntax = Syntax(diff_text, "diff", theme="monokai")
-    console.print(syntax)
+    out.print(table)
 
 
-def render_compare_results(response: DifferencingResponse) -> None:
-    """Print differencing results: dimension table + summary."""
-    table = Table(title="Differencing Results")
-    table.add_column("Dimension", style="cyan")
+# ---------------------------------------------------------------------------
+# diff
+# ---------------------------------------------------------------------------
+
+
+def render_diff(
+    target: str,
+    commit_id: str,
+    timestamp: str,
+    files_created: Sequence[str],
+    files_modified: Sequence[str],
+    diff_text: str,
+    stat_only: bool = False,
+    console: Optional[Console] = None,
+) -> None:
+    out = console or Console()
+    out.print(
+        f"{target}  commit {commit_id}  {timestamp}  "
+        f"({len(files_created)} created, {len(files_modified)} modified)"
+    )
+    if files_created:
+        out.print("Created:")
+        for path in files_created:
+            out.print(f"  + {path}")
+    if files_modified:
+        out.print("Modified:")
+        for path in files_modified:
+            out.print(f"  ~ {path}")
+    if not stat_only:
+        out.print(Syntax(diff_text, "diff"))
+
+
+# ---------------------------------------------------------------------------
+# log
+# ---------------------------------------------------------------------------
+
+
+def render_build_log(
+    target: str,
+    history: Sequence[BuildResult],
+    validation_results: Sequence[dict[str, Any]],
+    console: Optional[Console] = None,
+) -> None:
+    out = console or Console()
+    table = Table(title=f"Build history: {target}")
+    table.add_column("Generation")
+    table.add_column("Status")
+    table.add_column("Attempts", justify="right")
+    table.add_column("Duration", justify="right")
+    table.add_column("Timestamp")
+    table.add_column("Commit")
+    for result in history:
+        table.add_row(
+            (result.generation_id or "-")[:8],
+            _styled(result.status),
+            str(result.attempts),
+            f"{result.total_duration_secs:.1f}s",
+            result.timestamp or "-",
+            (result.commit_id or "-")[:8] if result.commit_id else "-",
+        )
+    out.print(table)
+
+    if history:
+        latest = history[0]
+        out.print(f"Steps for generation {(latest.generation_id or '-')[:8]}:")
+        for step in latest.steps:
+            out.print(f"  {_styled(step.status)}  {step.phase}  {step.duration_secs:.1f}s  {step.summary}")
+
+    if validation_results:
+        out.print("Validation results:")
+        for entry in validation_results:
+            out.print(
+                f"  {_styled(entry.get('status', ''))}  {entry.get('name')}  {entry.get('reason', '')}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# init
+# ---------------------------------------------------------------------------
+
+
+def render_init_summary(paths: Sequence[Union[str, Path]], console: Optional[Console] = None) -> None:
+    out = console or Console()
+    out.print("Created:")
+    for path in paths:
+        out.print(f"  {path}")
+
+
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+
+def render_compare_results(response: DifferencingResponse, console: Optional[Console] = None) -> None:
+    out = console or Console()
+    table = Table(title="Compare")
+    table.add_column("Dimension")
     table.add_column("Status")
     table.add_column("Rationale")
-
-    for dim in response.dimensions:
-        status_style = "green" if dim.status == "pass" else "red"
-        table.add_row(
-            dim.name,
-            f"[{status_style}]{dim.status}[/{status_style}]",
-            dim.rationale,
-        )
-
-    console.print(table)
-    console.print()
-
-    status_style = "green" if response.status == "equivalent" else "red"
-    console.print(
-        f"[bold]Result:[/bold] [{status_style}]{response.status}[/{status_style}]"
-    )
-    console.print(f"[bold]Summary:[/bold] {response.summary}")
+    for dimension in response.dimensions:
+        table.add_row(dimension.name, _styled(dimension.status), dimension.rationale)
+    out.print(table)
+    out.print(f"{_styled(response.status)}: {response.summary}")

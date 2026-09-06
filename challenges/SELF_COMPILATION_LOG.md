@@ -82,3 +82,98 @@
 3. **Sandbox computation is a behavioral detail** — Missing `_apply_sandbox_paths` changes agent constraints at runtime, not just internal structure
 4. **Exception types matter for retry semantics** — Catching `AgentError` vs generic `Exception` changes which failures are retried
 5. **Exact code examples > prose descriptions** — Adding Python code snippets to intent files was the most effective way to eliminate ambiguity
+
+## Iteration 4 — full recompile with intent revisions (2026-09-05)
+
+**What was tried:** deleted `src/` entirely and regenerated every feature from
+`intent/` in DAG order (core/specifications → core/project → build/storage →
+build/agents → build/state → build/validations → build/builder →
+build/end_to_end → interfaces/cli → differencing → workflows/init). Nested
+`claude -p --dangerously-skip-permissions` invocations were blocked in the
+build environment, so the compiling agent was the Claude Code session itself,
+following the same build prompt and running each feature's validations before
+moving on.
+
+**Intent changes made first** (committed separately from the generated code):
+
+- Deterministic validation types `command_validation` and `file_exists`, with
+  parse-time checks of `.icv` files (missing rubric/command/paths, duplicate
+  names, unknown severity). The "run the tests" agent rubrics on every intentc
+  feature became command validations.
+- `intentc check` — a lint of the intent project (unknown deps, cycles,
+  `.icv` target/directory mismatches, missing validations, dangling file
+  references) that `build` runs first.
+- Staleness by content hash (`source_hash` on build results) and automatic
+  `refresh_outdated()` at the start of every build and `status`.
+- `intentc log`, dry-run plans, "next you can build" hints, warning-vs-error
+  rendering, and explicit exit-code rules for unknown targets, broken configs,
+  missing `intent/`, and missing git.
+- Prompt variables `{output_dir}`, `{dependencies}`, `{feature_name}`.
+- Fixed three rubrics that contradicted their intents (retry semantics,
+  prompt loading via importlib.resources).
+
+**What the recompile found:**
+
+- `check` immediately caught a duplicate validation name and three intents
+  whose `name` did not match their directory.
+- pytest's default `norecursedirs` includes `build`, so the previous
+  `src/intentc/build/` tests were never collected by `uv run pytest` (100
+  tests ran; ~250 existed). Fixed in `pyproject.toml` and specified in the
+  implementation intent.
+- The SQLite connection was shared by the validation thread pool without a
+  lock (`cannot start a transaction within a transaction`). Now locked and
+  specified.
+- `clean` restored *to* the checkpoint rather than to before it, and touched
+  the whole tree; it now restores `<sha>~1` scoped to the output directory.
+
+**Result:** 191 tests pass; every deterministic validation in `intent/` passes
+against the regenerated `src/`; the todo-app example builds end-to-end
+(build → validate → status → log → diff → stale rebuild → clean) with a
+CLI-provider agent.
+
+## Iteration 5 — hermetic recompile with Claude Code in auto permission mode (2026-09-05)
+
+**What was tried:** `./bootstrap.sh --skip-compare --inspect --yes` — a git
+worktree with `src/` deleted and history stripped to an orphan commit, built
+with `intentc build --force` using the real `claude` agent. The ClaudeAgent now
+defaults to `--permission-mode auto --permission-prompts none` instead of
+`--dangerously-skip-permissions` (`permission_mode: bypassPermissions` on the
+profile opts back in), which is what made the nested agent runnable in the
+build environment at all.
+
+**Result:** all 11 targets built and passed their validations in one run
+(about 85 minutes wall clock). One retry in total: `build/storage` failed its
+`storage-roundtrip` rubric because the test never exercised the
+`build_steps.log` column; the retry, prompted with that reason, fixed it. The
+intent now says explicitly how step log text is stored (`save_build_step`) and
+read back (`get_build_steps`).
+
+| target | attempts | time |
+|--------|----------|------|
+| core/specifications | 1 | 272s |
+| core/project | 1 | 393s |
+| build/agents | 1 | 342s |
+| build/storage | 2 | 120s (retry) |
+| build/state | 1 | ~470s |
+| build/validations | 1 | 551s |
+| build/builder | 1 | 724s |
+| build/end_to_end | 1 | 308s |
+| interfaces/cli | 1 | 662s |
+| differencing | 1 | 292s |
+| workflows/init | 1 | 728s |
+
+**What needed a hand after the build:** two tests written by early targets
+asserted that the differencing prompt/module was *absent* (it did not exist yet
+when `build/agents` and `interfaces/cli` were built). They broke once
+`differencing` landed. Both were removed and the build prompt now tells the
+agent not to test for the absence of features later intents will add.
+Otherwise the generated tree was accepted as-is: 241 tests pass, `intentc
+check` is clean, and the deterministic validations in `intent/` pass against it.
+
+A second underspecification surfaced when running the rebuilt `intentc check`
+on the repo itself: the spec never said what counts as a file reference, so the
+agent's extractor flagged `e.g`, `0.0` and `args.rubric` as missing files (72
+warnings). The rule is now written down in core/specifications (a path needs a
+separator and an extension or glob; layout descriptions under `intent/` and
+`.intentc/` are not existence-checked) and the generated extractor was patched
+to match. `intentc check` on the repo is clean again.

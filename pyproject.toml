@@ -23,6 +23,8 @@ packages = ["src/intentc"]
 [tool.pytest.ini_options]
 testpaths = ["src"]
 pythonpath = ["src"]
+# pytest's default norecursedirs includes "build", which would silently skip src/intentc/build/.
+norecursedirs = [".*", "*.egg", "dist", "node_modules", ".venv", "venv"]
 
 [dependency-groups]
 dev = [

@@ -1,5 +1,5 @@
 ---
-name: dag
+name: project
 version: 1
 depends_on: [core/specifications]
 ---
@@ -30,10 +30,10 @@ The project structure is below
 ## Module Layout
 
 This feature generates:
-- A project module — Project, FeatureNode, load_project, write_project, blank_project
+- A project module — Project, FeatureNode, ProjectIssue, load_project, write_project, blank_project, check_project
 - A test module — Tests (in a SEPARATE file from the core tests)
 
-The package init should also re-export: `FeatureNode`, `Project`, `load_project`, `write_project`, `blank_project`
+The package init should also re-export: `FeatureNode`, `Project`, `ProjectIssue`, `load_project`, `write_project`, `blank_project`, `check_project`
 
 ## FeatureNode
 
@@ -99,8 +99,55 @@ function write_project(project: Project, dest_dir: Path) -> Path:
     # Write a project to a new directory. Returns the dest_dir path.
 
 function blank_project(name: string) -> Project:
-    # Create a minimal starter project with project.ic and one starter feature.
+    # Create a minimal starter project with project.ic, a default implementation and one
+    # starter feature (`starter/starter.ic` + `starter/validation.icv` with one file_exists
+    # validation as a worked example). The bodies are short guides telling the user what
+    # to fill in and pointing at `intentc check` and `intentc build`.
+
+function check_project(project: Project) -> list of ProjectIssue:
+    # Deterministic lint of an already-loaded project. Never calls an agent, runs in
+    # milliseconds. Returns issues sorted by (path, level). See "Project Checks" below.
 ```
+
+## ProjectIssue
+
+```
+Type ProjectIssue:
+    level: string          # "error" or "warning"
+    path: path or null     # file the issue is about
+    feature: string        # feature path, or "" for project-level issues
+    message: string        # actionable description
+```
+
+String representation: `"<level>: <path>: <message>"` (path omitted when null).
+
+## Project Checks
+
+`load_project()` raises `ParseErrors` for anything that makes the project unusable. `check_project()` reports everything else. The split is:
+
+**Load-time errors (raise ParseErrors, accumulated across the whole project):**
+- `project.ic` missing, or any file failing to parse (see core/specifications)
+- a `depends_on` entry that names a feature that does not exist (after wildcard expansion). Message: `"unknown dependency '<dep>' (available: a, b, c)"` with `field: depends_on`
+- a feature that depends on itself
+- a dependency cycle. Message lists the features involved.
+- a wildcard pattern in `depends_on` that matches nothing
+
+**check_project() issues:**
+- error: a feature directory that contains a `.icv` file but no `.ic` file (validations with nothing to validate)
+- error: a `.icv` whose `target` names a feature that does not exist and is not `project`
+- warning: a `.icv` whose `target` differs from the directory it lives in (e.g. `target: models` inside `store/`)
+- warning: an intent whose `name` differs from the last segment of its feature path
+- warning: a feature with an empty body (nothing for the agent to build)
+- warning: a feature with no validations at all (the agent has nothing to be checked against)
+- warning: an `agent_validation` rubric shorter than 40 characters (too vague to judge)
+- warning: a referenced local file (from `file_references`) that does not exist relative to the intent file. References whose first path segment is `intent` or `.intentc` are skipped — intents routinely describe the project layout (`intent/project.ic`, `.intentc/config.yaml`) and those are descriptions, not supporting files
+- warning: `implementations/` is empty or missing (builds will have no implementation guidance)
+
+Every message says what to do about it (e.g. "add a validations.icv next to store.ic", "rename to `target: store`").
+
+## Feature Discovery
+
+A feature is any directory under `intent/` (excluding `implementations/` and `assertions/`) that contains at least one `.ic` file. Its path is the directory path relative to `intent/` using forward slashes. Files whose name starts with `.` or `_` are ignored. Supporting files of any other type are ignored by discovery but recorded via `file_references`.
 
 ## Wildcard Dependency Expansion
 

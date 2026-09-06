@@ -1,6 +1,22 @@
 target: build/storage
 version: 1
 validations:
+  - name: storage-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/build/storage -q"
+
+  - name: schema-upgrade-adds-columns
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify a test creates a database whose build_results table lacks the
+        source_hash and attempts columns, then opens it with SQLiteBackend and
+        confirms both columns exist and existing rows are preserved.
+
   - name: storage-backend-interface
     type: agent_validation
     severity: error
@@ -30,7 +46,8 @@ validations:
         Verify tests demonstrate a full storage roundtrip:
         1. Create a generation
         2. Record an intent file version
-        3. Save a build result with steps (including log text)
+        3. Save a build result with steps, then attach log text to a step via
+           save_build_step and read it back with get_build_steps
         4. Save an agent response
         5. Save validation results
         6. Log generation events

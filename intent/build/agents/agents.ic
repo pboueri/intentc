@@ -1,5 +1,5 @@
 ---
-name: agent
+name: agents
 version: 1
 depends_on:
     - core/*
@@ -28,7 +28,7 @@ All methods follow the naming conventions specified in the implementation file:
 ```
 Interface Agent:
     build(ctx: BuildContext) -> BuildResponse
-    validate(ctx: BuildContext, validation: Validation) -> ValidationResponse
+    validate(ctx: BuildContext, validation: Validation) -> ValidationResponse   # `validation` is a single Validation entry; `{validation}` in the template renders only it
     difference(ctx: DifferencingContext) -> DifferencingResponse
     plan(ctx: BuildContext) -> void
     get_name() -> string
@@ -37,7 +37,7 @@ Interface Agent:
 
 ### Sandboxed Execution
 
-Agents must run non-interactively during builds, validations, and differencing. They should never prompt for confirmation or approval. All commands and network access are fully allowed (equivalent to `--dangerously-skip-permissions`), but filesystem access is scoped:
+Agents must run non-interactively during builds, validations, and differencing. They must never block waiting for a human to approve something. The **default permission mode is `auto`**: Claude Code's auto mode, where a classifier approves routine actions and denies risky ones, with `--permission-prompts none` so anything that would otherwise prompt is denied automatically instead of hanging the build. Bypassing permissions entirely (`--dangerously-skip-permissions`) is opt-in via `permission_mode: bypassPermissions` on the profile, never the default. Filesystem access is additionally scoped:
 
 - **Write access**: only the output directory.
 - **Read access**: only the intent files for the current target and all of its ancestors in the DAG (plus `project.ic` and the `implementations/` directory), and the output directory.
@@ -56,7 +56,7 @@ Plan is the exception to permissionless execution. When the agent supports it, P
 
 The system needs structured data back from agents after builds and validations. Since agents are CLI tools that may not support structured output natively, the canonical mechanism is a **response file**: a known path the system provides to the agent via the BuildContext and the prompt template. The agent writes structured JSON to this path before exiting. The system reads the file after the agent process terminates.
 
-If the response file contains invalid JSON, the invocation is treated as a failure with a generic error message. 
+If the response file contains invalid JSON, the invocation is treated as a failure (`AgentError`) whose message includes the file path and the JSON error. If the file is missing after a **build**, the ClaudeAgent synthesizes a success `BuildResponse` from the files present in the output directory (Claude Code sometimes finishes without writing the file) and logs that it did so; for validation and differencing a missing file is an `AgentError`. Response models ignore unknown keys.
 
 For providers that support structured output natively (e.g., Claude Code's `--output-format json`), the provider-specific implementation may parse stdout instead, but the data schema remains the same.
 
@@ -89,6 +89,7 @@ The validation system is defined in [build/validations](../validations/validatio
 - `name` (string) — the validation name
 - `status` (string) — `"pass"` or `"fail"`
 - `reason` (string) — explanation of the result
+- `severity` (string, default `"error"`), `type` (string, default `"agent_validation"`), `duration_secs` (float, default 0.0) — not written by the agent; stamped by the validation suite after the fact. Unknown extra keys in the agent's JSON are ignored rather than rejected.
 
 ### DifferencingResponse
 
@@ -127,6 +128,7 @@ Type BuildContext:
     response_file_path: string                     # where to write the structured response
     previous_errors: list of string                # errors from prior attempts in this retry cycle, default empty
     seed_prompt: string                            # user-provided seed prompt for planning mode, default empty
+    feature_path: string                           # the target's feature path (e.g. "build/agents"), default empty
 ```
 
 ## CLIAgent
@@ -135,7 +137,15 @@ Generic base that wraps any command-line tool. Constructs a prompt from BuildCon
 
 ## ClaudeAgent
 
-Specialization for Claude Code. Non-interactive invocations use the `claude` CLI with `-p` (prompt), `--verbose`, `--output-format stream-json`, and `--dangerously-skip-permissions`. If `profile.model_id` is set, `--model` is also passed. If `profile.effort` is set, `--effort` is also passed (valid values: `"low"`, `"medium"`, `"high"`, `"max"`). All `profile.cli_args` are appended.
+Specialization for Claude Code. Non-interactive invocations use the `claude` CLI with `-p` (prompt), `--verbose`, `--output-format stream-json`, and the permission flags derived from `profile.permission_mode`:
+
+| `permission_mode` | flags passed |
+|-------------------|--------------|
+| `auto` (default) | `--permission-mode auto --permission-prompts none` |
+| `acceptEdits`, `dontAsk`, `plan` | `--permission-mode <mode> --permission-prompts none` |
+| `bypassPermissions` | `--dangerously-skip-permissions` |
+
+If `profile.model_id` is set, `--model` is also passed. If `profile.effort` is set, `--effort` is also passed (valid values: `"low"`, `"medium"`, `"high"`, `"max"`). All `profile.cli_args` are appended. An unknown `permission_mode` raises `AgentError` before anything is launched.
 
 When the profile has `sandbox_write_paths` or `sandbox_read_paths` set, the ClaudeAgent writes a temporary `.claude/settings.local.json` in the CWD before each non-interactive invocation. This enables Claude Code's built-in OS-level sandbox to enforce filesystem boundaries while keeping all commands and network access fully allowed. The settings file is cleaned up after each invocation.
 
@@ -157,7 +167,7 @@ The `stream-json` format emits one JSON object per line. The relevant event type
 
 To extract assistant text, parse events where `event.type == "assistant"`, then iterate over `event.message.content` (NOT `event.content`). Content blocks with `block.type == "text"` contain the assistant's text in `block.text`. Forward these through the `log` callback. Skip events that fail JSON parsing (non-JSON debug lines may appear).
 
-For Plan mode, ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode, passing `--model` if set, all `cli_args`, and the prompt as a positional argument.
+For Plan mode (and interactive init), ClaudeAgent launches Claude Code without `-p` to enter interactive REPL mode, passing `--model` if set, `--permission-mode <mode>` (no `--permission-prompts none` — the user is present to answer), all `cli_args`, and the prompt as a positional argument.
 
 ## create_from_profile(profile: AgentProfile, log: LogFn | None = None) -> Agent
 
@@ -186,6 +196,7 @@ Type AgentProfile:
     retries: integer                               # retries on error, default 3
     model_id: string or null                       # provider-specific model identifier, optional
     effort: string or null                         # provider-specific effort level, optional (e.g. "low", "medium", "high", "max" for Claude)
+    permission_mode: string                        # Claude permission mode, default "auto"; "bypassPermissions" opts into --dangerously-skip-permissions
     prompt_templates: PromptTemplates or null       # template overrides, optional
     sandbox_write_paths: list of string             # default empty
     sandbox_read_paths: list of string              # default empty
@@ -229,12 +240,15 @@ The prompt files are stored in the package at:
 
 The canonical source for prompt templates is `intent/build/agents/prompts/` and `intent/differencing/prompts/` in the intentc repository. During a build, these are copied into the package source tree so they are included in the installed package.
 
-Templates reference variables from BuildContext or DifferencingContext:
-- `{project}` — the project-level intent
-- `{implementation}` — the implementation-level intent
-- `{feature}` — the target feature intent (build, validate, plan)
-- `{validations}` — all validation text for the target (build and plan)
-- `{validation}` — the single validation being evaluated (validate)
+Templates reference variables from BuildContext or DifferencingContext. Rendering uses `str.format` on the template, so literal braces in templates are doubled (`{{`/`}}`). Every variable below is always supplied (empty string when not applicable) so a template never fails to render because of a missing key:
+- `{project}` — the project-level intent body
+- `{implementation}` — the implementation-level intent body
+- `{feature}` — the target feature intent body (build, validate, plan)
+- `{feature_name}` — the target feature path (e.g. `build/agents`)
+- `{output_dir}` — the output directory the agent must write into (build, validate, plan)
+- `{dependencies}` — bulleted list of the target's dependency feature paths, or `(none)`
+- `{validations}` — all validation text for the target (build and plan), rendered as readable YAML-like text: one block per validation with its name, type, severity and args (rubric / command / paths), NOT raw JSON
+- `{validation}` — the single validation being evaluated (validate), rendered the same way
 - `{output_dir_a}` — reference output directory (difference)
 - `{output_dir_b}` — candidate output directory (difference)
 - `{response_file}` — path to the response file the agent must write to

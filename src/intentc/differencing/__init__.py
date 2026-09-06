@@ -1,5 +1,5 @@
-"""Differencing package for intentc."""
+"""Differencing: evaluate functional equivalence between two output directories."""
 
-from intentc.differencing.differencing import load_differencing_prompt, run_differencing
+from intentc.differencing.differencing import run_differencing
 
-__all__ = ["load_differencing_prompt", "run_differencing"]
+__all__ = ["run_differencing"]

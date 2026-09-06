@@ -27,9 +27,9 @@ intentc init [name] [--no-interactive] [-P <prompt>]
 2. Resolve the agent profile from built-in defaults (no config file exists yet during init).
 3. Generate a blank project via `blank_project(name)` and write it via `write_project()` so the agent has a valid `intent/` directory to work in.
 4. Launch the agent in interactive mode with the init prompt template, passing the project name. The agent's working directory is the project root, and it has write access to `intent/`.
-5. **Validate the result** — call `load_project()` on the `intent/` directory. If it raises `ParseErrors`, print the errors to stderr and exit with code 1. This ensures the agent produced a well-formed project with valid frontmatter, resolvable `depends_on` references, and an acyclic dependency graph.
+5. **Validate the result** — call `load_project()` on the `intent/` directory. If it raises `ParseErrors`, print the errors to stderr and exit with code 1. This ensures the agent produced a well-formed project with valid frontmatter, resolvable `depends_on` references, and an acyclic dependency graph. Then run `check_project()` and print any issues (warnings do not fail init; errors exit 1).
 6. Write `.intentc/config.yaml` via `save_config()`.
-7. Print a summary of all created files via `render_init_summary()`.
+7. Print a summary of all created files via `render_init_summary()`, followed by the next steps: `intentc check`, then `intentc build`.
 
 **One-shot flow (`-P` flag):**
 1. If `intent/project.ic` already exists, abort with exit code 2.

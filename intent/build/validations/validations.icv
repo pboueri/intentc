@@ -1,6 +1,13 @@
 target: build/validations
 version: 1
 validations:
+  - name: validations-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/build/tests/test_validations.py -q"
+
   - name: validation-suite-lifecycle
     type: agent_validation
     severity: error
@@ -8,12 +15,25 @@ validations:
       rubric: |
         Verify that the validations module implements the ValidationSuite with:
         1. Construction from a Project, AgentProfile, output directory, and runner registry
-        2. Agent is created internally via CreateFromProfile, not passed in
-        3. ValidateFeature loads .icv files for a feature, runs each entry through the registry, and returns a ValidationSuiteResult
-        4. ValidateProject runs all features in topological order plus project-level assertions
-        5. ValidateEntries accepts an arbitrary list of entries for a target
-        6. ValidationSuiteResult correctly rolls up passed/failed based on severity (error blocks, warning does not)
+        2. Agent is created internally via create_from_profile, not passed in
+        3. validate_feature loads .icv files for a feature, runs each entry through the registry, and returns a ValidationSuiteResult
+        4. validate_project runs all features in topological order plus project-level assertions
+        5. validate_entries accepts an arbitrary list of entries for a target
+        6. ValidationSuiteResult rolls up passed/error_count/warning_count based on severity (error blocks, warning does not) and stamps severity/type/duration on each ValidationResponse
         Tests should use a MockAgent and verify the full lifecycle end-to-end.
+
+  - name: deterministic-runners
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate: a command_validation with `command: "exit 0"` passes
+        and with `exit 3` fails with the exit code in the reason; `{output_dir}` is
+        substituted in the command; `cwd: "."` runs in the project root; a
+        file_exists validation passes when every glob matches and its failure reason
+        names the unmatched entries; when an error-severity deterministic check fails,
+        agent validations in the same suite run are skipped and the mock agent is not
+        called.
 
   - name: runner-registry-extensibility
     type: agent_validation
@@ -21,7 +41,7 @@ validations:
     args:
       rubric: |
         Verify that the runner registry works correctly:
-        1. AgentValidationRunner is registered by default for type "agent_validation"
+        1. AgentValidationRunner, CommandValidationRunner and FileExistsRunner are registered by default
         2. A custom runner can be registered and is dispatched to when a validation entry has a matching type
         3. A validation entry with an unknown type fails with a descriptive error indicating the unregistered type
         Tests should register a mock runner, run a validation entry with that type, and confirm it was invoked.

@@ -1,135 +1,188 @@
-"""State management for intentc builds: StateManager and VersionControl."""
+"""Per-target build state, backed by a `StorageBackend`, and version control for
+checkpointing generated output.
+
+`TargetStatus`, `BuildStep`, and `BuildResult` are defined in
+`intentc.build.storage` (storage is upstream of state) and re-exported here
+unchanged.
+"""
 
 from __future__ import annotations
 
-import abc
+import re
+import secrets
 import subprocess
+from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
-from intentc.build.storage.backend import BuildResult, StorageBackend, TargetStatus
-from intentc.build.storage.sqlite_backend import SQLiteBackend
+from intentc.build.storage import (
+    BuildResult,
+    BuildStep,
+    SQLiteBackend,
+    StorageBackend,
+    TargetStatus,
+)
 
+if TYPE_CHECKING:
+    from intentc.core import Project
 
-class VersionControl(abc.ABC):
-    """Abstract interface for checkpointing file changes."""
-
-    @abc.abstractmethod
-    def checkpoint(self, message: str) -> str:
-        """Snapshot current changes, return a unique commit/checkpoint ID."""
-
-    @abc.abstractmethod
-    def diff(self, from_id: str, to_id: str) -> str:
-        """Return the diff between two checkpoints."""
-
-    @abc.abstractmethod
-    def restore(self, commit_id: str) -> None:
-        """Restore the output directory to the state at a given checkpoint."""
-
-    @abc.abstractmethod
-    def log(self, target: str | None = None) -> list[str]:
-        """List checkpoint IDs, optionally filtered by target."""
+_SLASH_RE = re.compile(r"[\\/]")
+_EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
-class GitVersionControl(VersionControl):
-    """Concrete VersionControl backed by git."""
+def response_file_name(target: str) -> str:
+    """UUID-based response file name for a target: slashes -> underscores, plus
+    an 8-char random hex suffix."""
+    safe_target = _SLASH_RE.sub("_", target)
+    return f"{safe_target}-{secrets.token_hex(4)}.json"
 
-    def __init__(self, repo_dir: Path) -> None:
-        self._repo_dir = repo_dir
 
-    def _run(self, *args: str) -> str:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=str(self._repo_dir),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
-
-    def checkpoint(self, message: str) -> str:
-        self._run("add", "-A")
-        self._run("commit", "-m", message, "--allow-empty")
-        return self._run("rev-parse", "HEAD")
-
-    def diff(self, from_id: str, to_id: str) -> str:
-        return self._run("diff", from_id, to_id)
-
-    def restore(self, commit_id: str) -> None:
-        self._run("checkout", commit_id, "--", ".")
-
-    def log(self, target: str | None = None) -> list[str]:
-        if target:
-            output = self._run("log", "--format=%H", "--grep", target)
-        else:
-            output = self._run("log", "--format=%H")
-        if not output:
-            return []
-        return output.splitlines()
+# ---------------------------------------------------------------------------
+# StateManager
+# ---------------------------------------------------------------------------
 
 
 class StateManager:
-    """Manages per-target state for a given output directory.
-
-    Delegates all persistence to a StorageBackend.
-    """
+    """Manages per-target build state for a given output directory. Delegates
+    all persistence to a `StorageBackend`."""
 
     def __init__(
         self,
-        base_dir: Path,
+        base_dir: "str | Path",
         output_dir: str,
-        backend: StorageBackend | None = None,
+        backend: Optional[StorageBackend] = None,
     ) -> None:
-        self._base_dir = base_dir
-        self._output_dir = output_dir
-        self._backend = backend or SQLiteBackend(base_dir, output_dir)
-
-        # Response file directories
-        resp_base = base_dir / ".intentc" / "state" / output_dir / "responses"
-        self._build_response_dir = resp_base / "build"
-        self._val_response_dir = resp_base / "val"
-        self._build_response_dir.mkdir(parents=True, exist_ok=True)
-        self._val_response_dir.mkdir(parents=True, exist_ok=True)
+        self.base_dir = Path(base_dir)
+        self.output_dir = output_dir
+        self.backend = backend if backend is not None else SQLiteBackend(self.base_dir, output_dir)
 
     @property
     def build_response_dir(self) -> Path:
-        return self._build_response_dir
+        path = self.base_dir / ".intentc" / "state" / self.output_dir / "responses" / "build"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @property
     def val_response_dir(self) -> Path:
-        return self._val_response_dir
-
-    @property
-    def backend(self) -> StorageBackend:
-        return self._backend
+        path = self.base_dir / ".intentc" / "state" / self.output_dir / "responses" / "val"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def get_status(self, target: str) -> TargetStatus:
-        return self._backend.get_status(target)
+        return self.backend.get_status(target)
 
-    def get_build_result(self, target: str) -> BuildResult | None:
-        return self._backend.get_build_result(target)
+    def get_build_result(self, target: str) -> Optional[BuildResult]:
+        return self.backend.get_build_result(target)
 
-    def save_build_result(self, target: str, result: BuildResult) -> None:
-        self._backend.save_build_result(target, result)
+    def get_build_history(self, target: str, limit: int = 50) -> list[BuildResult]:
+        return self.backend.get_build_history(target, limit=limit)
+
+    def save_build_result(
+        self, target: str, result: BuildResult, git_diff: Optional[str] = None
+    ) -> int:
+        return self.backend.save_build_result(target, result, git_diff=git_diff)
 
     def set_status(self, target: str, status: TargetStatus) -> None:
-        self._backend.set_status(target, status)
+        self.backend.set_status(target, status)
 
-    def mark_dependents_outdated(self, target: str, project: object) -> None:
-        """Walk the DAG and set all descendants to outdated.
-
-        Args:
-            target: The feature path whose dependents should be marked.
-            project: A Project instance with a descendants() method.
-        """
-        desc = project.descendants(target)  # type: ignore[union-attr]
-        for dep in desc:
-            self._backend.set_status(dep, TargetStatus.OUTDATED)
+    def mark_dependents_outdated(self, target: str, project: "Project") -> None:
+        for descendant in project.descendants(target):
+            self.backend.set_status(descendant, TargetStatus.OUTDATED)
 
     def reset(self, target: str) -> None:
-        self._backend.reset(target)
+        self.backend.reset(target)
 
     def reset_all(self) -> None:
-        self._backend.reset_all()
+        self.backend.reset_all()
 
     def list_targets(self) -> list[tuple[str, TargetStatus]]:
-        return self._backend.list_targets()
+        return self.backend.list_targets()
+
+
+# ---------------------------------------------------------------------------
+# VersionControl
+# ---------------------------------------------------------------------------
+
+
+class VersionControl(ABC):
+    """Abstract interface for checkpointing file changes."""
+
+    @abstractmethod
+    def checkpoint(self, message: str) -> str: ...
+
+    @abstractmethod
+    def diff(self, from_id: str, to_id: str) -> str: ...
+
+    @abstractmethod
+    def restore(self, commit_id: str) -> None: ...
+
+    @abstractmethod
+    def log(self, target: Optional[str] = None) -> list[str]: ...
+
+    @abstractmethod
+    def has_changes(self) -> bool: ...
+
+
+class GitVersionControl(VersionControl):
+    """`VersionControl` backed by git. Shells out via `subprocess` with argument
+    lists (never a shell string)."""
+
+    def __init__(self, repo_dir: "str | Path", output_dir: Optional[str] = None) -> None:
+        self.repo_dir = Path(repo_dir)
+        self.output_dir = output_dir
+
+    def _run(self, args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=self.repo_dir,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"failed to run git {' '.join(args)}: {exc}") from exc
+        if result.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        return result.stdout
+
+    def _resolves(self, ref: str) -> bool:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            cwd=self.repo_dir,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def _pathspec(self) -> str:
+        return self.output_dir if self.output_dir else "."
+
+    def checkpoint(self, message: str) -> str:
+        self._run(["add", "-A"])
+        self._run(["commit", "--allow-empty", "-m", message])
+        return self._run(["rev-parse", "HEAD"]).strip()
+
+    def diff(self, from_id: str, to_id: str) -> str:
+        # A root commit has no parent, so "<sha>~1" doesn't resolve; diff
+        # against the empty tree instead of raising.
+        resolved_from_id = from_id if self._resolves(from_id) else _EMPTY_TREE_SHA
+        return self._run(["diff", f"{resolved_from_id}..{to_id}"])
+
+    def restore(self, commit_id: str) -> None:
+        pathspec = self._pathspec()
+        self._run(["restore", f"--source={commit_id}", "--staged", "--worktree", "--", pathspec])
+        self._run(["clean", "-fdq", "--", pathspec])
+
+    def log(self, target: Optional[str] = None) -> list[str]:
+        args = ["log", "--format=%H"]
+        if target:
+            args += ["--grep", target]
+        try:
+            output = self._run(args)
+        except RuntimeError:
+            return []
+        return [line for line in output.splitlines() if line]
+
+    def has_changes(self) -> bool:
+        status = self._run(["status", "--porcelain", "--", self._pathspec()])
+        return bool(status.strip())

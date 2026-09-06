@@ -1,69 +1,94 @@
-"""Configuration loading and saving for intentc CLI."""
+"""Project configuration: loading and saving `.intentc/config.yaml`.
+
+The config file lets the CLI resolve a default agent profile and output
+directory without requiring flags on every invocation. Missing config falls
+back to hardcoded defaults; a malformed config is a hard error (`ConfigError`)
+so a broken build never happens silently with the wrong agent.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Union
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from intentc.build.agents import AgentProfile
 
+_CONFIG_RELATIVE_PATH = Path(".intentc") / "config.yaml"
+
+
+class ConfigError(ValueError):
+    """Raised when `.intentc/config.yaml` exists but cannot be parsed."""
+
+
+def _default_profile() -> AgentProfile:
+    return AgentProfile(
+        name="default",
+        provider="claude",
+        timeout=3600,
+        retries=3,
+        permission_mode="auto",
+    )
+
 
 class Config(BaseModel):
-    """CLI configuration loaded from .intentc/config.yaml."""
+    """CLI-level configuration loaded from `.intentc/config.yaml`."""
 
-    default_profile: AgentProfile = Field(
-        default_factory=lambda: AgentProfile(
-            name="default",
-            provider="claude",
-            timeout=3600,
-            retries=3,
-        )
-    )
+    model_config = ConfigDict(extra="ignore")
+
+    default_profile: AgentProfile = Field(default_factory=_default_profile)
     default_output_dir: str = "src"
 
 
-def load_config(project_root: Path) -> Config:
-    """Load config from .intentc/config.yaml, returning defaults if missing."""
-    config_path = project_root / ".intentc" / "config.yaml"
-    if not config_path.exists():
+def load_config(project_root: Union[str, Path]) -> Config:
+    """Read `.intentc/config.yaml` under `project_root`.
+
+    Returns hardcoded defaults when the file is missing. Raises `ConfigError`
+    (naming the file and the problem) when it exists but is malformed.
+    """
+    config_path = Path(project_root) / _CONFIG_RELATIVE_PATH
+    if not config_path.is_file():
         return Config()
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except (yaml.YAMLError, OSError):
+        raw_text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"{config_path}: could not read config file: {exc}") from exc
+
+    try:
+        data = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{config_path}: invalid YAML: {exc}") from exc
+
+    if data is None:
         return Config()
 
-    profile_data = data.get("default_profile")
-    if profile_data and isinstance(profile_data, dict):
-        profile = AgentProfile(**profile_data)
-    else:
-        profile = Config().default_profile
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{config_path}: expected a mapping at the top level, got {type(data).__name__}"
+        )
 
-    output_dir = data.get("default_output_dir", "src")
+    if "default_profile" in data and not isinstance(data["default_profile"], dict):
+        raise ConfigError(
+            f"{config_path}: 'default_profile' must be a mapping, "
+            f"got {type(data['default_profile']).__name__}"
+        )
 
-    return Config(default_profile=profile, default_output_dir=output_dir)
+    try:
+        return Config(**data)
+    except ValidationError as exc:
+        raise ConfigError(f"{config_path}: {exc}") from exc
 
 
-def save_config(config: Config, project_root: Path) -> Path:
-    """Write config to .intentc/config.yaml. Returns the path written."""
-    config_dir = project_root / ".intentc"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.yaml"
+def save_config(config: Config, project_root: Union[str, Path]) -> Path:
+    """Write `config` to `.intentc/config.yaml` under `project_root`.
 
-    data = {
-        "default_profile": {
-            "name": config.default_profile.name,
-            "provider": config.default_profile.provider,
-            "timeout": config.default_profile.timeout,
-            "retries": config.default_profile.retries,
-        },
-        "default_output_dir": config.default_output_dir,
-    }
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-
+    Parameter order is config first, project_root second. Returns the path written.
+    """
+    config_path = Path(project_root) / _CONFIG_RELATIVE_PATH
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    data = config.model_dump(mode="json", exclude_none=True)
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return config_path

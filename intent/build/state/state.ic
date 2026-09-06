@@ -21,43 +21,13 @@ This feature generates:
 - State management implementation module
 - Tests module
 
-## TargetStatus
+## TargetStatus, BuildStep, BuildResult
 
-A string-valued enum with UPPERCASE member names and lowercase string values:
+These three types are **defined in the storage backend module** (storage is upstream of state — see [build/storage](../storage/storage.ic) for the exact field list) and re-exported from the state module and the build package. Summary:
 
-```
-Enum TargetStatus (string-valued):
-    PENDING = "pending"
-    BUILT = "built"
-    FAILED = "failed"
-    OUTDATED = "outdated"
-```
-
-- `PENDING` — never built
-- `BUILT` — successfully built
-- `FAILED` — last build failed
-- `OUTDATED` — built, but a dependency has changed since
-
-## BuildStep
-
-A single phase within a build. Captures what happened and how long it took.
-
-- `Phase` (string) — name of the phase (e.g. "resolve_deps", "build", "validate")
-- `Status` (string) — "success" or "failure"
-- `Duration` (duration) — wall-clock time as a duration value
-- `Summary` (string) — human-readable description of what happened
-
-## BuildResult
-
-The outcome of building a single target.
-
-- `Target` (string) — feature path
-- `GenerationID` (string) — unique identifier for this build run
-- `Status` (TargetStatus) — resulting status
-- `Steps` (list of BuildStep, default empty list) — ordered phases
-- `CommitID` (string, default empty) — checkpoint ID from the VCS capturing all changes
-- `TotalDuration` (duration, default zero) — sum of step durations as a duration value
-- `Timestamp` (timestamp) — when the build completed
+- `TargetStatus` — string-valued enum: `PENDING = "pending"` (never built), `BUILT = "built"`, `FAILED = "failed"` (last build failed), `OUTDATED = "outdated"` (built, but the target's own source files or a dependency changed since).
+- `BuildStep` — one phase of a build: `phase`, `status` (`"success"`/`"failure"`), `duration_secs`, `summary`.
+- `BuildResult` — the outcome of building one target: `target`, `generation_id`, `status`, `steps`, `commit_id`, `total_duration_secs`, `timestamp` (ISO 8601), `source_hash`, `files_created`, `files_modified`, `attempts`.
 
 ## StateManager
 
@@ -79,7 +49,8 @@ The StateManager also exposes `build_response_dir` and `val_response_dir` as rea
 
 - `get_status(target) -> TargetStatus` — returns current status; `pending` if unknown
 - `get_build_result(target) -> BuildResult or None` — last build result, None if never built
-- `save_build_result(target, result)` — persist result, update status
+- `get_build_history(target, limit=50) -> list of BuildResult` — all results, newest first
+- `save_build_result(target, result, git_diff=None) -> integer` — persist result (with steps, source hash, file lists), update status, return the build_result id
 - `set_status(target, status)` — override status (e.g. mark outdated)
 - `mark_dependents_outdated(target, project)` — walk the DAG and set all descendants to `outdated`
 - `reset(target)` — clear all state for a target
@@ -95,9 +66,11 @@ An abstract interface for checkpointing file changes. Implementations produce a 
 - `restore(commit_id)` — restore the output directory to the state at a given checkpoint
 - `log(target?) -> list of commit_ids` — list checkpoints, optionally filtered by target. When target is provided, use `git log --format=%H --grep {target}` to filter by commit message containing the target name.
 
+- `has_changes() -> boolean` — true when the working tree has uncommitted changes (used by the builder to detect that the agent produced nothing).
+
 ### GitVersionControl
 
-Concrete implementation backed by git. Uses commits on a build-managed branch. The checkpoint ID is the git SHA.
+Concrete implementation backed by git (`subprocess`, command passed as an argument list). The checkpoint ID is the git SHA. `checkpoint` stages everything (`git add -A`) and commits with `--allow-empty` so a target that legitimately produced no file change still gets a checkpoint. `diff` of `<sha>~1..<sha>` on a root commit returns the diff against the empty tree instead of raising. `GitVersionControl(repo_dir, output_dir=None)` — when `output_dir` is given, `restore` and `has_changes` are scoped to that directory so a clean never touches the user's intent files or other uncommitted work. `restore(commit_id)` runs `git restore --source=<commit_id> --staged --worktree -- <output_dir or .>` followed by `git clean -fdq -- <pathspec>` so files that did not exist at that commit are removed too; `<sha>~1` of a root commit resolves to the empty tree. Git errors are raised as `RuntimeError` with the git stderr included, never as raw `CalledProcessError` tracebacks.
 
 ## Testing
 

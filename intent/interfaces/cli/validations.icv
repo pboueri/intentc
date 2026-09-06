@@ -1,6 +1,36 @@
 target: interfaces/cli
 version: 1
 validations:
+  - name: cli-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/cli -q"
+
+  - name: cli-help-runs
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc --help"
+      expect_output: "check"
+
+  - name: cli-check-self
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc check"
+
+  - name: cli-unknown-target-is-usage-error
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run intentc build does/not/exist; test $? -eq 2"
+      expect_output: "Unknown feature"
+
   - name: cli-commands-defined
     type: agent_validation
     severity: error
@@ -8,20 +38,26 @@ validations:
       rubric: |
         Verify the CLI module exists within the output directory and defines a CLI application
         with an entry point registered in the project's package manifest.
-        Verify all commands are defined: init, build, validate, clean, plan, status, diff, compare.
+        Verify all commands are defined: init, check, build, validate, clean, plan, status, diff, log, compare.
         Each command should:
         - Wire its own dependencies at the call site (no globals or shared state)
         - Delegate business logic to the underlying modules (builder, state, project)
         - Accept the flags and arguments specified in the intent (e.g. build takes
           --force/-f, --dry-run/-n, --output-dir/-o, --profile/-p, --implementation/-i)
         - Use correct exit codes: 0 success, 1 build/validation failure, 2 usage error
-        Verify load_config reads .intentc/config.yaml and returns sensible defaults
-        when the file is missing.
+        - Never print a Python traceback for ParseErrors, unknown targets, unknown
+          implementations, a missing intent/ directory, or a malformed config
+        Verify load_config reads .intentc/config.yaml, returns sensible defaults when the
+        file is missing, and raises ConfigError on a malformed file.
 
-  - name: cli-tests-pass
+  - name: cli-build-ux
     type: agent_validation
     severity: error
     args:
       rubric: |
-        Run the test suite for the CLI module and verify all tests pass with exit code 0.
-        Use the implementation's test runner (e.g., pytest for Python, go test for Go).
+        Verify tests (using a mocked builder or agent) show that `intentc build`:
+        refuses to run when check_project reports errors (exit 2); renders a
+        dry run as a numbered plan and not a results table; prints "Next you can
+        build:" after a successful build; prints the failing step summary and a
+        retry hint after a failed build; and that `intentc validate` renders
+        warning failures distinctly from errors and exits 0 when only warnings failed.

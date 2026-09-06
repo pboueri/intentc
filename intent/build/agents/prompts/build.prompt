@@ -1,18 +1,35 @@
 ### Context
-You are working in the context of the following project {project} with the following implementation approach {implementation}
+You are working in the context of the following project:
 
+{project}
+
+with the following implementation approach:
+
+{implementation}
+
+### Target
+Feature: `{feature_name}`
+Output directory (write ALL generated files under this directory, relative to the current working directory): `{output_dir}`
+Dependencies already built and available in the output directory:
+{dependencies}
 
 ### INTENT
-You have been asked to do the following {feature}
+You have been asked to do the following:
 
+{feature}
 
 ### Validation
-Which should pass the following validations {validations}
+Your work must pass the following validations. Deterministic validations (`command_validation`, `file_exists`) will be run exactly as written, so make sure they can pass:
+
+{validations}
 
 Read the feature carefully, understand everything and then go ahead and implement. Do not ask any questions. Plan your work step by step. Key things to keep in mind:
 
 - Do not overbuild. Scope your work to just the feature, knowing that future iterations will add to the project.
+- Do not modify files that belong to other features unless the intent explicitly says to patch them.
 - Do not use git history, git log, git blame, or any git commands to look at previous implementations. Build from the intent only.
+- Run the deterministic validations (and the feature's tests) yourself before finishing.
+- Features are built incrementally: later intents will add modules, prompts and commands. Never write a test that asserts something is *absent* or *unavailable* (a missing module, an empty prompt template, an import that fails) — such tests break as soon as the next feature lands.
 {previous_errors}
 
 ### Response

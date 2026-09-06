@@ -1,4 +1,4 @@
-"""Build package for intentc."""
+"""Build-related modules: agents, state, storage, validations, builder."""
 
 from intentc.build.agents import (
     Agent,
@@ -13,6 +13,7 @@ from intentc.build.agents import (
     ValidationResponse,
     create_from_profile,
 )
+from intentc.build.builder.builder import Builder, BuildOptions
 from intentc.build.state import (
     BuildResult,
     BuildStep,
@@ -21,12 +22,11 @@ from intentc.build.state import (
     TargetStatus,
     VersionControl,
 )
-from intentc.build.storage import (
-    SQLiteBackend,
-    StorageBackend,
-)
+from intentc.build.storage import SQLiteBackend, StorageBackend
 from intentc.build.validations import (
     AgentValidationRunner,
+    CommandValidationRunner,
+    FileExistsRunner,
     ValidationContext,
     ValidationRunner,
     ValidationSuite,
@@ -39,23 +39,27 @@ __all__ = [
     "AgentProfile",
     "BuildContext",
     "BuildResponse",
-    "BuildResult",
-    "BuildStep",
     "CLIAgent",
     "ClaudeAgent",
-    "GitVersionControl",
     "MockAgent",
     "PromptTemplates",
-    "SQLiteBackend",
-    "StateManager",
-    "StorageBackend",
-    "TargetStatus",
     "ValidationResponse",
+    "create_from_profile",
+    "Builder",
+    "BuildOptions",
+    "BuildResult",
+    "BuildStep",
+    "GitVersionControl",
+    "StateManager",
+    "TargetStatus",
+    "VersionControl",
+    "StorageBackend",
+    "SQLiteBackend",
     "AgentValidationRunner",
+    "CommandValidationRunner",
+    "FileExistsRunner",
     "ValidationContext",
     "ValidationRunner",
     "ValidationSuite",
     "ValidationSuiteResult",
-    "VersionControl",
-    "create_from_profile",
 ]

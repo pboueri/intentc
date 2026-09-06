@@ -1,0 +1,49 @@
+target: core/project
+version: 1
+validations:
+  - name: project-modules-exist
+    type: file_exists
+    severity: error
+    args:
+      paths:
+        - "intentc/core/project.py"
+        - "intentc/core/tests/test_project.py"
+
+  - name: project-tests-pass
+    type: command_validation
+    severity: error
+    args:
+      cwd: "."
+      command: "uv run pytest {output_dir}/intentc/core -q"
+
+  - name: dag-traversal-and-errors
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify tests demonstrate: parents/ancestors/children/descendants on a
+        three-feature chain; topological_order is dependency-first and raises
+        ValueError on a cycle; load_project raises ParseErrors (not KeyError, not
+        a silent skip) for an unknown dependency and for a wildcard that matches
+        nothing; the wildcard `core/*` expands in place; buildable_after returns
+        only features whose dependencies are all built.
+
+  - name: check-project-lint
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify check_project returns ProjectIssue entries for: a .icv whose target
+        does not match its directory (warning), a feature with no validations
+        (warning), a feature whose name differs from its directory (warning), and
+        a .icv in a directory with no .ic (error). Verify it returns an empty list
+        for a well-formed project and never invokes an agent.
+
+  - name: blank-project-roundtrip
+    type: agent_validation
+    severity: error
+    args:
+      rubric: |
+        Verify blank_project("x") written with write_project loads back with
+        load_project, has one feature named starter with one validation, an
+        implementation named default, and produces no check_project errors.

@@ -1,6 +1,6 @@
-"""Agent module: interfaces, types, and implementations."""
+"""Agent providers: interface, contexts, responses, and implementations."""
 
-from intentc.build.agents.agents import (
+from intentc.build.agents.agent import (
     Agent,
     AgentError,
     AgentProfile,

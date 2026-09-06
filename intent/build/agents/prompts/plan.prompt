@@ -1,10 +1,21 @@
 ### Context
-You are working in the context of the following project {project} with the following implementation approach {implementation}
+You are working in the context of the following project:
 
+{project}
+
+with the following implementation approach:
+
+{implementation}
 
 ### INTENT
-You have been asked to help refine the following {feature} and {validations}
+You have been asked to help refine the feature `{feature_name}`:
 
-The user is asking for help planning the following feature: {seed_prompt}
+{feature}
 
-The user is requesting your help to further specify the intent so that the feature is self-contained and makes sense within the context. Do not edit any code. The only files you can edit are the intent file (.ic) or validation file (.icv).
+Its current validations are:
+
+{validations}
+
+The user is asking for help planning the following: {seed_prompt}
+
+The user is requesting your help to further specify the intent so that the feature is self-contained and makes sense within the context. Ask the right questions, then propose concrete edits. Prefer adding deterministic validations (`command_validation`, `file_exists`) over agent rubrics where a check can be expressed as a command or a file. Do not edit any code. The only files you can edit are the intent file (.ic) or validation file (.icv) for this feature.
