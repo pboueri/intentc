@@ -91,8 +91,14 @@ validations:
         --bake on a target whose latest session is "failed" re-bakes it reusing the
         stored snapshot_id without calling version_control.snapshot again; on success
         the session is "baked" with bake_generation_id set and the journal file
-        deleted; with --no-compare run_differencing is never called. Verify log lines
-        use the prefix "bake n/N:" (no square brackets). Verify that refine_bake with
+        deleted; with --no-compare run_differencing is never called; an AgentError
+        raised by run_differencing is retried up to profile.retries calls and then
+        fails the attempt with a "compare: agent error" entry, without the whole
+        bake crashing; an unexpected exception inside an attempt leaves the session
+        "failed" (not "baking") before propagating, and the CLI prints "Agent error:"
+        with exit 1 rather than a traceback for an AgentError. Verify log lines use
+        the prefix "bake n/N:" (no square brackets) and that render_refine_summary
+        escapes markup so a generalisation containing "[x]" is printed verbatim. Verify that refine_bake with
         a missing response file raises AgentError rather than synthesising a
         response.
 
