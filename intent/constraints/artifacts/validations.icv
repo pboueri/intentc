@@ -38,7 +38,9 @@ validations:
         resolved_paths) and that IntentFile, ProjectIntent and Implementation carry an
         `artifacts` list. Verify tests show: (1) a frontmatter `artifacts` list with a
         mapping entry and a string-shorthand entry parses, and inline body references
-        are appended as kind "reference"; (2) `artifacts` that is not a list, an entry
+        are appended as kind "reference", while an inline link to another .ic or
+        .icv file is NOT turned into an artifact (it stays in file_references only)
+        and produces no undeclared-artifact warning; (2) `artifacts` that is not a list, an entry
         without `path`, and a non-string `kind` each produce a ParseError naming the
         `artifacts` field; (3) load_project expands globs into resolved_paths relative
         to the declaring file and rejects a path that escapes intent/; (4)

@@ -37,7 +37,7 @@ Two forms, both resolved to the same in-memory type:
 
    Because the declaration is explicit, a bare filename is fine here (in the body a bare filename is prose, not a reference — see the file reference rules).
 
-2. **Inline references** in the body (existing behaviour). These become artifacts with `kind: reference` and an empty note.
+2. **Inline references** in the body (existing behaviour). These become artifacts with `kind: reference` and an empty note — **except references to `.ic` or `.icv` files**, which are cross-references between intents (an intent saying "see [build/validations](../validations/validations.ic)"), not supporting material. They stay in `file_references`, are never turned into artifacts, are not rendered under `{artifacts}` (the sandbox and the DAG already govern which intents the agent can read), and get no lint warning.
 
 Entry fields:
 
@@ -79,7 +79,7 @@ IntentFile, ProjectIntent, Implementation gain:
 - `write_project()` copies resolved artifacts next to the copied intents, preserving their relative layout. This replaces the current copying of inline references.
 - `check_project()` gains:
   - error: a *declared* artifact whose path or glob matches no file — `"artifact 'task.schema.json' matches no file — add it or remove the entry"`. (An inline reference that does not exist stays a warning, as today.)
-  - warning: an inline reference that exists but is not declared under `artifacts:` — `"'<path>' is referenced but not declared as an artifact; edits to it will not trigger a rebuild. Add it to artifacts: to make it a constraint."` Skipped for references whose first path segment is `intent` or `.intentc`, as for the existing missing-reference warning.
+  - warning: an inline reference that exists but is not declared under `artifacts:` — `"'<path>' is referenced but not declared as an artifact; edits to it will not trigger a rebuild. Add it to artifacts: to make it a constraint."` Skipped for references whose first path segment is `intent` or `.intentc` (as for the existing missing-reference warning) and for `.ic`/`.icv` cross-references.
   - warning: an artifact larger than 1 MB — it will not be inlined in the prompt and is unlikely to be useful to an agent as a whole.
   - warning: an artifact declared by two features with different `note`s (the agent gets both; the notes should agree).
 
