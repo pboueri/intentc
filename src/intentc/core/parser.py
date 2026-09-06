@@ -149,6 +149,14 @@ def _parse_artifacts(
     return artifacts
 
 
+def _is_intent_cross_reference(ref: str) -> bool:
+    """True for an inline reference to another `.ic` or `.icv` file: a link between
+    intents (e.g. "see [build/validations](../validations/validations.ic)"), not
+    supporting material. These stay in `file_references` only."""
+    suffix = Path(ref.rstrip("/")).suffix.lower()
+    return suffix in (".ic", ".icv")
+
+
 def _dedup_artifacts_by_path(artifacts: list[Artifact]) -> list[Artifact]:
     seen: set[str] = set()
     result: list[Artifact] = []
@@ -191,7 +199,7 @@ def parse_intent_file(
         raise ParseErrors(errors)
 
     file_references = extract_file_references(body)
-    inline_artifacts = [Artifact(path=ref) for ref in file_references]
+    inline_artifacts = [Artifact(path=ref) for ref in file_references if not _is_intent_cross_reference(ref)]
     artifacts = _dedup_artifacts_by_path(declared_artifacts + inline_artifacts)
 
     common: dict[str, Any] = dict(

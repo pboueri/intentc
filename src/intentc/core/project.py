@@ -27,6 +27,7 @@ from intentc.core.models import (
     ValidationType,
 )
 from intentc.core.parser import (
+    _is_intent_cross_reference,
     parse_intent_file,
     parse_validation_file,
     write_intent_file,
@@ -757,6 +758,8 @@ def check_project(project: Project) -> list[ProjectIssue]:
                                 message=f"referenced file '{ref}' does not exist relative to this intent file",
                             )
                         )
+                    elif _is_intent_cross_reference(ref):
+                        continue
                     elif ref not in intent._declared_artifact_paths:
                         issues.append(
                             ProjectIssue(

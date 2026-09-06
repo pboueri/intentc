@@ -687,6 +687,26 @@ See `./notes.md` for background.
     assert not any("not declared as an artifact" in issue.message for issue in issues)
 
 
+def test_check_project_no_undeclared_warning_for_ic_cross_reference(tmp_path):
+    _write_project_ic(tmp_path)
+    _write_default_impl(tmp_path)
+    _write(
+        tmp_path / "a" / "a.ic",
+        """---
+name: a
+---
+See [b](../b/b.ic) for background.
+""",
+    )
+    _write(tmp_path / "b" / "b.ic", "---\nname: b\n---\nB body.\n")
+    _write(tmp_path / "a" / "validation.icv", "target: a\nvalidations:\n  - name: a-exists\n    type: file_exists\n    args:\n      paths: ['out.txt']\n")
+
+    project = load_project(tmp_path)
+    issues = check_project(project)
+    assert not any("not declared as an artifact" in issue.message for issue in issues)
+    assert not any(a.path == "../b/b.ic" for a in project.features["a"].intents[0].artifacts)
+
+
 def test_check_project_flags_large_artifact_as_warning(tmp_path):
     _write_project_ic(tmp_path)
     _write_default_impl(tmp_path)

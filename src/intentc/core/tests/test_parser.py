@@ -247,6 +247,23 @@ See `./design.png` again in prose.
     assert matching[0].note == "The canonical mockup."
 
 
+def test_parse_intent_file_inline_ic_reference_is_not_an_artifact(tmp_path):
+    path = _write(
+        tmp_path / "feature.ic",
+        """---
+name: core/feature
+---
+See [build/validations](../validations/validations.ic) for details, and
+also the [suite](../suite/suite.icv) file.
+""",
+    )
+    intent = parse_intent_file(path)
+    assert "../validations/validations.ic" in intent.file_references
+    assert "../suite/suite.icv" in intent.file_references
+    assert not any(a.path == "../validations/validations.ic" for a in intent.artifacts)
+    assert not any(a.path == "../suite/suite.icv" for a in intent.artifacts)
+
+
 def test_parse_intent_file_artifacts_not_a_list_is_error(tmp_path):
     path = _write(tmp_path / "bad.ic", "---\nname: core/feature\nartifacts: nope\n---\nBody\n")
     with pytest.raises(ParseErrors) as exc_info:
