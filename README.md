@@ -1,6 +1,6 @@
 # intentc
 
-[A Compiler of Intent](https://pboueri.github.io/blog/compilers-of-intent/)
+[A Compiler of Intent](https://patrickboueri.com/blog/compilers-of-intent/)
 
 
 An experimental project where you spec out what you want to build in a well defined DAG, iterate and validate until its correct. If a new model, or new programming language comes along, no problem. Rebuild it with a new target. 
