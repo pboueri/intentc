@@ -1,6 +1,7 @@
 # intentc
 
 [A Compiler of Intent](https://patrickboueri.com/blog/compilers-of-intent/)
+[Talk](https://www.youtube.com/watch?v=4chtGgium2w) - [Slides](https://patrickboueri.com/talks/intentc-acm-chicago/)
 
 
 An experimental project where you spec out what you want to build in a well defined DAG, iterate and validate until its correct. If a new model, or new programming language comes along, no problem. Rebuild it with a new target. 
